@@ -1,0 +1,22 @@
+# MANIFEST.sha256 — integrity manifest for the project-doc-skills suite
+# suite-version: 1.0.0
+# source-commit: unknown (not a git checkout)
+# Verify before install:  cd <repo-root> && sha256sum -c dist/MANIFEST.sha256
+# Paths are relative to the repo root. Each line: <sha256>  <path>
+#
+e52f15bc25ef8c2f42d8877097ff80300b8e3d662b09a9674b3418eeace1779d  dist/architecture-and-decisions.skill
+2597b41fac2de634f104132048820679be89041f3fc3895a95a2b97a11115fdd  dist/learning-track.skill
+55a7cf5863b63b0d3dbf3291b73c5a406bf6298f0876ecb32db8b2e9af408ce1  dist/onboarding-companion.skill
+631252b67bb09024d1db5648d28b8a6aa3b3a5d5df0a27a1ef90b1b346924324  dist/operations-runbook.skill
+308af735403ae9337f0655684bb4c7945488c68ef104654ba974b9ea8a0b4bc5  dist/project-faq.skill
+9aafe11b7c4e27cb7e9c49105c06cca2a0c9216d3767c69ee2c7c6bf66c2dcbd  dist/publish-mirror.skill
+fc277dc80121b22e2ba88e3884eaa2bb0ae87202b0a5a4f19eba7d2ba0be3e58  dist/usage-guide.skill
+357ee1a32803e7d191ab30bf89e655c8eccbfd4c7cf061761962334ba40d2de3  shared/ci/.pre-commit-config.yaml
+5283596d811bf289824ab8f3a9f11c2e69b59612b2fca1cd4c68399533af0faa  shared/ci/README.md
+7b76f5cf605eda6a98ed3194be11a0d7c79d393cd6ec7bdc2d9c8d1c827062e4  shared/ci/verify-docs.yml
+0cf5889ef19b534116c5e9243fb8a5288a41b392f972cfb20109860070936c80  shared/house-style.md
+1531f67167434037e681520bbe029be53c921fefd410a1d87065b551ce51442d  shared/licensing-and-credits.md
+93760d20912d0f9be03a327e925b66c4ca1852393ced5baacac3cd6531abb818  shared/project-profile.md
+9002f383afc01acdaa48d108e1b1af20a96cf2ad044fd50c68f7534129184216  shared/publish-targets.yaml
+7cfe715dc94ddf0f11c9e86f23b88ca77f464770a163c110b74130ad262e057d  shared/render-contract.md
+5109fdf74e370eae576c08579f5fcef393c4570f31a69e583f9b1d877ef6f6bf  shared/verify.py

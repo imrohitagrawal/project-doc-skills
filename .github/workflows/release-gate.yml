@@ -1,0 +1,32 @@
+# release-gate — the suite's own CI. Runs the one composed gate (release-gate.sh) that a release of
+# THIS repository must pass: build + validate + suite lints, golden fixtures, byte-identical
+# reproducibility, integrity manifest, and the version/changelog check.
+#
+# This is distinct from shared/ci/verify-docs.yml, which ships INSIDE each .skill so a CONSUMER can
+# verify the docs that skill helped them produce. This workflow gates the suite, not a consumer's docs.
+name: release-gate
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML (verify.py / lint-placeholders.py read the profile as YAML)
+        run: pip install pyyaml
+      - name: Run the composed release gate
+        run: ./release-gate.sh
+      - name: Upload built skills + integrity manifest
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: |
+            dist/*.skill
+            dist/MANIFEST.sha256
