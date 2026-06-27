@@ -159,6 +159,11 @@ The method, the axis prompts, and the per-doc-type profiles ship as references (
 - **Non-deterministic.** The critique is agent judgement; `verify.py` stays the hard, repeatable
   gate, and this skill outputs a register a human approves — it does not auto-edit.
 - **The different-vendor axis is not automatable here** (Step 5 hands off a prompt).
+- **Independence needs the harness.** The blind, each-axis-in-its-own-context decorrelation this
+  method depends on (Step 4) is real only in an **isolated-subagent** run. In a plain single chat the
+  axes run sequentially in one context and lose most of their independence — treat such a run as a
+  **structured self-review, not an independent gate**, and lean harder on the different-vendor pass
+  (Step 5), whose decorrelation is from different model weights rather than from context isolation.
 - **Skills do not auto-chain.** This runs when **doc-critic's own** description matches a review
   request, or when an authoring skill's end-of-workflow body handoff points to it. An authoring
   skill's *description* does not (and cannot) trigger this skill — only doc-critic's own does.
