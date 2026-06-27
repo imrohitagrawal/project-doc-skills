@@ -25,7 +25,8 @@ the seven are cross-page, which is the whole reason the whole-document axis is t
 5. **Simplification-gone-false** — a beginner-friendly nuance flattened into something untrue.
 6. **Honesty-posture drift** — built / `[designed, not yet built]` / measured-vs-illustrative markers
    inconsistent across pages.
-7. **Broken forward/cross-references** — a promise a later page never keeps.
+7. **Broken forward/cross-references** — a promise a later page never keeps (the *semantic* half;
+   `verify.py` already catches a link to a missing file — this axis catches the unkept promise).
 
 ## Governing principles
 
