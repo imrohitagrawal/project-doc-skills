@@ -109,7 +109,7 @@ if [[ "$CHECK" -eq 1 ]]; then
 fi
 
 # Emit the integrity manifest over the freshly-built dist/ and the shared/ source (only on a full
-# build with no failures and no name filter, so the manifest always covers all seven).
+# build with no failures and no name filter, so the manifest always covers all eight).
 if [[ "$failed" -eq 0 && -z "$FILTER" ]]; then
   python3 "$ROOT/pkgtools.py" manifest "$DIST" "$SHARED" "$DIST/MANIFEST.sha256" \
     --version "$VERSION" --root "$ROOT" >/dev/null

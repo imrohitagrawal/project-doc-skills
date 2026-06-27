@@ -16,7 +16,7 @@ The eighth skill plus one shared-layer addition that supports it. Additive and g
   multi-axis critique (whole-document consistency, code-grounded correctness, the beginner floor, an
   adversarial adjudicator; a different-vendor pass at a public gate), writes a severity-ranked review
   register, and gates publishing on unresolved BLOCKERs. Ships `review-playbook.md`,
-  `reviewer-prompts.md`, and `review-profiles.md` (learning-track profile implemented; the other six
+  `reviewer-prompts.md`, and `review-profiles.md` (learning-track profile implemented; the other five
   doc types stubbed). Independently reviewed (unbiased + expert) before landing; per-run reviewer
   slots use the suite's `[...]` author-fill convention so the placeholder lint stays clean.
 

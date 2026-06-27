@@ -16,7 +16,7 @@ All notable changes to this skill. Format: [Keep a Changelog](https://keepachang
   to the repo → gate publishing on unresolved BLOCKERs → re-verify.
 - References: `review-playbook.md` (the method + the seven-class error taxonomy), `reviewer-prompts.md`
   (blind per-axis templates with `{{key}}` placeholders), `review-profiles.md` (learning-track
-  profile implemented; the other six doc types stubbed `[designed, not yet built]`).
+  profile implemented; the other five doc types stubbed `[designed, not yet built]`).
 - Trigger boundary in the description: distinct from `verify.py` (deterministic), an authoring
   skill's inline critic loop (same-context, prevents during authoring), `per-skill-review-prompt.md`
   (reviews the skills themselves), and `publish-mirror` (publishes).

@@ -1,8 +1,9 @@
 # Project documentation skills — source
 
-A suite of seven independent Claude skills. Six turn a software project into documentation, each in a
-distinct Diátaxis mode; the seventh, **publish-mirror**, is a separate publish step that mirrors the
-finished pages to a wiki or portal without re-authoring them:
+A suite of eight independent Claude skills. Six turn a software project into documentation, each in a
+distinct Diátaxis mode; **doc-critic** is the independent review gate that critiques those docs before
+they publish; and **publish-mirror** is a separate publish step that mirrors the finished pages to a
+wiki or portal without re-authoring them:
 
 | Skill | Diátaxis mode | Scope | Reading grade |
 |---|---|---|---|
@@ -12,6 +13,7 @@ finished pages to a wiki or portal without re-authoring them:
 | **usage-guide** | how-to | public | ~2 |
 | **operations-runbook** | reference (operations) | internal | ~10 |
 | **onboarding-companion** | tutorial (contributors) | internal | ~7 |
+| **doc-critic** | review gate (no Diátaxis mode) | internal | — |
 | **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |
 
 ## Why this structure (independent skills, one source of truth)
@@ -21,7 +23,7 @@ standard, the project-profile template, the render contract, the publish-targets
 verifier, and the CI snippet, so it works on its own with no dependency on the others. That
 independence is the point.
 
-The risk with self-contained packages is **drift**: seven copies of the house style slowly diverge.
+The risk with self-contained packages is **drift**: eight copies of the house style slowly diverge.
 This repo removes that risk by keeping the shared files in **one canonical place** and copying them
 into each package **at build time**:
 
@@ -42,6 +44,7 @@ project-doc-skills/
 │  ├─ usage-guide/
 │  ├─ operations-runbook/
 │  ├─ onboarding-companion/
+│  ├─ doc-critic/              #   the independent review gate (critiques produced docs before publish)
 │  └─ publish-mirror/          #   the publish step (mirrors verified pages out; never authors)
 ├─ build-skills.sh             # assembles dist/<name>.skill = skills/<name>/ + shared/ (deterministic)
 ├─ pkgtools.py                 # deterministic packer + SHA-256 integrity manifest writer
@@ -86,7 +89,7 @@ timestamp pinned, and fixed permissions, so identical source produces a **byte-i
 **Consumer flow — build, verify the manifest, then install:**
 
 ```bash
-./build-skills.sh                          # build all seven + emit dist/MANIFEST.sha256
+./build-skills.sh                          # build all eight + emit dist/MANIFEST.sha256
 sha256sum -c dist/MANIFEST.sha256          # from the repo root: verify the bytes before trusting them
 # then upload/install the dist/<name>.skill you want
 ```
@@ -110,8 +113,8 @@ that the root changelog names it, and that every skill is versioned.
 
 Improve a skill in its own focused session, in this order (producers before consumers):
 **learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook →
-onboarding-companion → publish-mirror.** (publish-mirror is the publish step, downstream of them all,
-so it is reviewed last.) When a change belongs to a shared file, make it in `shared/` (it benefits
+onboarding-companion → doc-critic → publish-mirror.** (doc-critic is the review gate and publish-mirror
+the publish step, both downstream of the authoring skills, so they are reviewed last.) When a change belongs to a shared file, make it in `shared/` (it benefits
 every skill) rather than forking the bundled copy; then rebuild. Record skill-specific changes in
 `skills/<name>/CHANGELOG.md` and shared/suite changes in the root `CHANGELOG.md`.
 
