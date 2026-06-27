@@ -4,6 +4,28 @@ All notable changes to this skill are recorded here. Format follows Keep a Chang
 follow Semantic Versioning. This skill is documentation-as-code: it is versioned, and a learning
 track it produces should keep its own short changelog too.
 
+## [1.4.0] — 2026-06-28
+
+### Added
+- **Step 3 now locks the registers before writing** (`house-style.md` Section 5a, new): the analogy,
+  term, and honesty/maturity registers are settled with the module map, because cross-module decisions
+  propagate — a wrong analogy or a reused term reaches every module that builds on it. Each module is
+  checked against them in Step 6.
+- **New Step 6a — independent critique (the gate before publish).** Hands the verified modules +
+  glossary to the new **doc-critic** skill (a blind, whole-track, multi-axis critique) before
+  publishing. The inline authoring loop (Step 6) prevents, but it runs in one context as sequential
+  same-model critics and is structurally blind to cross-module drift and to claims it cannot
+  independently check; doc-critic catches those, writes a severity-ranked register, and gates
+  publishing on unresolved BLOCKERs. Chain: author → verify → doc-critic → publish-mirror.
+
+### Fixed
+- Header version was `1.3.0` while the changelog had advanced to `1.3.1`; realigned (header now tracks
+  this entry).
+
+### Notes
+- The `house-style.md` Section 5a addition is a **shared** change (good for all skills); recorded
+  suite-side in the root `CHANGELOG.md`.
+
 ## [1.3.1] — 2026-06-22
 
 Picked up in suite-hardening pass 2 (root `CHANGELOG.md` 1.0.0).

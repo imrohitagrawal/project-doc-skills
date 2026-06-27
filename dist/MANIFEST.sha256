@@ -1,20 +1,21 @@
 # MANIFEST.sha256 — integrity manifest for the project-doc-skills suite
-# suite-version: 1.0.0
-# source-commit: unknown (not a git checkout)
+# suite-version: 1.1.0
+# source-commit: 64b54c10856aa86e3fe4169a7fbe7e05b303b2c5
 # Verify before install:  cd <repo-root> && sha256sum -c dist/MANIFEST.sha256
 # Paths are relative to the repo root. Each line: <sha256>  <path>
 #
-e52f15bc25ef8c2f42d8877097ff80300b8e3d662b09a9674b3418eeace1779d  dist/architecture-and-decisions.skill
-2597b41fac2de634f104132048820679be89041f3fc3895a95a2b97a11115fdd  dist/learning-track.skill
-55a7cf5863b63b0d3dbf3291b73c5a406bf6298f0876ecb32db8b2e9af408ce1  dist/onboarding-companion.skill
-631252b67bb09024d1db5648d28b8a6aa3b3a5d5df0a27a1ef90b1b346924324  dist/operations-runbook.skill
-308af735403ae9337f0655684bb4c7945488c68ef104654ba974b9ea8a0b4bc5  dist/project-faq.skill
-9aafe11b7c4e27cb7e9c49105c06cca2a0c9216d3767c69ee2c7c6bf66c2dcbd  dist/publish-mirror.skill
-fc277dc80121b22e2ba88e3884eaa2bb0ae87202b0a5a4f19eba7d2ba0be3e58  dist/usage-guide.skill
+64d66b0c9e43ca4a90ea40c1819698989832dc5eb3bb532c970631e216b52d8f  dist/architecture-and-decisions.skill
+eba35733fb3240033f01f9c0899ebf9e3bf78ea91419da6ab72f84ce015071ef  dist/doc-critic.skill
+b618ef682e561238d198d0716b6ccf969997393cd01412b88ed12715b78cc43d  dist/learning-track.skill
+7cdae4fc08317ab97fcf2c5d449c5888937b104a0a6616296b83c6f0090b35de  dist/onboarding-companion.skill
+12b91a3700c3641990ee515730aa62a30bf8616fa1da5c3ce501703c31d50329  dist/operations-runbook.skill
+0d5b637699400609bee4161cb8f57ab4a647228b6db44810b38cbad803b95141  dist/project-faq.skill
+4a7e88d3c5de0c8087e2f8b5ac56ca279a4b38bde195c56664383d25a05160c1  dist/publish-mirror.skill
+898e9b12fe86b36c7f61aca63e9dbb210798e8b3cd67ed42316a0818de2eebff  dist/usage-guide.skill
 357ee1a32803e7d191ab30bf89e655c8eccbfd4c7cf061761962334ba40d2de3  shared/ci/.pre-commit-config.yaml
 5283596d811bf289824ab8f3a9f11c2e69b59612b2fca1cd4c68399533af0faa  shared/ci/README.md
 7b76f5cf605eda6a98ed3194be11a0d7c79d393cd6ec7bdc2d9c8d1c827062e4  shared/ci/verify-docs.yml
-0cf5889ef19b534116c5e9243fb8a5288a41b392f972cfb20109860070936c80  shared/house-style.md
+2dc00e0dd1c2545668e99bc463fb3dd201b0bb1e902e7e091dd488f0e8a99a37  shared/house-style.md
 1531f67167434037e681520bbe029be53c921fefd410a1d87065b551ce51442d  shared/licensing-and-credits.md
 93760d20912d0f9be03a327e925b66c4ca1852393ced5baacac3cd6531abb818  shared/project-profile.md
 9002f383afc01acdaa48d108e1b1af20a96cf2ad044fd50c68f7534129184216  shared/publish-targets.yaml

@@ -5,7 +5,7 @@ description: Create a multi-audience learning track, course, or study companion 
 
 # Learning Track Builder
 
-Version: 1.3.0 · see `CHANGELOG.md`.
+Version: 1.4.0 · see `CHANGELOG.md`.
 
 Build a **learning companion**: a set of modular lessons that use a real software project as the
 worked example to take readers from "curious but lost" to "I understand what this system does, why
@@ -131,6 +131,14 @@ glossary running across all modules; and a practice ladder at the end. **If the 
 deep-dive part expands into several modules — the method gives the transferable shape.** Bring the
 proposed module map to the owner before writing all of it.
 
+**Lock the registers now (`house-style.md` Section 5a).** With the module map, settle the
+cross-module decisions *before* writing, because they propagate: the **analogy register** (one
+analogy per concept and its exact shape/direction), the **term register** (the canonical word per
+concept, and any word reserved to one meaning — e.g. a term whose specific sense arrives in a later
+module is not used loosely earlier), and the **honesty/maturity register** (the built / designed /
+measured markers, owned by one module and cross-linked). Record them with the module map. Each
+module is then checked against them in Step 6.
+
 ### 4. Write each module to the template
 Follow `references/module-template.md` exactly (stamp block, sense-of-place, plain-words layer,
 optional under-the-hood layers in collapsible blocks, a "why" for every choice, diagrams, sparing
@@ -194,6 +202,16 @@ python3 scripts/verify.py docs/learning --format md --skill learning-track --pro
 Fix every FAIL. Treat a high reading grade as a signal to simplify, not a number to game. A glossary
 is a definitions list and will read denser than the teaching target — the verifier treats that as a
 warning, not a failure, so do not strip necessary terms to lower its score.
+
+### 6a. Independent critique (the gate before publish)
+The authoring loop above prevents, but it runs in one context as sequential same-model critics, so it
+is structurally blind to defects that only show across the *whole* set — a safeguard stated on one
+module and disowned on another, a term or analogy that drifts between modules, a claim it cannot
+independently check. Before publishing — per batch, and again in full before the set goes public —
+hand the verified modules + glossary to the **doc-critic** skill: a blind, whole-track, multi-axis
+critique (whole-document consistency, code-grounded correctness, the beginner floor, an adversarial
+adjudicator, and a different-vendor pass at the public gate). It writes a severity-ranked review
+register and gates publishing on unresolved BLOCKERs. Fix those, re-run the verifier, then publish.
 
 ### 7. Publish (repo-first — a separate, later step)
 Write the verified Markdown to the repository first. That is always the default and the source of

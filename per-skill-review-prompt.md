@@ -2,9 +2,9 @@
 
 **How to use:** start a fresh chat, replace `{SKILL_NAME}` below with one of
 `learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook ·
-onboarding-companion · publish-mirror`, and attach:
+onboarding-companion · doc-critic · publish-mirror`, and attach:
 
-1. **`project-doc-skills-source.zip`** — the whole skills workspace (shared files, all seven skills,
+1. **`project-doc-skills-source.zip`** — the whole skills workspace (shared files, all eight skills,
    the build script, and the validator). This is the unit of work; the chat hands it back updated.
    Always attach the **latest** workspace zip, so improvements accumulate across sessions.
 2. **The Aegis source files for this skill's domain** — see the table at the end.
@@ -15,8 +15,9 @@ Then paste everything between the lines.
 > same as the skills' `{{key}}` placeholders (such as `{{project_name}}`), which are a suite-wide
 > convention you must keep intact in skill content. See Step 3.
 
-> **What changed in the suite (read this once).** The suite is now **seven** skills: the six
-> authoring skills plus **`publish-mirror`**, the separate publish step that mirrors a verified repo
+> **What changed in the suite (read this once).** The suite is now **eight** skills: the six
+> authoring skills, plus **`doc-critic`** (the independent review gate that critiques produced docs
+> before they publish) and **`publish-mirror`**, the separate publish step that mirrors a verified repo
 > page out to one or more targets (a wiki such as Confluence, an educational portal). It never
 > authors content. Two shared files came with it and are copied into every skill bundle at build
 > time: **`render-contract.md`** (the single standard for how a page is converted to each target —
@@ -27,7 +28,7 @@ Then paste everything between the lines.
 
 ---
 
-You are improving ONE skill in a seven-skill documentation suite: **{SKILL_NAME}**. The suite shares
+You are improving ONE skill in an eight-skill documentation suite: **{SKILL_NAME}**. The suite shares
 canonical files (`house-style.md`, `project-profile.md`, `licensing-and-credits.md`,
 `render-contract.md`, `publish-targets.yaml`, `verify.py`, `ci/`) that live in `shared/` and are
 copied into each packaged skill by `build-skills.sh`. Work inside the attached workspace.
@@ -79,7 +80,7 @@ shoes, where would they draw blood? Then an **unbiased pass** that drops anythin
 could not verify. Cover at least:
 - **The operational layer (where these skills are weakest).** State concretely: what inputs the
   skill needs; WHEN in a Claude-Code build to invoke it (on an empty repo? per commit? per
-  milestone? at the end?); and how it sequences with the other six skills (producer/consumer order,
+  milestone? at the end?); and how it sequences with the other seven skills (producer/consumer order,
   and use-this-not-that boundaries). No hand-waving.
 - **The publish handoff.** If the skill produces publishable pages, does it end with a short
   repo-first publish step that hands off to `publish-mirror` and points to `render-contract.md` —
@@ -113,13 +114,13 @@ could not verify. Cover at least:
 ## Step 4 — Make the changes, in the workspace, additively
 - Prefer surgical, additive edits to `skills/{SKILL_NAME}/` over rewrites; keep what works.
 - If a change genuinely belongs in a shared file, make it directly in `shared/` (it must be additive
-  and good for ALL seven skills), then rebuild every skill and sanity-check that nothing else
+  and good for ALL eight skills), then rebuild every skill and sanity-check that nothing else
   regressed. Do NOT fork the bundled copy, and do NOT hand back a diff to apply by hand — apply it.
 - `licensing-and-credits.md` and `render-contract.md` are both shared files: a licensing or credits
   change belongs in the former, and a conversion / target / visual-fidelity change belongs in the
   latter — never inlined into a skill as a literal name, a second copy of the disclaimer, a restated
   conversion, or a `{...}` / `<...>` placeholder.
-- Do NOT touch the bespoke content of the other six skills; they have their own sessions.
+- Do NOT touch the bespoke content of the other seven skills; they have their own sessions.
 
 ### Cross-skill findings — read-only on siblings, but never lost
 The no-touch rule above is absolute for *editing* a sibling. It is **not** a reason to let a finding
@@ -146,7 +147,7 @@ no way to know unless you record it. So:
   rules only). In a single-skill session it must **WARN, never FAIL**: a hard FAIL would break a
   sibling's build that you are forbidden to fix. Promoting it to FAIL — and fixing every skill it
   lights up — is the job of a dedicated **suite-hardening session** (one focused session on the shared
-  layer that *is* allowed to touch all seven; this is not "one session per skill"), not a per-skill
+  layer that *is* allowed to touch all eight; this is not "one session per skill"), not a per-skill
   session.
 
 > **Note (since the 2026-06-20 suite-hardening pass):** the render-restatement lint
@@ -180,7 +181,7 @@ The build validates these, but write to them from the start:
 - In the chat give me: concise bullet observations (the three lenses), the final decision, and a
   one-line note of any shared-file change you made and which other skills it touched (a change to
   `licensing-and-credits.md`, `render-contract.md`, `verify.py`, or another `shared/` file touches
-  all seven). If you resolved an inbound `CROSS-SKILL-FINDINGS.md` entry, or logged a new outbound one
+  all eight). If you resolved an inbound `CROSS-SKILL-FINDINGS.md` entry, or logged a new outbound one
   (with file and line), say so and name the file — the carry-over trail must be visible, not buried in
   chat. Do not give me homework — everything must be applied and built.
 
@@ -202,4 +203,5 @@ for them.
 | usage-guide | `aegis-integration-handoff-v2.md`, `M2`, and a real target API doc if you have one |
 | operations-runbook | `runbook-template.md`, `0017-operational-failure-mode-analysis.md`, the observability + monitoring handoffs, `nfr-slo-error-budget-register.md` |
 | onboarding-companion | `aegis-building-with-ai-and-practice-handoff.md`, `aegis-cowork-operating-blueprint.md`, `M0` |
+| doc-critic | (none beyond the workspace zip — its review method + profiles ship in its own `references/`; attach a recently-produced doc set if you want a live example to test the axes against) |
 | publish-mirror | `aegis-integration-handoff-v2.md`, `aegis-cowork-operating-blueprint.md`, `aegis-learning-companion-build-template-handoff.md` (the Markdown→Confluence mapping), `aegis-diagram-set-handoff.md` (watermark/border/colour rules), backbone `m3-governance-and-process.md` (record-before-edit, publish-reviewer, closure) |

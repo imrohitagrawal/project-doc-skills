@@ -86,6 +86,31 @@ the value is in the edge cases, the trade-offs, and the failure modes.
 
 ---
 
+## 5a. Lock the registers before writing (consistency across pages)
+
+A multi-page document's worst failures are not bad sentences — they are inconsistencies *across*
+pages: an analogy that teaches the wrong shape and is then reused, one word that means two things in
+different pages, a safeguard stated as in-force on one page and disowned on another. These propagate:
+a wrong choice made once reaches every page that builds on it. They are cheap to prevent and
+expensive to chase after the fact, so decide them **before** writing and record them (in the project
+profile, or a short `docs/<set>/registers.md`):
+
+- **Analogy register** — one analogy per concept, its exact *shape*, and its direction (higher- or
+  lower-is-better). Test each analogy against the real idea before adopting it; a two-point comparison
+  must not be drawn as a slow trend, and direction must not invert.
+- **Term register** — the canonical word for each concept, and any word reserved to one meaning (so a
+  term that has a specific later sense is not used loosely earlier).
+- **Honesty/maturity register** — the built / `[designed, not yet built]` / measured-vs-illustrative
+  markers (Section 4) and any maturity ordering, owned by one page and cross-linked, never restated
+  verbatim.
+
+Then check **each page** against the registers as you write it (a step in the authoring loop,
+Section 10). The independent confirmation that the registers actually held across the whole set is the
+job of the **doc-critic** skill's whole-document pass — not a same-context author loop, which is
+structurally blind to cross-page drift.
+
+---
+
 ## 6. Two examples, where the skill calls for it
 
 Where a skill specifies it (the FAQ and most explanatory pages), every explanation carries **two**
