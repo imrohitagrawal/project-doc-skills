@@ -3,6 +3,31 @@
 Suite-level and shared-file changes. Skill-specific changes live in `skills/<name>/CHANGELOG.md`.
 Format follows Keep a Changelog.
 
+## [1.1.0] — 2026-06-28 (new skill: doc-critic — the independent critic gate)
+
+The eighth skill plus one shared-layer addition that supports it. Additive and good for all skills.
+
+### Added — `skills/doc-critic/` (new skill, v0.1.0)
+- The independent **critic gate**: the human-judgement review layer that runs **after**
+  `verify.py` (deterministic) and **before** `publish-mirror`, over the docs an authoring skill
+  produced. It catches what a regex/readability verifier cannot — cross-module contradictions,
+  analogy-shape errors and term collisions, code-vs-doc mismatches, term/glossary gaps,
+  simplifications-gone-false, honesty-posture drift, and broken cross-references. Runs a blind
+  multi-axis critique (whole-document consistency, code-grounded correctness, the beginner floor, an
+  adversarial adjudicator; a different-vendor pass at a public gate), writes a severity-ranked review
+  register, and gates publishing on unresolved BLOCKERs. Ships `review-playbook.md`,
+  `reviewer-prompts.md`, and `review-profiles.md` (learning-track profile implemented; the other six
+  doc types stubbed). Independently reviewed (unbiased + expert) before landing; per-run reviewer
+  slots use the suite's `[...]` author-fill convention so the placeholder lint stays clean.
+
+### Added — `shared/house-style.md` Section 5a "Lock the registers before writing" (all skills)
+- A new pre-writing discipline: settle the **analogy / term / honesty-maturity registers** before
+  writing a multi-page document, because cross-page decisions propagate. Each page is checked against
+  them in the authoring loop (Section 10); the independent whole-set confirmation is doc-critic's job.
+  Additive; references Section 4 rather than restating it. `skills/learning-track` adopts it (Step 3 +
+  new Step 6a handoff to doc-critic; bumped to 1.4.0, header/changelog drift realigned). The other
+  authoring skills inherit the shared section and gain the doc-critic handoff in their own sessions.
+
 ## [1.0.0] — 2026-06-22 (suite-hardening pass 2 — first released, reproducibly-built, manifest-verified suite)
 
 A focused pass on the shared layer plus the release-engineering of the bundle as a shipped artifact.
