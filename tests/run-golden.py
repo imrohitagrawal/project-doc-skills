@@ -51,6 +51,7 @@ FAQ_GEN = ROOT / "skills" / "project-faq" / "assets" / "faq_generator.py"
 UG_GEN = ROOT / "skills" / "usage-guide" / "assets" / "usage_guide_generator.py"
 GOLDEN_GOOD = ROOT / "tests" / "golden-good"
 GOLDEN_BAD = ROOT / "tests" / "golden-bad"
+REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
 # golden-good assertion is 0 FAIL (a staleness WARN would still be allowed), and the EXACT staleness
@@ -68,6 +69,23 @@ READABILITY_PIN_TEXT = (
     "you can name the five steps, you can trace a request from start to end."
 )
 READABILITY_BAND = (1.5, 2.7)
+
+# doc-critic is non-deterministic — there is no critique to run as a golden. What CAN be locked is the
+# internal consistency of its METHOD docs: review-playbook.md's "Why this shape" evidence paragraph
+# cites three highest-severity findings, each attributed to ONE axis, and the taxonomy obligates a
+# specific axis to catch that finding's error class. Each tuple: (a stable needle from the evidence
+# paragraph, the axis tag that must follow it, the error class the finding exemplifies).
+DOC_CRITIC_FINDINGS = [
+    ("report output the code did not emit", "(code-grounded axis)", 3),
+    ("safeguard it later disowned", "(whole-document axis)", 1),
+    ("analogy teaching the wrong shape for a core term", "(whole-document axis)", 2),
+]
+# The class->axis coverage the playbook documents in its "Catches classes ..." lines, pinned as exact
+# (whitespace-normalized) substrings so a coverage edit must update this pin too.
+AXIS_COVERAGE = {
+    "(whole-document axis)": ("Catches classes 1, 2, 6, 7", {1, 2, 6, 7}),
+    "(code-grounded axis)": ("Catches classes 3, 5", {3, 5}),
+}
 
 
 def _load(name: str, path: Path):
@@ -219,13 +237,48 @@ def deterministic_pins(res: Results, verbose: bool) -> None:
               f"grade={grade} words={nwords}")
 
 
+def doc_critic_mapping(res: Results, verbose: bool) -> None:
+    """Lock review-playbook.md's evidence paragraph to the taxonomy's class->axis mapping.
+
+    doc-critic is non-deterministic, so there is no critique to run as a golden. What is locked here is
+    the internal consistency of its METHOD docs (Section "Why this shape"): three highest-severity
+    findings, each attributed to one axis, against the taxonomy that obligates a specific axis to catch
+    that finding's error class. Whitespace-normalized, so line wrapping is irrelevant; it fails only if
+    an evidence attribution or a documented axis-coverage line genuinely drifts.
+    """
+    print("doc-critic taxonomy↔axis mapping (method docs stay self-consistent):")
+    norm = re.sub(r"\s+", " ", REVIEW_PLAYBOOK.read_text(encoding="utf-8"))
+    # Scope the evidence findings to the final "Why this shape" section, so a needle that also appears
+    # in the taxonomy list above cannot match the wrong occurrence.
+    h = norm.find("Why this shape")
+    evidence = norm[h:] if h != -1 else ""
+
+    # 1. Each documented "Catches classes ..." coverage line is still present (locks class->axis).
+    for tag, (cov_substr, _classes) in AXIS_COVERAGE.items():
+        ok = cov_substr in norm
+        res.check(ok, f"coverage line present for {tag}",
+                  cov_substr if verbose else ("found" if ok else "MISSING"))
+
+    # 2. Each evidence finding appears exactly once in that section, is attributed to its axis, and
+    #    that axis is the one the taxonomy obligates to catch the finding's class.
+    for needle, tag, klass in DOC_CRITIC_FINDINGS:
+        i = evidence.find(needle)
+        attributed = i != -1 and tag in evidence[i: i + len(needle) + 60]
+        unique = evidence.count(needle) == 1
+        obligated = klass in AXIS_COVERAGE[tag][1]
+        ok = attributed and unique and obligated
+        detail = (f"class {klass} → {tag}" if ok
+                  else f"attributed={attributed} unique={unique} obligated={obligated}")
+        res.check(ok, f'evidence finding "{needle[:28]}…" mapped', detail)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Golden-fixture regression: the gates that guard the gates.")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print each verifier's resolved-values line / fixture findings")
     args = ap.parse_args()
 
-    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN):
+    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -236,6 +289,8 @@ def main() -> int:
     golden_bad(res, args.verbose)
     print()
     deterministic_pins(res, args.verbose)
+    print()
+    doc_critic_mapping(res, args.verbose)
     print()
     total = res.passed + res.failed
     print(f"--- golden: {res.passed}/{total} assertions passed, {res.failed} failed ---")

@@ -31,9 +31,12 @@ All notable changes to this skill. Format: [Keep a Changelog](https://keepachang
   status, so Step 7 confirms each BLOCKER id is resolved rather than re-reading prose.
 - **Systemic findings route outward** to `CROSS-SKILL-FINDINGS.md` (the suite's two-way carry-over
   log) — a whole-document critic is the most likely producer of recurring cross-doc-type defects.
-- A regression fixture (the suite's own learning-track review → the axis that must catch each
-  finding) is **deferred to the suite's `tests/` golden framework**, where the regression layer
-  already lives — not shipped as a per-skill `evals/` dir.
+- A consistency fixture for the method's evidence base **ships in the suite's `tests/` golden
+  framework** (`run-golden.py`): the learning-track review's three highest-severity findings are each
+  locked to the axis the taxonomy obligates to catch them, so the playbook's evidence paragraph and
+  its axis-coverage lines cannot drift apart. doc-critic is non-deterministic, so this locks the
+  method's docs for consistency — it does not run the critique (`verify.py` stays the deterministic
+  gate); it is a suite-level pin, not a per-skill `evals/` dir.
 - Clarified, per review: auto-chain is via doc-critic's *own* description + an authoring-skill body
   handoff (an authoring skill's description cannot trigger it); reviewers get the *neutralized
   paraphrase* in the shared brief, not the house-style file; the different-vendor pass is "not
