@@ -6,7 +6,8 @@
 # changes any path in .github/gate-paths, a well-formed PASS verdict must exist under gate-reviews/
 # (see gate-review-check.py and CONTRIBUTING.md "Governance").
 #
-# It runs on EVERY pull request and ALWAYS reports the `gate-review` status, on purpose:
+# It runs on every pull request and re-runs on each new commit (synchronize), always reporting the
+# `gate-review` status — with no path filter and no job-level `if`, on purpose:
 #   - non-gate PRs pass automatically (a *required* check that never reports would block them forever);
 #   - gate PRs without a recorded review go red and cannot merge under the branch ruleset.
 # The check fails closed: any setup/IO error exits non-zero, so a broken check blocks rather than

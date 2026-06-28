@@ -19,8 +19,11 @@
 /check-version.py       @imrohitagrawal
 /lint-*.py              @imrohitagrawal
 /shared/verify.py       @imrohitagrawal
+/shared/ci/             @imrohitagrawal
 /tests/                 @imrohitagrawal
 /.github/               @imrohitagrawal
 /gate-review-check.py   @imrohitagrawal
 /gate-review-prompt.md  @imrohitagrawal
+/gate-reviews/TEMPLATE.md  @imrohitagrawal
 /CONTRIBUTING.md        @imrohitagrawal
+/docs/SETTINGS.md       @imrohitagrawal

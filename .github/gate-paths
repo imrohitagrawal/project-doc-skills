@@ -33,17 +33,24 @@ check-version.py
 # --- Suite lints (current AND any future lint-*.py) --------------------------------
 lint-*.py
 
-# --- The shared documentation verifier (the gate consumers + the golden tests run) -
+# --- The shared documentation verifier + the CI gate that ships INSIDE every .skill -
+# shared/verify.py is the engine; shared/ci/ (verify-docs.yml + the pre-commit config) is the
+# docs-as-code gate build-skills.sh copies into every package and the manifest hashes — weakening
+# either silently weakens the gate every consumer runs.
 shared/verify.py
+shared/ci/
 
 # --- The gates that guard the gates ------------------------------------------------
 tests/
 
 # --- CI + the governance / enforcement layer itself (self-protecting) --------------
-# Changing how merges are gated is itself a gate-layer change: a weakened workflow,
-# a narrowed gate-paths list, a softened policy, or a relaxed check must not slip in
-# unreviewed. So the enforcement layer guards itself.
+# Changing how merges are gated is itself a gate-layer change: a weakened workflow, a narrowed
+# gate-paths list, a softened policy, a relaxed check, or a loosened verdict contract must not slip
+# in unreviewed. So the enforcement layer guards itself. (docs/SETTINGS.md is the RECORD of the live
+# ruleset, not the ruleset itself — gated so the documented policy can't be softened unreviewed.)
 .github/
 gate-review-check.py
 gate-review-prompt.md
+gate-reviews/TEMPLATE.md
 CONTRIBUTING.md
+docs/SETTINGS.md

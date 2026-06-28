@@ -19,9 +19,13 @@ below; read it before you touch a gate file.
 The machine-readable, canonical list is [`.github/gate-paths`](.github/gate-paths) — that file is the
 single source of truth, read by `gate-review-check.py`. As of this writing it covers `release-gate.sh`,
 `build-skills.sh`, `pkgtools.py`, `validate_skill.py`, `check-version.py`, every `lint-*.py`,
-`shared/verify.py`, `tests/`, `.github/`, and the governance files themselves (`gate-review-check.py`,
-`gate-review-prompt.md`, `CONTRIBUTING.md`). Do not re-derive the list from this prose — read the file;
-the prose can drift, the file is what gates.
+`shared/verify.py`, `shared/ci/` (the docs-as-code gate that ships inside every `.skill`), `tests/`,
+`.github/`, and the governance files themselves (`gate-review-check.py`, `gate-review-prompt.md`,
+`gate-reviews/TEMPLATE.md`, `CONTRIBUTING.md`, `docs/SETTINGS.md`). Do not re-derive the list from this
+prose — read the file; the prose can drift, the file is what gates. (Deliberately *out* of scope: the
+authoring standards `shared/house-style.md` and `shared/render-contract.md` — they change often during
+normal authoring and gating every edit would be friction; the *checks* that enforce them are gated, and
+a hollowed-out contract is a visible diff. Add them if you want maximal coverage.)
 
 These paths share one property: **each can pass CI green while silently weakening or mis-describing a
 check.** That is why a green build is not enough for them.
@@ -67,17 +71,27 @@ except by override, training exactly the reflex this rule exists to prevent. So 
 ### The honest ceiling (what this can and cannot promise)
 
 No GitHub mechanism can make a solo administrator *unable* to bypass their own controls — the admin
-owns the controls. With "no bypass actors" set, you cannot click-merge a red `gate-review`; to get a
-gate change in without a review you would have to take a **deliberate, logged** action: edit or delete
-the ruleset, or push with protection removed. Both are visible in the repository's settings and audit
-log.
+owns the controls. With "no bypass actors" set, you cannot click-merge a red `gate-review`. The honest,
+complete list of ways a gate change could still reach `main` without a genuine review is:
+
+1. **Edit or delete the ruleset** (or push with protection removed) — a deliberate settings change,
+   visible in the repository settings and the audit log.
+2. **Fabricate a structured verdict** — write a `Verdict: PASS` record with invented evidence. The
+   check verifies a review was *run and recorded with evidence*; it cannot verify *good faith*. This is
+   a deliberate lie in the permanent record, not a one-click skip.
+3. **Edit the checker itself in the same PR.** Because the workflow runs `gate-review-check.py` from the
+   pull request's own head, a PR that rewrites the check (or `.github/workflows/gate-review.yml`) to
+   pass can report `gate-review` green on the default path — no settings change, no separate fabricated
+   verdict. The only thing standing between this and a silent bypass is that such an edit is a
+   **conspicuous gate-layer diff** (it is in `.github/gate-paths`, so it *is* what the gate-review must
+   scrutinize first), plus the owed `gate-review-check.py` unit tests as a regression backstop. There is
+   no GitHub-native fix for "a PR edits the check that gates it" on a solo repo; the mitigation is
+   attention, not automation — so we name it here rather than imply it away.
 
 So the promise is precise: **the default path — open a PR, watch CI go green, merge — is closed for an
-unreviewed gate change. Bypass is still possible, but never silent; it is loud, deliberate, and leaves
-a trail.** The check verifies that the review was *run and recorded with evidence*; it cannot verify it
-was done in *good faith*. Fabricating a structured verdict is possible — but it is a deliberate lie in
-the permanent record, not a one-click skip. That residual is irreducible for a single maintainer;
-naming it here is the point, not papering over it.
+unreviewed gate change. Bypass is still possible, but never silent; every route above is deliberate and
+leaves a trail.** That residual is irreducible for a single maintainer; naming it is the point, not
+papering over it.
 
 ### Requirement (ii): the deterministic backstop
 
@@ -89,10 +103,12 @@ any **new or changed gate correctness-check** must arrive with a regression fixt
 gate-review *finds* something, ask "could this have been a fixture rather than a human catch?" — if yes,
 the fix is to add the fixture, not only to note the bug.
 
-One honest exception: a pure **process/bootstrap** mechanism (this enforcement layer itself —
-`gate-review-check.py`) does not guard a past *suite* incident, so it has no real-incident fixture to
-derive. It is instead proven by demonstration (the scenario runs recorded in its bootstrap verdict
-under `gate-reviews/`), and a unit-test backfill for it is logged below.
+This binds the enforcement layer to itself. `gate-review-check.py` is a new gate check, so by the rule
+above it ships **with** its fixture: the `gate-review-check` section of
+[`tests/run-golden.py`](tests/run-golden.py) locks its path classifier and its verdict decision —
+including the rubber-stamp vectors the bootstrap review (below) caught. It guards no prior *suite*
+incident, so its fixture is derived from that review's own findings rather than a historical bug; that
+is the closest honest analogue of "the real incident it guards" for a brand-new mechanism.
 
 #### Backfill log (requirement ii is enforced going forward; existing gaps are tracked, not retro-fitted in one PR)
 
@@ -106,9 +122,10 @@ this policy (that would couple the mechanism to unrelated content):
   count words + the "improve in this order" list + repo-tree; the per-skill prompt's pick-list +
   attachment table; `build-skills.sh` "all seven") and assert the lint catches each — measuring real
   coverage, not a mutation of an already-guarded line.
-- **`gate-review-check.py` — unit-test backfill owed** (the scenarios proven by hand in its bootstrap
-  verdict: non-gate→pass, gate-without-verdict→block, malformed/FAIL verdict→block, fail-closed on
-  missing inputs).
+- **`gate-review-check.py` — fixture LANDED in this PR** (`tests/run-golden.py`, the `gate-review-check`
+  section): path classification plus the verdict decision, locking the rubber-stamp vectors the
+  bootstrap review caught (PASS quoted in prose over a BLOCK, coverage `0/0` or outside the replay
+  section, `PASS-WITH-NITS`, a co-committed BLOCK). Not owed — done.
 - **Audit owed for the other on-`main` checks** (`lint-placeholders.py`, `check-version.py`;
   `lint-render-restatement.py` and `shared/verify.py` already have golden-bad coverage in
   `tests/run-golden.py`): confirm each that guards a real past incident has a no-op-revert fixture, and

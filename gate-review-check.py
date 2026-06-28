@@ -21,13 +21,14 @@ WHAT IT CHECKS (for the changed-file set of a PR)
      well-formed? "Well-formed" requires EVIDENCE, not just a stamp:
        - it names the gate-review-prompt.md version it ran,
        - it carries the four mandated lens sections (replay-the-real-failure,
-         coverage-vs-advertising, self-description-drift, fixture-requirement),
-       - the replay section carries a coverage figure (N/M) — the evidence that the
-         real failure was reproduced and its coverage measured, not a synthetic mutation,
-       - it has a Findings section,
-       - it ends with an explicit `Verdict: PASS`.
-     A verdict that is malformed, or whose verdict line is BLOCK/FAIL, FAILS this check
-     (a failed or rubber-stamped review must not merge).
+         coverage-vs-advertising, self-description-drift, fixture-requirement) PLUS a
+         Findings section — five required headings in total,
+       - the replay section carries a real 'Coverage: N/M' fraction (M>0, N<=M) — the
+         evidence the failure was reproduced and measured, not a date or a stray mention,
+       - its EFFECTIVE (last) 'Verdict:' line is exactly PASS.
+     A record that is malformed, whose effective verdict is BLOCK/FAIL, or that only quotes
+     'PASS' in prose, FAILS this check. A co-committed BLOCK record blocks even if a PASS
+     record is also present (a blocking review is not overridden by adding a passing one).
 
 FAIL-CLOSED. Any setup or IO error (missing .github/gate-paths, unreadable diff) exits
 NON-ZERO. A gate that errors *open* is itself the silent bypass; this one blocks on doubt.
@@ -53,6 +54,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent
 GATE_PATHS_FILE = ROOT / ".github" / "gate-paths"
@@ -63,10 +65,16 @@ VERDICT_NON_RECORDS = {"TEMPLATE.md", "README.md"}
 # A verdict's required shape. Each is a low-false-positive structural marker; together
 # they require the reviewer to have produced EVIDENCE, so a one-line rubber stamp fails.
 PROMPT_VERSION_RE = re.compile(r"gate-review-prompt\.md\s+v\d+\.\d+\.\d+", re.IGNORECASE)
-COVERAGE_RE = re.compile(r"coverage\b[^\n]*?\b\d+\s*/\s*\d+", re.IGNORECASE)
-VERDICT_PASS_RE = re.compile(r"^\s*verdict:\s*pass\b", re.IGNORECASE | re.MULTILINE)
-VERDICT_ANY_RE = re.compile(r"^\s*verdict:\s*(\w+)", re.IGNORECASE | re.MULTILINE)
-# Required section headings (matched as a heading line, any level), by friendly name.
+# A "Coverage: N/M" line: the literal word, then ':'/'=', then the fraction — so a date ("6/29") or a
+# passing prose mention ("we discussed coverage on 6/29") does NOT satisfy it. It is searched only
+# WITHIN the replay section (see shape_problems), and N<=M with M>0 is enforced there.
+COVERAGE_LINE_RE = re.compile(r"^\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*(\d+)",
+                              re.IGNORECASE | re.MULTILINE)
+# The EFFECTIVE verdict is the LAST "Verdict: <token>" line, so a PASS quoted in prose mid-document
+# cannot satisfy a record whose actual conclusion is BLOCK. The token must be exactly PASS/BLOCK/FAIL.
+VERDICT_LINE_RE = re.compile(r"^\s*verdict:\s*([A-Za-z][A-Za-z-]*)", re.IGNORECASE | re.MULTILINE)
+ANY_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
+# The four mandated lens sections PLUS a Findings section — five required headings in total.
 REQUIRED_SECTIONS = {
     "replay-the-real-failure": re.compile(r"^#{1,6}\s.*replay", re.IGNORECASE | re.MULTILINE),
     "coverage-vs-advertising": re.compile(r"^#{1,6}\s.*coverage\s+vs", re.IGNORECASE | re.MULTILINE),
@@ -76,7 +84,7 @@ REQUIRED_SECTIONS = {
 }
 
 
-def die(msg: str, code: int = 2) -> "NoReturn":  # noqa: F821 - typing.NoReturn without import
+def die(msg: str, code: int = 2) -> NoReturn:
     """Fail closed: print a setup/IO error and exit non-zero so CI blocks."""
     print(f"gate-review-check: ERROR — {msg}")
     raise SystemExit(code)
@@ -114,6 +122,8 @@ def matches_gate(rel_path: str, patterns: list[str]) -> str | None:
 
 def changed_from_git(base: str, head: str) -> list[str]:
     """The PR's changed files: diff over merge-base(base, head)..head (GitHub PR semantics)."""
+    if base == head:
+        die(f"--base equals --head ({base}); cannot compute a PR diff — failing closed.")
     try:
         r = subprocess.run(
             ["git", "-C", str(ROOT), "diff", "--name-only", f"{base}...{head}"],
@@ -126,8 +136,25 @@ def changed_from_git(base: str, head: str) -> list[str]:
     return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
 
 
-def verdict_problems(text: str) -> list[str]:
-    """Return the list of shape problems with a verdict file; empty list == well-formed PASS."""
+def _section_text(text: str, heading_re: re.Pattern[str]) -> str:
+    """The body of the section whose heading matches heading_re, up to the next heading (or EOF)."""
+    m = heading_re.search(text)
+    if not m:
+        return ""
+    nxt = ANY_HEADING_RE.search(text, m.end())
+    return text[m.end(): nxt.start()] if nxt else text[m.end():]
+
+
+def effective_verdict(text: str) -> str | None:
+    """The LAST 'Verdict: <token>' in the file, upper-cased (the effective conclusion), or None.
+    Using the last line means a PASS quoted in prose cannot override a real BLOCK conclusion."""
+    matches = VERDICT_LINE_RE.findall(text)
+    return matches[-1].upper() if matches else None
+
+
+def shape_problems(text: str) -> list[str]:
+    """Structural/evidence problems with a verdict record (independent of the verdict VALUE).
+    Empty list == the record carries the required evidence shape."""
     problems: list[str] = []
     if not PROMPT_VERSION_RE.search(text):
         problems.append("does not name the gate-review-prompt.md version it ran "
@@ -135,37 +162,68 @@ def verdict_problems(text: str) -> list[str]:
     for name, rx in REQUIRED_SECTIONS.items():
         if not rx.search(text):
             problems.append(f"missing the '{name}' section")
-    if not COVERAGE_RE.search(text):
-        problems.append("no coverage figure (expected a 'Coverage: N/M' line proving the real "
-                        "failure was replayed and its coverage measured)")
-    m = VERDICT_ANY_RE.search(text)
-    if not m:
-        problems.append("no explicit 'Verdict: PASS' line")
-    elif not VERDICT_PASS_RE.search(text):
-        problems.append(f"verdict is '{m.group(1).upper()}', not PASS — a failed/blocked review "
-                        f"must not merge until resolved")
+    # The coverage figure must be a real fraction on a 'Coverage:' line INSIDE the replay section, so a
+    # date or a passing mention elsewhere cannot stand in as 'evidence the real failure was replayed'.
+    replay = _section_text(text, REQUIRED_SECTIONS["replay-the-real-failure"])
+    cm = COVERAGE_LINE_RE.search(replay)
+    if not cm:
+        problems.append("no 'Coverage: N/M' line in the replay section (the evidence the real failure "
+                        "was reproduced and its coverage measured)")
+    else:
+        n, m = int(cm.group(1)), int(cm.group(2))
+        if m == 0 or n > m:
+            problems.append(f"coverage figure {n}/{m} is not a real fraction (need M>0 and N<=M)")
     return problems
 
 
-def find_verdict(changed: list[str]) -> tuple[str | None, dict[str, list[str]]]:
-    """Among changed gate-reviews/*.md records, return (path_of_first_well_formed_PASS, all_problems)."""
-    problems_by_file: dict[str, list[str]] = {}
+def decide_verdicts(records: list[tuple[str, str]]) -> tuple[bool, list[str]]:
+    """Pure decision over (name, text) verdict records. Returns (ok, message_lines).
+
+    Fail-safe rules: a BLOCK/FAIL record blocks even if a PASS also exists (a blocking review is not
+    overridden by adding a passing one); a malformed record blocks; the gate clears only if at least
+    one record is a well-formed PASS and none is BLOCK/FAIL. Pure (no disk/network) so it is unit-tested
+    directly in tests/run-golden.py."""
+    if not records:
+        return False, ["No gate-reviews/ verdict was added/modified in this PR."]
+
+    msgs: list[str] = []
+    passing: list[str] = []
+    blocking = False
+    for name, text in records:
+        probs = shape_problems(text)
+        verdict = effective_verdict(text)
+        if verdict in {"BLOCK", "FAIL"}:
+            blocking = True
+            msgs.append(f"{name}: effective verdict is {verdict} — a blocking review must not merge "
+                        f"until resolved and re-reviewed")
+            continue
+        for pr in probs:
+            msgs.append(f"{name}: {pr}")
+        if verdict != "PASS":
+            msgs.append(f"{name}: effective verdict is {verdict or 'absent'} "
+                        f"(must be exactly 'Verdict: PASS')")
+        elif not probs:
+            passing.append(name)
+
+    if blocking:
+        return False, ["a blocking verdict is present (it gates regardless of any PASS):", *msgs]
+    if passing:
+        return True, [f"well-formed PASS verdict present: {passing[0]}"]
+    return False, msgs
+
+
+def evaluate_verdicts(changed: list[str]) -> tuple[bool, list[str]]:
+    """Read the changed gate-reviews/ records from disk and decide (see decide_verdicts). A deleted
+    verdict simply isn't a record, so deleting the only verdict blocks via the empty-records path."""
     candidates = [
         c for c in changed
         if c.startswith(VERDICT_DIR + "/")
         and c.endswith(".md")
         and c.rsplit("/", 1)[-1] not in VERDICT_NON_RECORDS
     ]
-    for c in candidates:
-        p = ROOT / c
-        if not p.is_file():
-            problems_by_file[c] = ["listed as changed but not present on disk"]
-            continue
-        probs = verdict_problems(p.read_text(encoding="utf-8", errors="ignore"))
-        if not probs:
-            return c, problems_by_file
-        problems_by_file[c] = probs
-    return None, problems_by_file
+    records = [(c, (ROOT / c).read_text(encoding="utf-8", errors="ignore"))
+               for c in candidates if (ROOT / c).is_file()]
+    return decide_verdicts(records)
 
 
 def get_changed(args: argparse.Namespace) -> list[str]:
@@ -190,6 +248,9 @@ def main() -> int:
     patterns = load_gate_patterns(GATE_PATHS_FILE)
     changed = get_changed(args)
     if not changed:
+        if args.base and args.head:
+            die("empty diff for the given --base...--head range; an empty PR diff is anomalous "
+                "— failing closed.")
         print("gate-review-check: no changed files detected — nothing to evaluate. PASS.")
         return 0
 
@@ -203,19 +264,14 @@ def main() -> int:
     for c, pat in touched:
         print(f"    • {c}   (matched: {pat})")
 
-    verdict_path, problems = find_verdict(changed)
-    if verdict_path:
-        print(f"gate-review-check: PASS — well-formed PASS verdict present: {verdict_path}")
+    ok, lines = evaluate_verdicts(changed)
+    if ok:
+        print(f"gate-review-check: PASS — {lines[0]}")
         return 0
 
     print("gate-review-check: BLOCKED — a gate-layer change requires an independent gate-review.")
-    if problems:
-        print("  A gate-reviews/ record was changed but is not a well-formed PASS:")
-        for f, probs in problems.items():
-            for pr in probs:
-                print(f"    - {f}: {pr}")
-    else:
-        print("  No gate-reviews/ verdict was added/modified in this PR.")
+    for ln in lines:
+        print(f"  {ln}")
     print("  To clear this check: run ./gate-review-prompt.md (independent, blind), then commit "
           "the verdict under gate-reviews/ (see gate-reviews/TEMPLATE.md). CI green is necessary, "
           "not sufficient, for the gate layer — see CONTRIBUTING.md.")

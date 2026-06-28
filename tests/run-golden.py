@@ -25,6 +25,10 @@ What it locks
       future->WARN, and BOTH bold-label forms still read — the regression lock for the bold-label fix)
     - a Flesch-Kincaid grade pin on a fixed string (so "simplify until green" cannot game the gate by
       turning readability into a no-op)
+  gate-review-check.py (the enforcement linchpin's own regression, CONTRIBUTING.md requirement ii):
+    - matches_gate classifies gate vs non-gate paths; decide_verdicts/effective_verdict reject the
+      rubber-stamp vectors an independent review caught (PASS quoted in prose over a BLOCK, coverage
+      0/0 or outside the replay section, PASS-WITH-NITS, a co-committed BLOCK) and accept a clean PASS
 
 Run by hand or from the release gate:
     python3 tests/run-golden.py            # exit 0 if every assertion holds, 1 otherwise
@@ -52,6 +56,7 @@ UG_GEN = ROOT / "skills" / "usage-guide" / "assets" / "usage_guide_generator.py"
 GOLDEN_GOOD = ROOT / "tests" / "golden-good"
 GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
+GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
 # golden-good assertion is 0 FAIL (a staleness WARN would still be allowed), and the EXACT staleness
@@ -272,13 +277,66 @@ def doc_critic_mapping(res: Results, verbose: bool) -> None:
         res.check(ok, f'evidence finding "{needle[:28]}…" mapped', detail)
 
 
+def gate_review_check(res: Results, verbose: bool) -> None:
+    """Regression fixture for gate-review-check.py — the enforcement linchpin (CONTRIBUTING.md
+    requirement ii applied to the new mechanism itself). Locks the path classifier and the verdict
+    decision, INCLUDING the rubber-stamp vectors an independent review caught, so a future no-op revert
+    of any of them turns this red. Pure: drives the imported functions, no network, no clock."""
+    print("gate-review-check (the enforcement linchpin guards itself):")
+    grc = _load("grc", GATE_REVIEW_CHECK)
+    patterns = grc.load_gate_patterns(grc.GATE_PATHS_FILE)
+
+    # 1. Path classification: gate-layer vs not.
+    gate_paths = ["build-skills.sh", "lint-anything.py", "tests/run-golden.py",
+                  ".github/workflows/gate-review.yml", "shared/verify.py", "shared/ci/verify-docs.yml",
+                  "check-version.py", "gate-review-check.py", "docs/SETTINGS.md"]
+    non_gate = ["README.md", "shared/house-style.md", "skills/doc-critic/SKILL.md",
+                "shared/render-contract.md"]
+    missed = [p for p in gate_paths if not grc.matches_gate(p, patterns)]
+    false_gated = [p for p in non_gate if grc.matches_gate(p, patterns)]
+    res.check(not missed, "matches_gate: every gate path is classified gate-layer",
+              ", ".join(missed) or "all gated")
+    res.check(not false_gated, "matches_gate: non-gate paths are not gated",
+              ", ".join(false_gated) or "none gated")
+
+    # 2. Verdict decision — a well-formed PASS clears; the rubber-stamp vectors a review caught block.
+    base = ("- Prompt: gate-review-prompt.md v1.0.0\n"
+            "## Replay the real failure\nCoverage: {cov}\n{body}"
+            "## Coverage vs advertising\nx\n## Self-description drift\nx\n"
+            "## Fixture requirement\nx\n## Findings\n{find}\nVerdict: {v}\n")
+    good = base.format(cov="5/5 sites", body="", find="none", v="PASS")
+    prose_block = base.format(cov="5/5", body="I may only write Verdict: PASS once clean.\n",
+                              find="BLOCKER: x", v="BLOCK")
+    zero = base.format(cov="0/0", body="", find="none", v="PASS")
+    nits = base.format(cov="5/5", body="", find="none", v="PASS-WITH-NITS")
+    misplaced = ("- Prompt: gate-review-prompt.md v1.0.0\n## Replay the real failure\n"
+                 "measured coverage on 6/29\n## Coverage vs advertising\nx\n## Self-description drift\n"
+                 "x\n## Fixture requirement\nx\n## Findings\nCoverage: 3/5\nVerdict: PASS\n")
+    cases = [
+        ("well-formed PASS clears", [("good.md", good)], True),
+        ("PASS-in-prose over an effective BLOCK blocks", [("p.md", prose_block)], False),
+        ("coverage 0/0 blocks", [("z.md", zero)], False),
+        ("coverage outside the replay section blocks", [("m.md", misplaced)], False),
+        ("Verdict: PASS-WITH-NITS blocks", [("n.md", nits)], False),
+        ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False),
+        ("no verdict record blocks", [], False),
+    ]
+    for name, records, want in cases:
+        ok, _ = grc.decide_verdicts(records)
+        res.check(ok == want, f"decide_verdicts: {name}", f"ok={ok} want={want}")
+
+    # 3. effective_verdict takes the LAST verdict line (not any PASS mentioned earlier).
+    ev = grc.effective_verdict("Verdict: PASS\n...\nVerdict: BLOCK\n")
+    res.check(ev == "BLOCK", "effective_verdict: the last verdict line wins", f"got {ev}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Golden-fixture regression: the gates that guard the gates.")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print each verifier's resolved-values line / fixture findings")
     args = ap.parse_args()
 
-    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK):
+    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -291,6 +349,8 @@ def main() -> int:
     deterministic_pins(res, args.verbose)
     print()
     doc_critic_mapping(res, args.verbose)
+    print()
+    gate_review_check(res, args.verbose)
     print()
     total = res.passed + res.failed
     print(f"--- golden: {res.passed}/{total} assertions passed, {res.failed} failed ---")
