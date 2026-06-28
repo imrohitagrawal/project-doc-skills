@@ -22,9 +22,10 @@ What it checks (each an exact directory-vs-document set comparison):
   occurrence checked, not just the first.
 
 Why it is low-false-positive by design:
-  - Every site check is an exact set comparison (no prose heuristics); the "→"/"·" lists are picked as
-    the run that best matches the skill set, and the two tables are scoped by their row shape, so an
-    unrelated list/table cannot pollute them.
+  - Every site check is an exact set comparison (no prose heuristics). Each site is position/region
+    scoped — the two tables by their row shape and the attachment table's section, the tree by the
+    skills/ block, and the "→"/"·" lists by the phrase that introduces them (the FIRST run after the
+    anchor, never a whole-doc best-match) — so a decoy list/table elsewhere cannot be selected.
   - The count checks are anchored to SPECIFIC suite-count phrases, so the legitimate "the other seven
     skills" (N-1), "Six [authoring skills] turn ..." (a sub-count), and a dated "all seven skills were
     clean" history line never match. A non-numeric capture and a reworded-away phrase are skipped — a
@@ -106,26 +107,31 @@ def attach_table_skills(text: str, _canonical: set[str]) -> set[str]:
     return set(re.findall(r"^\|\s*([a-z][a-z0-9-]+)\s*\|", region, re.MULTILINE))
 
 
-def _separated_run(text: str, sep: str, canonical: set[str]) -> set[str]:
-    """The <sep>-separated run of kebab names that best matches the canonical set (so an unrelated list
-    of the same shape cannot pollute it). Empty set if no run with >= 2 known skills is found."""
+def _anchored_run(text: str, sep: str, anchor: "re.Pattern[str]") -> set[str]:
+    """The FIRST <sep>-separated run of kebab names AFTER the region anchor, so a decoy run elsewhere in
+    the document cannot be selected. (An earlier 'best-match across the whole doc' selection could be
+    fooled: a full decoy list would win on overlap and mask a broken real list.) Empty set if the anchor
+    is absent or no run follows it — there is NO fall-back to a whole-document scan, which would
+    reinstate the decoy-match silent-pass."""
+    m = anchor.search(text)
+    if not m:
+        return set()
     esep = re.escape(sep)
-    best: set[str] = set()
-    best_overlap = 1   # require >= 2 known skills to treat a run as the skill list
-    for run in re.findall(rf"[a-z][a-z0-9-]+(?:\s*{esep}\s*[a-z][a-z0-9-]+)+", text):
-        names = set(re.split(rf"\s*{esep}\s*", run.strip()))
-        overlap = len(names & canonical)
-        if overlap > best_overlap:
-            best, best_overlap = names, overlap
-    return best
+    run = re.search(rf"[a-z][a-z0-9-]+(?:\s*{esep}\s*[a-z][a-z0-9-]+)+", text[m.end():])
+    return set(re.split(rf"\s*{esep}\s*", run.group(0).strip())) if run else set()
 
 
-def improve_order_skills(text: str, canonical: set[str]) -> set[str]:
-    return _separated_run(text, "→", canonical)   # "→"
+# Region anchors: the distinctive phrase that introduces each list (position-scoped, not best-match).
+_IMPROVE_ORDER_ANCHOR = re.compile(r"producers before consumers")   # README improve-order intro
+_PICK_LIST_ANCHOR = re.compile(r"below with one of")                # per-skill-prompt {SKILL_NAME} intro
 
 
-def pick_list_skills(text: str, canonical: set[str]) -> set[str]:
-    return _separated_run(text, "·", canonical)   # "·"
+def improve_order_skills(text: str, _canonical: set[str]) -> set[str]:
+    return _anchored_run(text, "→", _IMPROVE_ORDER_ANCHOR)
+
+
+def pick_list_skills(text: str, _canonical: set[str]) -> set[str]:
+    return _anchored_run(text, "·", _PICK_LIST_ANCHOR)
 
 
 # file, human label, extractor

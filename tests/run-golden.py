@@ -425,9 +425,11 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
          "├─ skills/\n│  ├─ alpha/\n│  ├─ beta/\n│  └─ gamma/\n├─ build.sh\n",
          "├─ skills/\n│  ├─ alpha/\n│  └─ beta/\n├─ build.sh\n"),
         ("README improve-order", m.improve_order_skills,
-         "**alpha → beta → gamma.**\n", "**alpha → beta.**\n"),
+         "in this order (producers before consumers):\n**alpha → beta → gamma.**\n",
+         "in this order (producers before consumers):\n**alpha → beta.**\n"),
         ("prompt pick-list", m.pick_list_skills,
-         "one of `alpha · beta · gamma`\n", "one of `alpha · beta`\n"),
+         "below with one of\n`alpha · beta · gamma`\n",
+         "below with one of\n`alpha · beta`\n"),
         ("prompt attachment table", m.attach_table_skills,
          "### File-attachment guide\n| alpha | a |\n| beta | b |\n| gamma | c |\n",
          "### File-attachment guide\n| alpha | a |\n| beta | b |\n"),
@@ -454,8 +456,10 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
     reformatted = [
         ("README table un-bolded", m.readme_table_skills, "| alpha | x |\n| beta | y |\n| gamma | z |\n"),
         ("README tree as markdown list", m.readme_tree_skills, "- skills/\n  - alpha/\n  - beta/\n  - gamma/\n"),
-        ("README improve-order comma-separated", m.improve_order_skills, "**alpha, beta, gamma.**\n"),
-        ("prompt pick-list comma-separated", m.pick_list_skills, "one of `alpha, beta, gamma`\n"),
+        ("README improve-order delimiter changed", m.improve_order_skills,
+         "in this order (producers before consumers):\n**alpha, beta, gamma.**\n"),
+        ("prompt pick-list delimiter changed", m.pick_list_skills,
+         "replace `{SKILL_NAME}` below with one of\n`alpha, beta, gamma`\n"),
         ("prompt attachment table, no section heading", m.attach_table_skills,
          "| alpha | a |\n| beta | b |\n| gamma | c |\n"),
     ]
@@ -463,6 +467,19 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
         got = fn(text, canon)
         res.check(got != canon, f"fail-closed on reformat: {label}",
                   "empty -> could-not-locate" if not got else f"got {sorted(got)}")
+
+    # Decoy-proof (the position-scoped → / · selectors): a BROKEN real list (missing a skill) with a
+    # FULL decoy run of the same delimiter elsewhere must yield the BROKEN set, never canonical. The
+    # earlier best-match selector was fooled — the full decoy won on overlap and masked the broken list.
+    io_decoy = ("in this order (producers before consumers):\n**alpha → beta.**\n\n"
+                "decoy elsewhere: **alpha → beta → gamma**\n")
+    pl_decoy = "below with one of\n`alpha · beta`\n\ndecoy: `alpha · beta · gamma`\n"
+    io_got = m.improve_order_skills(io_decoy, canon)
+    pl_got = m.pick_list_skills(pl_decoy, canon)
+    res.check(io_got == {"alpha", "beta"}, "decoy-proof: improve-order ignores a full decoy run",
+              f"got {sorted(io_got)} (must be the broken real list, not canonical)")
+    res.check(pl_got == {"alpha", "beta"}, "decoy-proof: pick-list ignores a full decoy run",
+              f"got {sorted(pl_got)} (must be the broken real list, not canonical)")
 
 
 def main() -> int:
