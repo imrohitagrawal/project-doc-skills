@@ -429,7 +429,8 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
         ("prompt pick-list", m.pick_list_skills,
          "one of `alpha · beta · gamma`\n", "one of `alpha · beta`\n"),
         ("prompt attachment table", m.attach_table_skills,
-         "| alpha | a |\n| beta | b |\n| gamma | c |\n", "| alpha | a |\n| beta | b |\n"),
+         "### File-attachment guide\n| alpha | a |\n| beta | b |\n| gamma | c |\n",
+         "### File-attachment guide\n| alpha | a |\n| beta | b |\n"),
     ]
     for label, fn, full_text, dropped_text in cases:
         full = fn(full_text, canon)
@@ -445,6 +446,23 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
     res.check(not good and len(bad_word) == 1 and len(bad_digit) == 1,
               "count phrase: correct passes, wrong caught (word + digit)",
               f"good={good} word={len(bad_word)} digit={len(bad_digit)}")
+
+    # Fail-CLOSED: an unparseable reformat of each site must yield a set that does NOT match canonical
+    # (so the lint reports "could not locate" / a mismatch and exits 1), never a silent clean — the
+    # interim safeguard until the generate-don't-lint redesign. Each input below is a plausible reformat
+    # the extractor cannot parse; it must return empty (or a wrong set), never the canonical set.
+    reformatted = [
+        ("README table un-bolded", m.readme_table_skills, "| alpha | x |\n| beta | y |\n| gamma | z |\n"),
+        ("README tree as markdown list", m.readme_tree_skills, "- skills/\n  - alpha/\n  - beta/\n  - gamma/\n"),
+        ("README improve-order comma-separated", m.improve_order_skills, "**alpha, beta, gamma.**\n"),
+        ("prompt pick-list comma-separated", m.pick_list_skills, "one of `alpha, beta, gamma`\n"),
+        ("prompt attachment table, no section heading", m.attach_table_skills,
+         "| alpha | a |\n| beta | b |\n| gamma | c |\n"),
+    ]
+    for label, fn, text in reformatted:
+        got = fn(text, canon)
+        res.check(got != canon, f"fail-closed on reformat: {label}",
+                  "empty -> could-not-locate" if not got else f"got {sorted(got)}")
 
 
 def main() -> int:

@@ -96,8 +96,14 @@ def readme_tree_skills(text: str, _canonical: set[str]) -> set[str]:
 
 
 def attach_table_skills(text: str, _canonical: set[str]) -> set[str]:
-    """First-column (un-bolded) skill names in the per-skill-prompt attachment table: | name | ... |."""
-    return set(re.findall(r"^\|\s*([a-z][a-z0-9-]+)\s*\|", text, re.MULTILINE))
+    """First-column (un-bolded) skill names in the per-skill-prompt attachment table: | name | ... |.
+    Region-scoped to the 'File-attachment guide' section, so a reformat that retitles or moves the
+    table yields an empty set (-> 'could not locate' -> exit 1) rather than a stray whole-file match."""
+    anchor = re.search(r"File-attachment guide", text)
+    if not anchor:
+        return set()
+    region = text[anchor.start():]
+    return set(re.findall(r"^\|\s*([a-z][a-z0-9-]+)\s*\|", region, re.MULTILINE))
 
 
 def _separated_run(text: str, sep: str, canonical: set[str]) -> set[str]:
