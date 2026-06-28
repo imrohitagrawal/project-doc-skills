@@ -54,14 +54,15 @@ The full multi-lens blind review below is the default, but it must not be mandat
 comment fix — if every gate-touching change demands a 4-agent crew, you will be tempted to switch the
 gate off, and then it is theatre. So:
 
-- **Light path (single reviewer, ~10 minutes).** Allowed **only** for a genuinely **non-behavioral**
-  change: a comment, docstring, prose, or whitespace edit with **no** change to any check's logic, to
-  the gated set (`.github/gate-paths`), to a count/threshold/enumeration, or to the policy's meaning.
-  The check enforces a floor on this: it **refuses** the light path unless every changed gate path is
-  docs-only (`*.md`) — any `*.py`/`*.sh`/`*.yml`/`.github/gate-paths` edit demands the full review,
-  whatever you declare. One reviewer reads the whole diff, confirms the change is non-behavioral, and
+- **Light path (single reviewer, ~10 minutes).** Allowed **only** for an **inert gated doc** — a `*.md`
+  whose wording no enforced behavior depends on. **Today that is exactly one file: `gate-reviews/README.md`.**
+  The check enforces this floor: it **refuses** the light path for code/config *and* for the behavioral
+  governance docs — this prompt (the lenses), `gate-reviews/TEMPLATE.md` (the verdict contract),
+  `CONTRIBUTING.md` (the policy), and `docs/SETTINGS.md` (the recorded ruleset) — because editing any of
+  those changes how the gate itself works. For an inert doc, one reviewer reads the whole diff and
   records a verdict with `Tier: light`, `Coverage: N/A`, and a one-line `Light-path justification:`
-  naming the change class. Still produce the full record (all sections + Findings) answered briefly.
+  (e.g. "README wording only; no enforced behavior depends on it"). Still produce the full record (all
+  sections + Findings) answered briefly.
 - **Full path (the crew).** Everything else — any change to a check's behavior, the gated set, a
   count/threshold, a fixture, the policy, or anything you are unsure about. Run the blind decorrelated
   lenses + adjudicator, replay the real failure, and state a real `Coverage: N/M`. The different-vendor
@@ -188,8 +189,9 @@ stamp):
 - the sections **Replay the real failure**, **Coverage vs advertising**, **Self-description drift**,
   **Fixture requirement**, and **Findings** (five headings);
 - a **`Coverage: N/M`** line inside the replay section (the evidence the real failure was reproduced
-  and measured, not synthetically mutated) — **or**, for a declared `Tier: light` non-behavioral
-  change, `Coverage: N/A` plus a `Light-path justification:` line in place of the fraction;
+  and measured, not synthetically mutated) — **or**, for a declared `Tier: light` change to an **inert
+  gated doc** (today only `gate-reviews/README.md`), `Coverage: N/A` plus a `Light-path justification:`
+  line in place of the fraction;
 - a **Findings** section carrying **file:line** findings (severity-ranked) — or an explicit `none` if
   the review genuinely found nothing. A bare heading over a PASS line is not evidence and is rejected;
 - a final **`Verdict: PASS`** — you may only write PASS if every BLOCKER and MAJOR is resolved in the

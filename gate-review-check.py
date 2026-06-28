@@ -29,10 +29,11 @@ WHAT IT CHECKS (for the changed-file set of a PR)
          a bare heading over a PASS line),
        - its EFFECTIVE (last) 'Verdict:' line is exactly PASS.
      PROPORTIONALITY: a declared 'Tier: light' verdict may use 'Coverage: N/A' with a 'Light-path
-     justification:' line instead of a fraction — but ONLY when every changed gate path is docs-only
-     ('*.md'); a code/config gate change (*.py/*.sh/*.yml/.github/gate-paths) refuses the light path
-     and demands the full review. Tier defaults to 'full' (and a mixed full+light resolves to full),
-     so the lighter bar is never granted by omission or by a stray later 'Tier: light' line.
+     justification:' line instead of a fraction — but ONLY when every changed gate path is an INERT
+     gated doc (today: gate-reviews/README.md). Code/config AND the behavioral governance docs (the
+     review lenses, the verdict contract, the policy, the recorded ruleset) refuse the light path and
+     demand the full review. Tier defaults to 'full' (and a mixed full+light resolves to full), so the
+     lighter bar is never granted by omission or by a stray later 'Tier: light' line.
      A record that is malformed, whose effective verdict is BLOCK/FAIL, or that only quotes
      'PASS' in prose, FAILS this check. A co-committed BLOCK record blocks even if a PASS
      record is also present (a blocking review is not overridden by adding a passing one).
@@ -68,6 +69,18 @@ GATE_PATHS_FILE = ROOT / ".github" / "gate-paths"
 VERDICT_DIR = "gate-reviews"
 # Files under gate-reviews/ that are scaffolding, not a verdict for a specific PR.
 VERDICT_NON_RECORDS = {"TEMPLATE.md", "README.md"}
+# Gated Markdown that ENCODES enforced behavior — the review lenses, the verdict contract, the policy,
+# and the recorded ruleset. Editing one changes how the gate itself works, so it must take the FULL
+# review even though it is '*.md'. Without this, "light = docs-only" was a loophole: the only gated .md
+# you can reach is a governance instrument, so light was reachable only by lightly editing the gate's
+# own rules. gate-reviews/README.md is deliberately EXCLUDED — it is descriptive, no enforced behavior
+# depends on it, so it stays the light path's one legitimate inert member.
+BEHAVIORAL_GATE_DOCS = {
+    "gate-review-prompt.md",     # the review lenses
+    "gate-reviews/TEMPLATE.md",  # the verdict contract
+    "CONTRIBUTING.md",           # the policy
+    "docs/SETTINGS.md",          # the recorded ruleset
+}
 
 # A verdict's required shape. Each is a low-false-positive structural marker; together
 # they require the reviewer to have produced EVIDENCE, so a one-line rubber stamp fails.
@@ -207,13 +220,15 @@ def shape_problems(text: str, allow_light: bool = True) -> list[str]:
             problems.append(f"missing the '{name}' section")
     # The coverage figure must be a real fraction on a 'Coverage:' line INSIDE the replay section, so a
     # date or a passing mention elsewhere cannot stand in as 'evidence the real failure was replayed'.
-    # Proportionality: a declared 'Tier: light' (non-behavioral change) may use 'Coverage: N/A' instead,
-    # but only when the change is docs-only (allow_light) and it carries a 'Light-path justification:'.
+    # Proportionality: a declared 'Tier: light' may use 'Coverage: N/A' instead of a fraction, but only
+    # for an INERT gated doc (allow_light — today just gate-reviews/README.md), with a justification.
     tier = effective_tier(text)
     if tier == "light" and not allow_light:
-        problems.append("a 'Tier: light' verdict is not permitted here: this change touches gate-layer "
-                        "code/config — only a docs-only ('*.md') gate change may use the light path. "
-                        "Run the full review with a real 'Coverage: N/M'.")
+        problems.append("a 'Tier: light' verdict is not permitted here: the light path is for INERT "
+                        "gated docs only (today: gate-reviews/README.md). Gate-layer code/config AND "
+                        "the behavioral governance docs (the review lenses, the verdict contract, the "
+                        "policy, the recorded ruleset) always take the full review with a real "
+                        "'Coverage: N/M'.")
     light_ok = tier == "light" and allow_light
     replay = _section_text(text, REQUIRED_SECTIONS["replay-the-real-failure"])
     cm = COVERAGE_LINE_RE.search(replay)
@@ -228,8 +243,8 @@ def shape_problems(text: str, allow_light: bool = True) -> list[str]:
                             "gated set, a count/threshold, or the policy's meaning)")
     else:
         problems.append("no 'Coverage: N/M' line in the replay section (a real fraction proving the "
-                        "real failure was replayed; or, for a docs-only non-behavioral change, "
-                        "'Tier: light' + 'Coverage: N/A' + a 'Light-path justification:' line)")
+                        "real failure was replayed; or, for an inert gated doc, 'Tier: light' + "
+                        "'Coverage: N/A' + a 'Light-path justification:' line)")
     # Evidence, not a stamp: the Findings section must carry file:line anchors, or an explicit 'none' —
     # a bare heading over a PASS line is not a review. The section may use '###' subsections, so scan
     # from its heading to the next TOP-LEVEL ('#'/'##') heading (not any heading) or EOF.
@@ -281,12 +296,22 @@ def decide_verdicts(records: list[tuple[str, str]], allow_light: bool = True) ->
     return False, msgs
 
 
+def light_admissible(gate_paths: list[str]) -> bool:
+    """Whether the light review path is permitted for this set of changed gate paths. Pure (no disk),
+    so it is unit-locked directly in tests/run-golden.py. Light is allowed ONLY when every changed gate
+    path is an INERT gated doc: a '*.md' that is not in BEHAVIORAL_GATE_DOCS. So code/config and the
+    behavioral governance docs (lenses, contract, policy, ruleset) all require the full review; today
+    the sole light-eligible gate path is gate-reviews/README.md."""
+    return bool(gate_paths) and all(
+        p.endswith(".md") and p not in BEHAVIORAL_GATE_DOCS for p in gate_paths)
+
+
 def evaluate_verdicts(changed: list[str], gate_paths: list[str]) -> tuple[bool, list[str]]:
     """Read the changed gate-reviews/ records from disk and decide (see decide_verdicts). A deleted
     verdict simply isn't a record, so deleting the only verdict blocks via the empty-records path.
-    The light path is admissible only when every changed gate path is docs-only ('*.md') — a code or
-    config gate change (a *.py / *.sh / *.yml / .github/gate-paths edit) requires the full review."""
-    allow_light = bool(gate_paths) and all(p.endswith(".md") for p in gate_paths)
+    The light path is admissible only for inert gated docs (see light_admissible) — code, config, AND
+    the behavioral governance docs (lenses/contract/policy/ruleset) all require the full review."""
+    allow_light = light_admissible(gate_paths)
     candidates = [
         c for c in changed
         if c.startswith(VERDICT_DIR + "/")

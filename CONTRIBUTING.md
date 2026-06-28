@@ -160,13 +160,15 @@ this policy (that would couple the mechanism to unrelated content):
 **Scale the review to the change (proportionality).** The default is the full blind multi-lens review,
 but a one-line comment fix should not demand a 4-agent crew — if it always did, you would be tempted to
 turn the gate off, and then it is theatre. So `gate-review-prompt.md` defines two tiers: a **light** path
-(a single reviewer; `Tier: light` + `Coverage: N/A` + a `Light-path justification:`) for a declared
-non-behavioral change; and the **full** path (the crew + a real `Coverage: N/M` + the optional
+(a single reviewer; `Tier: light` + `Coverage: N/A` + a `Light-path justification:`) for a change to an
+**inert gated doc**; and the **full** path (the crew + a real `Coverage: N/M` + the optional
 different-vendor pass) for everything else. The light path is not just self-declared: `gate-review-check.py`
-**refuses** it unless every changed gate path is docs-only (`*.md`) — any `*.py`/`*.sh`/`*.yml`/
-`.github/gate-paths` edit forces the full review. The tier defaults to **full** (and a mixed full+light
-resolves to full), so the lighter bar is never granted by omission, and the verdict still carries
-file:line findings (or an explicit `none`).
+**refuses** it unless every changed gate path is an inert `*.md` — **today exactly `gate-reviews/README.md`**.
+Code/config *and* the behavioral governance docs (this policy, `gate-review-prompt.md`,
+`gate-reviews/TEMPLATE.md`, `docs/SETTINGS.md`) all force the full review, because editing any of them
+changes how the gate itself works. The tier defaults to **full** (and a mixed full+light resolves to
+full), so the lighter bar is never granted by omission, and the verdict still carries file:line findings
+(or an explicit `none`).
 
 1. **Find the changed gate paths.** `python3 gate-review-check.py --base origin/main --head HEAD` (it
    prints the gate paths your PR touches, or tells you none are).

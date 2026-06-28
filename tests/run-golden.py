@@ -282,7 +282,8 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     """Regression fixture for gate-review-check.py — the enforcement linchpin (CONTRIBUTING.md
     requirement ii applied to the new mechanism itself). Locks the path classifier, the load-bearing
     SELF-INCLUSION property (the enforcement's own files are gate-layer), the proportional review tiers
-    (full needs a real coverage fraction; light needs N/A + a justification), the findings-evidence
+    (full needs a real coverage fraction; light is for INERT gated docs only — gate-reviews/README.md —
+    via light_admissible, so the behavioral governance docs and code/config take full), findings-evidence
     rule, and the rubber-stamp vectors an independent review caught — so a future no-op revert of any of
     them turns this red. Pure: drives the imported functions, no network, no clock."""
     print("gate-review-check (the enforcement linchpin guards itself):")
@@ -309,6 +310,18 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     self_missed = [p for p in enforcement if not grc.matches_gate(p, patterns)]
     res.check(not self_missed, "self-inclusion: the enforcement's own files are gated",
               ", ".join(self_missed) or "all self-included")
+
+    # 1b. light_admissible (pure): light is for INERT gated docs only (today: gate-reviews/README.md).
+    # The behavioral governance docs (lenses/contract/policy/ruleset) and all code/config take full.
+    light_cases = [
+        (["gate-review-prompt.md"], False), (["CONTRIBUTING.md"], False),
+        (["docs/SETTINGS.md"], False), (["gate-reviews/TEMPLATE.md"], False),
+        (["gate-reviews/README.md"], True), (["gate-reviews/README.md", "CONTRIBUTING.md"], False),
+        ([], False),
+    ]
+    for paths, want in light_cases:
+        got = grc.light_admissible(paths)
+        res.check(got == want, f"light_admissible({paths})", f"got {got} want {want}")
 
     # 2. Verdict decision — a well-formed PASS clears; the rubber-stamp vectors a review caught block.
     base = ("- Prompt: gate-review-prompt.md v1.0.0\n"
@@ -347,10 +360,10 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     # items ('- Tier: light'), which the unbulleted regexes silently ignored -> the template's own light
     # path defaulted to full; and an unfilled template placeholder must not pass as evidence.
     tmpl_light = ("- Prompt: gate-review-prompt.md v1.0.0\n- Tier: light\n"
-                  "- Light-path justification: typo fix in CONTRIBUTING.md; no logic change\n"
+                  "- Light-path justification: README wording only; no enforced behavior depends on it\n"
                   "## Replay the real failure\nCoverage: N/A\n## Coverage vs advertising\nx\n"
                   "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\n- none\n"
-                  "Verdict: PASS\n")  # exact TEMPLATE bullet form; docs-only -> must clear as light
+                  "Verdict: PASS\n")  # exact TEMPLATE bullet form; inert-doc light -> must clear
     placeholder = base.format(cov="5/5", body="", find="foo.py:1 issue\n[changed_gate_paths]", v="PASS")
     # (name, records, want, allow_light)
     cases = [
@@ -365,11 +378,22 @@ def gate_review_check(res: Results, verbose: bool) -> None:
         ("coverage outside the replay section blocks", [("m.md", misplaced)], False, True),
         ("Verdict: PASS-WITH-NITS blocks", [("n.md", nits)], False, True),
         ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False, True),
-        ("light tier: N/A + justification clears (docs-only)", [("lo.md", light_ok)], True, True),
-        ("BULLETED template '- Tier: light' is recognized (docs-only) -> clears", [("tl.md", tmpl_light)], True, True),
+        # CONTRACT UPDATE (#6): the light "clears" cases are now grounded in light_admissible with a
+        # real inert path (gate-reviews/README.md) — input + expectation aligned to the stricter policy,
+        # not a weakened assertion. The expectation (clears) is unchanged; the input is now the ONLY
+        # legitimate light member.
+        ("light tier clears for an INERT gated doc (gate-reviews/README.md)",
+         [("lo.md", light_ok)], True, grc.light_admissible(["gate-reviews/README.md"])),
+        ("BULLETED template '- Tier: light' on an inert doc (README) -> clears",
+         [("tl.md", tmpl_light)], True, grc.light_admissible(["gate-reviews/README.md"])),
+        # THE FLIP (#6): a behavioral governance doc is a gated *.md, but light is now REFUSED for it
+        # (previously this exact shape would have cleared, because any *.md set allow_light=True).
+        ("light tier is REFUSED for a behavioral governance doc (gate-review-prompt.md)",
+         [("lg.md", light_ok)], False, grc.light_admissible(["gate-review-prompt.md"])),
         ("an unfilled '[changed_gate_paths]' placeholder -> blocks", [("ph.md", placeholder)], False, True),
         ("light tier: N/A without justification blocks", [("ln.md", light_nojust)], False, True),
-        ("light tier is REFUSED when the change touches code (allow_light=False)", [("lc.md", light_ok)], False, False),
+        ("light tier is REFUSED when the change touches code (gate-review-check.py)",
+         [("lc.md", light_ok)], False, grc.light_admissible(["gate-review-check.py"])),
         ("mixed Tier full+light resolves to full -> N/A insufficient -> blocks", [("mt.md", both_tiers)], False, True),
         ("full tier: Coverage N/A blocks (full needs a fraction)", [("fn.md", full_na)], False, True),
         ("no verdict record blocks", [], False, True),

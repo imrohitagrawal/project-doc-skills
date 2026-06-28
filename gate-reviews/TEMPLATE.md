@@ -1,18 +1,19 @@
 # Gate-review verdict — [pr_ref]
 
 - Prompt: gate-review-prompt.md v1.0.0
-- Tier: full   <!-- CHANGE this single line to 'Tier: light' for a declared non-behavioral change
-                    (do not add a second tier line — mixed full+light resolves to full). The check
-                    refuses light unless every changed gate path is docs-only (*.md); any code/config
-                    gate change forces full. See gate-review-prompt.md "Proportionality". -->
+- Tier: full   <!-- CHANGE this single line to 'Tier: light' ONLY for a change to an inert gated doc
+                    (today: gate-reviews/README.md). Do not add a second tier line — mixed full+light
+                    resolves to full. The check refuses light for code/config AND for the behavioral
+                    governance docs (this prompt, TEMPLATE.md, CONTRIBUTING.md, docs/SETTINGS.md). See
+                    gate-review-prompt.md "Proportionality". -->
 - PR / branch: [pr_ref]
 - Diff range: [base..head]
 - Gate-layer paths changed: [changed_gate_paths]   (the list gate-review-check.py printed)
 - Reviewers / instruments: [e.g. 3 blind same-model lenses + adjudicator; + different-vendor cold pass]
 - Independence limit honestly stated: [e.g. same-model = context isolation, not weight decorrelation]
-<!-- LIGHT path only: uncomment the next line and set Coverage: N/A below.
-- Light-path justification: [comment/doc/whitespace only; no change to any check's logic, the gated
-  set, a count/threshold, or the policy's meaning] -->
+<!-- LIGHT path only (an inert gated doc): uncomment the next line and set Coverage: N/A below.
+- Light-path justification: [inert gated doc only, e.g. "README wording; no enforced behavior
+  depends on it"] -->
 
 > Copy this file to `gate-reviews/<short-name>.md`, fill every `[...]`, and commit it in the PR.
 > The required `gate-review` check reads it and verifies the shape AND the evidence — a blind copy of
