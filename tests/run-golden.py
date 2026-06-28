@@ -58,6 +58,7 @@ GOLDEN_GOOD = ROOT / "tests" / "golden-good"
 GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
+LINT_SKILL_COUNT = ROOT / "lint-skill-count.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
 # golden-good assertion is 0 FAIL (a staleness WARN would still be allowed), and the EXACT staleness
@@ -407,13 +408,53 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     res.check(ev == "BLOCK", "effective_verdict: the last verdict line wins", f"got {ev}")
 
 
+def skill_count_extractors(res: Results, verbose: bool) -> None:
+    """Unit-lock every enumeration-site extractor in lint-skill-count.py: each must find the full set,
+    and a drop must change it. (Guards the guard — the lint once shipped covering only 2 of its 5 sites
+    and printed 'clean' on real drift.) Synthetic inputs, so this never couples to the live README.
+    """
+    print("skill-count lint — each site extractor finds the set, and a drop is detected:")
+    m = _load("skillcount", LINT_SKILL_COUNT)
+    canon = {"alpha", "beta", "gamma"}
+    # (label, extractor, full-text -> {alpha,beta,gamma}, dropped-text -> {alpha,beta})
+    cases = [
+        ("README skill table", m.readme_table_skills,
+         "| **alpha** | x |\n| **beta** | y |\n| **gamma** | z |\n",
+         "| **alpha** | x |\n| **beta** | y |\n"),
+        ("README repo tree", m.readme_tree_skills,
+         "├─ skills/\n│  ├─ alpha/\n│  ├─ beta/\n│  └─ gamma/\n├─ build.sh\n",
+         "├─ skills/\n│  ├─ alpha/\n│  └─ beta/\n├─ build.sh\n"),
+        ("README improve-order", m.improve_order_skills,
+         "**alpha → beta → gamma.**\n", "**alpha → beta.**\n"),
+        ("prompt pick-list", m.pick_list_skills,
+         "one of `alpha · beta · gamma`\n", "one of `alpha · beta`\n"),
+        ("prompt attachment table", m.attach_table_skills,
+         "| alpha | a |\n| beta | b |\n| gamma | c |\n", "| alpha | a |\n| beta | b |\n"),
+    ]
+    for label, fn, full_text, dropped_text in cases:
+        full = fn(full_text, canon)
+        dropped = fn(dropped_text, canon)
+        ok = (full == canon) and (dropped == {"alpha", "beta"})
+        res.check(ok, f"site extractor: {label}",
+                  f"full={sorted(full)} dropped={sorted(dropped)}" if verbose else f"{len(full)}->{len(dropped)}")
+
+    # Count phrases: correct passes; a wrong count is caught in BOTH word and digit form.
+    good = m.check_count_phrases("a suite of three independent skills", m.README_COUNT_PHRASES, 3, "x")
+    bad_word = m.check_count_phrases("a suite of two independent skills", m.README_COUNT_PHRASES, 3, "x")
+    bad_digit = m.check_count_phrases("a suite of 2 independent skills", m.README_COUNT_PHRASES, 3, "x")
+    res.check(not good and len(bad_word) == 1 and len(bad_digit) == 1,
+              "count phrase: correct passes, wrong caught (word + digit)",
+              f"good={good} word={len(bad_word)} digit={len(bad_digit)}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Golden-fixture regression: the gates that guard the gates.")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print each verifier's resolved-values line / fixture findings")
     args = ap.parse_args()
 
-    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK):
+    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
+                   LINT_SKILL_COUNT):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -428,6 +469,8 @@ def main() -> int:
     doc_critic_mapping(res, args.verbose)
     print()
     gate_review_check(res, args.verbose)
+    print()
+    skill_count_extractors(res, args.verbose)
     print()
     total = res.passed + res.failed
     print(f"--- golden: {res.passed}/{total} assertions passed, {res.failed} failed ---")
