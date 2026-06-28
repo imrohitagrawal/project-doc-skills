@@ -1,0 +1,49 @@
+# gate-paths — the ONE canonical list of "the gate layer" for this repository.
+#
+# This file is the single source of truth for which paths, when changed in a pull
+# request, require an independent gate-review before they may merge to main (see
+# CONTRIBUTING.md "Governance"). `gate-review-check.py` reads THIS file; the policy
+# prose points here rather than re-listing the paths, so the machine's notion of
+# "the gate layer" cannot drift from the documented one. (That drift — a gate's
+# self-description diverging from what it actually does — is exactly the failure
+# class this whole governance layer exists to catch. We refuse to repeat it in our
+# own tooling: there is one list, and everything derives from it.)
+#
+# Why these paths are "the gates that guard the suite": each one can pass CI green
+# while silently weakening or mis-describing a check. CI green is necessary but not
+# sufficient for them; they additionally require human/independent judgement.
+#
+# Matching semantics (kept deliberately small and testable):
+#   - a line ending in "/"      -> directory subtree: matches any changed path that
+#                                   starts with that prefix (e.g. "tests/").
+#   - a line containing "*"      -> fnmatch against the full path AND the basename
+#                                   (e.g. "lint-*.py" matches "lint-skill-count.py").
+#   - any other line             -> exact full-path match (repo-root-relative).
+# Blank lines and lines starting with "#" are ignored.
+
+# --- Build / release orchestration -------------------------------------------------
+release-gate.sh
+build-skills.sh
+pkgtools.py
+
+# --- Validators and the version/changelog gate -------------------------------------
+validate_skill.py
+check-version.py
+
+# --- Suite lints (current AND any future lint-*.py) --------------------------------
+lint-*.py
+
+# --- The shared documentation verifier (the gate consumers + the golden tests run) -
+shared/verify.py
+
+# --- The gates that guard the gates ------------------------------------------------
+tests/
+
+# --- CI + the governance / enforcement layer itself (self-protecting) --------------
+# Changing how merges are gated is itself a gate-layer change: a weakened workflow,
+# a narrowed gate-paths list, a softened policy, or a relaxed check must not slip in
+# unreviewed. So the enforcement layer guards itself.
+.github/
+gate-review-check.py
+gate-review-prompt.md
+CONTRIBUTING.md

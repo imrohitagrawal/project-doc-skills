@@ -3,6 +3,35 @@
 Suite-level and shared-file changes. Skill-specific changes live in `skills/<name>/CHANGELOG.md`.
 Format follows Keep a Changelog.
 
+## [Unreleased] (gate-layer governance: the enforced independent gate-review)
+
+Suite tooling and governance, never copied into a `.skill`. No `VERSION` bump: this is process
+scaffolding shipping no new `.skill` bytes, recorded here under `Unreleased` (which `check-version.py`
+ignores) so it folds into whichever version is cut next — avoiding a number collision with the
+in-flight skill-count PR.
+
+### Added — the enforced independent gate-review (CI green is necessary, not sufficient)
+- **`gate-review-prompt.md`** — the versioned, reusable independent-review prompt for any gate-layer
+  change. Composes the suite's blind-axis review idiom (fresh-context lenses + adversarial adjudicator +
+  a different-vendor cold pass) and bakes in the hard-won lenses: replay the *real* failure and measure
+  coverage; coverage-vs-advertising (flag any `clean`/`PASS` a gate can emit while reality is stale);
+  self-description drift; the fixture requirement; report-only, verify-don't-assert, enterprise bar.
+- **`gate-review-check.py`** + **`.github/workflows/gate-review.yml`** — the `gate-review` required
+  status check. On every PR it derives whether a gate-layer path changed (from `.github/gate-paths`)
+  and, if so, requires a well-formed `Verdict: PASS` record under `gate-reviews/`, verifying the
+  evidence (prompt version, the four lens sections, a real `Coverage: N/M`, findings) — not just a
+  `PASS` word. Always reports (so non-gate PRs pass) and **fails closed** (any error blocks).
+- **`.github/gate-paths`** — the single canonical list of the gate layer, read by the check; the policy
+  prose points here rather than re-listing it, so the machine's notion of the gate layer cannot drift.
+- **`.github/CODEOWNERS`** — notify-only path markers for the gate layer (deliberately not a required
+  Code Owner review: a solo maintainer cannot approve their own PR).
+- **`CONTRIBUTING.md`** — the governance policy: the rule, why CI is necessary-not-sufficient (the two
+  real incidents), how it is enforced for a solo owner, the honest ceiling (bypass is possible but
+  loud and logged, never silent), requirement (ii) and its backfill log.
+- **`gate-reviews/`** (`TEMPLATE.md` + `README.md`) — the committed home of every review verdict.
+- **`docs/SETTINGS.md`** — the exact branch-ruleset command to apply by hand (settings are not
+  committable): require `release-gate` + `gate-review`, no bypass actors, block force-push/deletion.
+
 ## [1.1.0] — 2026-06-28 (new skill: doc-critic — the independent critic gate)
 
 The eighth skill plus one shared-layer addition that supports it. Additive and good for all skills.

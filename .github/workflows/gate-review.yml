@@ -1,0 +1,32 @@
+# gate-review — enforces an INDEPENDENT gate-review on any PR that touches the gate layer.
+#
+# This is the second required status check (alongside `release-gate`). It does NOT perform the
+# review — an independent, blind, possibly different-vendor read is not a CI job and must never burn
+# a paid model in CI. It asserts that the review was RUN and RECORDED with evidence: for a PR that
+# changes any path in .github/gate-paths, a well-formed PASS verdict must exist under gate-reviews/
+# (see gate-review-check.py and CONTRIBUTING.md "Governance").
+#
+# It runs on EVERY pull request and ALWAYS reports the `gate-review` status, on purpose:
+#   - non-gate PRs pass automatically (a *required* check that never reports would block them forever);
+#   - gate PRs without a recorded review go red and cannot merge under the branch ruleset.
+# The check fails closed: any setup/IO error exits non-zero, so a broken check blocks rather than
+# silently letting a gate change through.
+name: gate-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+jobs:
+  gate-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need both base and head present to diff the PR
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Enforce an independent gate-review on gate-layer changes
+        run: |
+          python3 gate-review-check.py \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
