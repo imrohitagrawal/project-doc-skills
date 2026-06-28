@@ -9,16 +9,15 @@
   docs/SETTINGS.md, tests/run-golden.py
 - Reviewers / instruments: round 1 — 3 blind same-model lenses in fresh contexts
   (enforcement-soundness; coverage-vs-advertising; convention & code-correctness) + adjudication;
-  round 2 (the owner's 4 follow-ups) — author re-verification via the new run-golden fixtures, plus a
-  fresh-context blind cold pass on a freshly-cloned tree (recorded under Findings → Round 3). Every lens
-  ran the script and the release gate (code-grounded).
-- Independence limit, stated honestly: a different-*model* pass was attempted (Sonnet, then Fable, then
-  Haiku) but **none was accessible in this environment**, so the round-2 cold pass ran on the **same
-  model** (Opus) in an isolated fresh clone — that is *context* isolation, **not** weight decorrelation.
-  Despite that limit it still found a BLOCKER + 3 MAJORs (Round 3), which is why same-context author
-  review is insufficient. A genuine different-vendor cold pass remains the owner's recommended step; the
-  exact prompt is in the handoff. (That it was NOT a different-model pass is recorded here rather than
-  glossed — the honesty wall applies to this verdict too.)
+  round 2 — author re-verification via the new run-golden fixtures + a same-model fresh-clone cold pass
+  (Round 3 below); round 3 of fixes — a **genuine different-VENDOR** cold pass (a non-Anthropic frontier
+  model, run blind by the owner; Round 4 below). Every lens ran the script and the release gate.
+- Independence limit, stated honestly: an in-environment different-*model* pass was attempted (Sonnet,
+  Fable, Haiku) but **none was accessible as a subagent here**, so the round-2 cold pass was same-model
+  (Opus) — *context* isolation, not weight decorrelation. It still found a BLOCKER + 3 MAJORs (Round 3).
+  The owner then ran the real cross-vendor pass, which found **more** that same-vendor passes missed
+  (Round 4) — the empirical case for decorrelation. Net: each off-axis instrument caught defects the
+  previous tier did not.
 
 ## Replay the real failure
 
@@ -71,26 +70,29 @@ the unmerged PR-#2 stack) and an audit of `lint-placeholders.py` / `check-versio
 
 ## Findings
 
-### Round 1 — all BLOCKER/MAJOR resolved (re-verified: `./release-gate.sh` 5/5, golden 41/41)
+(Line numbers below are as of this PR's final commit; the named symbols are the durable reference.
+`./release-gate.sh` 5/5, golden 43/43.)
+
+### Round 1 — initial self-application, all BLOCKER/MAJOR resolved
 
 - **[BLOCKER] (enforcement-soundness)** The PR could not satisfy its own `gate-review` — no verdict was
   committed — and the docs cited a bootstrap verdict that did not exist. **Resolved:**
   `gate-reviews/0001-gate-layer-governance.md:1` is that record; `gate-review-check.py --base
   origin/main --head HEAD` → exit 0.
 - **[MAJOR] (honesty)** The honest ceiling omitted the self-neutering bypass (checker runs from PR
-  head). **Resolved:** `CONTRIBUTING.md:90` enumerates it as bypass route #3 with its mitigation.
+  head). **Resolved:** `CONTRIBUTING.md:106` enumerates it as bypass route #3 with its mitigation.
 - **[MAJOR] (coverage gap)** `shared/ci/`, `docs/SETTINGS.md`, `gate-reviews/TEMPLATE.md` were outside
-  the gated set. **Resolved:** `.github/gate-paths:41` + `.github/CODEOWNERS:22` add them (coverage 21/21).
+  the gated set. **Resolved:** `.github/gate-paths:41` + `.github/CODEOWNERS:22` add them.
 - **[MAJOR] (code correctness)** the coverage regex scanned the whole document and accepted `0/0` / a
-  date. **Resolved:** `gate-review-check.py:78` (`COVERAGE_LINE_RE`) + replay-section scoping require a
+  date. **Resolved:** `gate-review-check.py:81` (`COVERAGE_LINE_RE`) + replay-section scoping require a
   real `Coverage: N/M` (M>0, N≤M).
 - **[MAJOR] (code correctness)** `Verdict: PASS` matched anywhere; `PASS-WITH-NITS` passed; a
-  co-committed BLOCK was ignored. **Resolved:** `gate-review-check.py:82` (last-line, exact token) +
-  `gate-review-check.py:235` (`decide_verdicts` blocks on any BLOCK/FAIL).
+  co-committed BLOCK was ignored. **Resolved:** `gate-review-check.py:85` (last-line, exact token) +
+  `gate-review-check.py:248` (`decide_verdicts` blocks on any BLOCK/FAIL).
 - **[MAJOR] (test discipline)** the linchpin shipped untested. **Resolved:** `tests/run-golden.py:281`
   (`gate_review_check`).
-- **[MINOR] (fail-open)** an empty PR diff returned PASS. **Resolved:** `gate-review-check.py:145`
-  (base==head) and `gate-review-check.py:311` (empty CI diff) fail closed (exit 2).
+- **[MINOR] (fail-open)** an empty PR diff returned PASS. **Resolved:** `gate-review-check.py:153`
+  (base==head) and `gate-review-check.py:324` (empty CI diff) fail closed (exit 2).
 - **[NIT]** `gate-review-check.py:64` imports `NoReturn`; the workflow "EVERY/ALWAYS" wording made precise.
 
 ### Round 2 — the owner's 4 follow-ups (additions)
@@ -99,38 +101,64 @@ the unmerged PR-#2 stack) and an audit of `lint-placeholders.py` / `check-versio
   (`.github/gate-paths:51` self-includes `.github/`; the prompt, checker, policy by name), proven by the
   `tests/run-golden.py:310` self-inclusion assertion. Single-sourcing alone was not sufficient; this is.
 - **ADDITION 2 — proportionality — ADDED.** `gate-review-prompt.md` "Proportionality" section +
-  `gate-review-check.py:97` (`TIER_LINE_RE`): a light tier (single reviewer; `Coverage: N/A` + a
-  justification) for docs-only non-behavioral changes, defaulting to full.
-- **ADDITION 3 — evidence-over-stamp — ADDED.** `gate-review-check.py:103` (`FINDING_ANCHOR_RE`) requires
+  `gate-review-check.py:100` (`TIER_LINE_RE`): a light tier for docs-only non-behavioral changes,
+  defaulting to full.
+- **ADDITION 3 — evidence-over-stamp — ADDED.** `gate-review-check.py:106` (`FINDING_ANCHOR_RE`) requires
   file:line findings or an explicit `none`; coverage stays replay-scoped. This very verdict was caught by
   that rule while it lacked anchors, then fixed — the check ate its own dogfood.
-- **ADDITION 4 — cold pass — DONE (honest caveat in the instruments note):** no alternate model was
-  accessible, so it ran same-model in a fresh isolated clone. Its findings are Round 3 below.
+- **ADDITION 4 — different-vendor cold pass — DONE.** Ran same-model first (no alternate model accessible
+  here → Round 3), then the owner ran the real cross-vendor pass → Round 4.
 
-### Round 3 — the cold pass found these in the round-2 additions; all fixed and fixture-locked
+### Round 3 — same-model cold pass found these in the round-2 additions; all fixed and fixture-locked
 
-- **[BLOCKER] (evidence defeated)** `FINDING_ANCHOR_RE` was `\S+:\d+`, so a clock time ("2:30"), a port,
-  or a version satisfied the "file:line evidence" rule — a full-tier rubber stamp cleared. **Resolved:**
-  `gate-review-check.py:103` now requires a real path anchor (a `/` or a `.ext` of 2–8 letters); locked
-  by the `time '2:30'` fixture.
-- **[MAJOR] (section hijack)** a `### decoy` subsection carrying a trigger word could stand in for the
-  real `## Findings` / `## Replay` section. **Resolved:** `REQUIRED_SECTIONS` matches top-level
-  (`^#{1,2}`) only (`gate-review-check.py:84`); locked by the `### decoy` fixture.
-- **[MAJOR] (tier override)** `effective_tier` was last-wins, so a stray `Tier: light` overrode the
-  template's `Tier: full`. **Resolved:** `gate-review-check.py:175` — light only if it is the SOLE tier;
-  mixed → full; locked by the `mixed Tier` fixture.
-- **[MAJOR] (light unverifiable)** a behavioral gate change could self-declare `Tier: light` and skip the
-  coverage fraction. **Resolved:** `gate-review-check.py:201` + `gate-review-check.py:271` refuse light
-  unless every changed gate path is docs-only (`*.md`); locked by the `allow_light=False` fixture.
-- **[MINOR] (none too loose)** `FINDINGS_NONE_RE` matched "no blockers" inside prose admitting MAJORs.
-  **Resolved:** `gate-review-check.py:104` matches a leading `none` / `no findings` only.
-- **[NIT]** the self-inclusion test did not pin `.github/CODEOWNERS`. **Resolved:**
-  `tests/run-golden.py:308`. This verdict's anchors were re-pinned after the round-3 line shifts.
+- **[BLOCKER] (evidence defeated)** `FINDING_ANCHOR_RE` was `\S+:\d+`, so a clock time ("2:30") / port /
+  version satisfied the "file:line" rule. **Resolved:** `gate-review-check.py:106` requires a real path
+  anchor (a `/` or a `.ext` of 2–8 letters); locked by the `time '2:30'` fixture.
+- **[MAJOR] (section hijack)** a `### decoy` subsection could stand in for the real `## Findings` /
+  `## Replay`. **Resolved:** `REQUIRED_SECTIONS` matches top-level (`^#{1,2}`) only
+  (`gate-review-check.py:88`); locked by the `### decoy` fixture.
+- **[MAJOR] (tier override)** `effective_tier` was last-wins. **Resolved:** `gate-review-check.py:183` —
+  light only if it is the SOLE tier; mixed → full; locked by the `mixed Tier` fixture.
+- **[MAJOR] (light unverifiable)** a behavioral change could self-declare `Tier: light`. **Resolved:**
+  `gate-review-check.py:214` + `gate-review-check.py:284` refuse light unless every changed gate path is
+  docs-only (`*.md`); locked by the `allow_light=False` fixture.
+- **[MINOR] (none too loose)** `FINDINGS_NONE_RE` matched "no blockers" in prose. **Resolved:**
+  `gate-review-check.py:107` matches a leading `none` / `no findings` only.
+- **[NIT]** self-inclusion test now pins `.github/CODEOWNERS` (`tests/run-golden.py:308`).
+
+### Round 4 — the genuine different-VENDOR cold pass (owner-run); all addressed
+
+The non-Anthropic reviewer could not `git clone` (DNS blocked) so it read the branch via web connectors
+and reproduced the checker locally; I verified each finding against HEAD before fixing.
+
+- **[MAJOR] (bulleted-tier bug — the standout catch)** the verdict TEMPLATE writes `- Tier: light`
+  (bulleted), but the tier/justification/none regexes were unbulleted, so the template's OWN light path
+  was silently ignored and defaulted to full. Both same-model passes missed this; the different-vendor
+  pass caught it. **Resolved:** every line-anchored field tolerates an optional `- `/`* ` bullet
+  (`gate-review-check.py:81`–`:107`); locked by a fixture that uses the exact TEMPLATE bullet form.
+- **[MAJOR] (single-source overclaim)** `.github/gate-paths` claimed the prose "points here rather than
+  re-listing", but `CONTRIBUTING.md` and `gate-review-prompt.md` re-listed the paths — the very
+  self-description drift the layer fights. **Resolved:** the prose lists are now labelled *illustrative,
+  non-authoritative* and `.github/gate-paths:5` no longer claims otherwise.
+- **[MAJOR] (coverage gap)** `gate-reviews/README.md` (which asserts the verdict contract) was ungated.
+  **Resolved:** added to `.github/gate-paths` + `.github/CODEOWNERS`; `CHANGELOG.md` and the verdict
+  records are documented as deliberate exclusions (gate-paths "Deliberately NOT gated" block).
+- **[BLOCKER → downgraded to disclosed residual] (a filled fake verdict passes)** a fully-filled
+  fabricated verdict satisfies the shape check. This is the **good-faith residual already disclosed** in
+  the honest ceiling, not a new hole — no shape check can verify a human did the work. **Addressed two
+  ways:** (a) the CLAIM is tightened — the check enforces a *structured, evidence-bearing record*, not
+  proof of a good-faith review (`CONTRIBUTING.md` headline + honest ceiling); (b) the floor is raised —
+  unfilled template placeholders are rejected (`gate-review-check.py:112` + `:202`), so the realistic
+  lazy stamp (copy template, flip Verdict) fails. A determined fabrication remains irreducible, stated.
+- **[MINOR] (ruleset stated as active)** `CONTRIBUTING.md` read as if the branch ruleset were enforced;
+  it is a manual step. **Resolved:** worded conditional ("once you apply it … until then, advisory") +
+  the verify command in `docs/SETTINGS.md`.
 
 - **Accepted with rationale (not defects):** the shape-check verifies evidence *shape*, not *good faith*
-  (`CONTRIBUTING.md` honest ceiling); the round-2 cold pass was same-model (no alternate model available)
-  — context isolation, not weight decorrelation; `gate-review-check.py:136` `lint-*.py` basename match
-  errs *safe* (false-gate, never missed-gate), kept deliberately.
+  (`CONTRIBUTING.md` honest ceiling); `gate-review-check.py:144` `lint-*.py` basename match errs *safe*
+  (false-gate, never missed-gate), kept deliberately. **Empirical decorrelation result:** same-model
+  passes caught Rounds 1–3; only the different-vendor pass caught the bulleted-tier bug — the case for
+  the cross-vendor instrument, in this verdict's own history.
 
 ---
 

@@ -2,12 +2,12 @@
 #
 # This file is the single source of truth for which paths, when changed in a pull
 # request, require an independent gate-review before they may merge to main (see
-# CONTRIBUTING.md "Governance"). `gate-review-check.py` reads THIS file; the policy
-# prose points here rather than re-listing the paths, so the machine's notion of
-# "the gate layer" cannot drift from the documented one. (That drift — a gate's
-# self-description diverging from what it actually does — is exactly the failure
-# class this whole governance layer exists to catch. We refuse to repeat it in our
-# own tooling: there is one list, and everything derives from it.)
+# CONTRIBUTING.md "Governance"). `gate-review-check.py` reads THIS file. The policy
+# prose (CONTRIBUTING.md, gate-review-prompt.md) may show an ILLUSTRATIVE list for the
+# reader, but it is explicitly non-authoritative — THIS file is what gates, and the
+# prose says so. (A gate's self-description diverging from what it actually does is the
+# exact failure class this layer exists to catch; here the machine list is canonical
+# and the prose is labelled illustrative, so the two cannot silently disagree.)
 #
 # Why these paths are "the gates that guard the suite": each one can pass CI green
 # while silently weakening or mis-describing a check. CI green is necessary but not
@@ -52,5 +52,15 @@ tests/
 gate-review-check.py
 gate-review-prompt.md
 gate-reviews/TEMPLATE.md
+gate-reviews/README.md
 CONTRIBUTING.md
 docs/SETTINGS.md
+
+# --- Deliberately NOT gated (recorded so the boundary is explicit, not an oversight) ----------------
+# - CHANGELOG.md: a historical log that changes every release; gating it is friction, and it cannot
+#   weaken a check (the canonical governance docs above are gated). It DESCRIBES, it does not enforce.
+# - gate-reviews/<NNNN>-*.md (the verdict records themselves): NOT gated, to avoid a self-referential
+#   loop (every gate PR adds one). They are append-only history by policy (CONTRIBUTING "Governance");
+#   editing a past verdict is discouraged and, if done, is itself a gate-review-worthy act.
+# - shared/house-style.md, shared/render-contract.md: authoring standards (see CONTRIBUTING). Add any
+#   of these if you want maximal coverage; the omission is a documented choice, reviewed via this file.

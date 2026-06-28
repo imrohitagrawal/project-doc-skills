@@ -343,6 +343,15 @@ def gate_review_check(res: Results, verbose: bool) -> None:
              "## Replay the real failure\nCoverage: 5/5\n## Coverage vs advertising\nx\n"
              "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\nclean, ship it\n"
              "Verdict: PASS\n")  # real ## Findings has no anchor; the ### decoy must not stand in
+    # Round-4 fixtures (a different-VENDOR cold pass found these): the TEMPLATE writes BULLETED list
+    # items ('- Tier: light'), which the unbulleted regexes silently ignored -> the template's own light
+    # path defaulted to full; and an unfilled template placeholder must not pass as evidence.
+    tmpl_light = ("- Prompt: gate-review-prompt.md v1.0.0\n- Tier: light\n"
+                  "- Light-path justification: typo fix in CONTRIBUTING.md; no logic change\n"
+                  "## Replay the real failure\nCoverage: N/A\n## Coverage vs advertising\nx\n"
+                  "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\n- none\n"
+                  "Verdict: PASS\n")  # exact TEMPLATE bullet form; docs-only -> must clear as light
+    placeholder = base.format(cov="5/5", body="", find="foo.py:1 issue\n[changed_gate_paths]", v="PASS")
     # (name, records, want, allow_light)
     cases = [
         ("well-formed PASS clears", [("good.md", good)], True, True),
@@ -357,6 +366,8 @@ def gate_review_check(res: Results, verbose: bool) -> None:
         ("Verdict: PASS-WITH-NITS blocks", [("n.md", nits)], False, True),
         ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False, True),
         ("light tier: N/A + justification clears (docs-only)", [("lo.md", light_ok)], True, True),
+        ("BULLETED template '- Tier: light' is recognized (docs-only) -> clears", [("tl.md", tmpl_light)], True, True),
+        ("an unfilled '[changed_gate_paths]' placeholder -> blocks", [("ph.md", placeholder)], False, True),
         ("light tier: N/A without justification blocks", [("ln.md", light_nojust)], False, True),
         ("light tier is REFUSED when the change touches code (allow_light=False)", [("lc.md", light_ok)], False, False),
         ("mixed Tier full+light resolves to full -> N/A insufficient -> blocks", [("mt.md", both_tiers)], False, True),

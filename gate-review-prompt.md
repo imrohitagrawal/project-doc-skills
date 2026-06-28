@@ -41,11 +41,12 @@ A green build saw neither. An independent read is what catches them.
 Pull request **[pr_ref]**, diff **[base..head]**, touching the gate layer at **[changed_gate_paths]**.
 
 The **gate layer** is the set of files that can pass CI green while silently weakening or
-mis-describing a check: `release-gate.sh`, `build-skills.sh`, `validate_skill.py`, `check-version.py`,
-`pkgtools.py`, every `lint-*.py`, `shared/verify.py`, `tests/**`, `.github/**`, and the governance
-files themselves (`gate-review-prompt.md`, `gate-review-check.py`, `CONTRIBUTING.md`, the policy). The
-canonical, machine-read list is `.github/gate-paths` — read it; do not assume it. Note those governance
-files are deliberately **self-included**: this review can also be run on a change to the gate itself.
+mis-describing a check. The canonical, machine-read list is **`.github/gate-paths` — read it; do not
+assume it.** As *illustration only* (non-authoritative — the file is what gates): the build/lint/test
+machinery (`release-gate.sh`, `build-skills.sh`, `validate_skill.py`, `check-version.py`, `pkgtools.py`,
+every `lint-*.py`, `shared/verify.py`, `shared/ci/`, `tests/`), all of `.github/`, and the governance
+files themselves — which are deliberately **self-included**, so this review can run on a change to the
+gate itself.
 
 ## Proportionality — scale the review to the change (don't always run the heavy crew)
 

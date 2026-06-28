@@ -14,18 +14,25 @@ below; read it before you touch a gate file.
 > changed gate *correctness* check — **(ii)** a regression fixture derived from the real incident that
 > check guards. **CI passing is necessary but not sufficient.**
 
+What the machine actually enforces, stated precisely: a **structured, evidence-bearing review record**
+(the right sections, a real coverage figure or a justified docs-only light tier, file:line findings, an
+explicit `PASS`). It **cannot** verify the review was genuinely run, independent, or honest — that a
+human/agent actually did the work is an *attestation*, the irreducible residual named in the Honest
+ceiling below. So read this as "requires a recorded, evidence-bearing review", not "proves a good-faith
+review happened". The record raises the floor and leaves a durable, auditable trail; it is not a lie
+detector.
+
 ### What is the gate layer
 
 The machine-readable, canonical list is [`.github/gate-paths`](.github/gate-paths) — that file is the
-single source of truth, read by `gate-review-check.py`. As of this writing it covers `release-gate.sh`,
-`build-skills.sh`, `pkgtools.py`, `validate_skill.py`, `check-version.py`, every `lint-*.py`,
-`shared/verify.py`, `shared/ci/` (the docs-as-code gate that ships inside every `.skill`), `tests/`,
-`.github/`, and the governance files themselves (`gate-review-check.py`, `gate-review-prompt.md`,
-`gate-reviews/TEMPLATE.md`, `CONTRIBUTING.md`, `docs/SETTINGS.md`). Do not re-derive the list from this
-prose — read the file; the prose can drift, the file is what gates. (Deliberately *out* of scope: the
-authoring standards `shared/house-style.md` and `shared/render-contract.md` — they change often during
-normal authoring and gating every edit would be friction; the *checks* that enforce them are gated, and
-a hollowed-out contract is a visible diff. Add them if you want maximal coverage.)
+single source of truth, read by `gate-review-check.py`. **The list below is ILLUSTRATIVE, not
+authoritative** (read the file; this prose can drift and the file is what gates): roughly, the build/
+lint/test machinery (`release-gate.sh`, `build-skills.sh`, `pkgtools.py`, `validate_skill.py`,
+`check-version.py`, every `lint-*.py`, `shared/verify.py`, `shared/ci/`, `tests/`), all of `.github/`,
+and the governance files themselves. Deliberately *out* of scope (a documented choice, not an oversight
+— recorded in `.github/gate-paths`): the authoring standards `shared/house-style.md` /
+`shared/render-contract.md`, the historical `CHANGELOG.md`, and the verdict records
+`gate-reviews/<NNNN>-*.md` (append-only history — see below).
 
 These paths share one property: **each can pass CI green while silently weakening or mis-describing a
 check.** That is why a green build is not enough for them.
@@ -63,18 +70,27 @@ except by override, training exactly the reflex this rule exists to prevent. So 
 
 - **`gate-review` (required status check).** [`.github/workflows/gate-review.yml`](.github/workflows/gate-review.yml)
   runs `gate-review-check.py` on every PR. It detects whether the PR touches a gate-path; if so, it
-  requires a well-formed `Verdict: PASS` record under `gate-reviews/`, checking the **evidence**
-  (the prompt version, the four lens sections, a real `Coverage: N/M` figure, the findings) — not just
-  a `PASS` word, so a rubber stamp fails. It **runs on every PR and always reports**, so non-gate PRs
-  pass automatically while gate PRs without a recorded review go red. It **fails closed**: any setup
-  error blocks rather than letting a change through.
+  requires a well-formed `Verdict: PASS` record under `gate-reviews/`, checking the **evidence shape**
+  (the prompt version, the four lens sections + Findings, a real `Coverage: N/M` or a justified
+  docs-only light tier, file:line findings, filled provenance) — so a *one-line or unfilled* rubber
+  stamp fails. (A determined fabrication that fills every field is the irreducible residual — see the
+  Honest ceiling.) It **runs on every PR and always reports**, so non-gate PRs pass automatically while
+  gate PRs without a recorded review go red. It **fails closed**: any setup error blocks.
 - **`release-gate` (required status check).** The existing build/lint/test/reproducibility/version
   gate. Still required — necessary, just not sufficient.
-- **A branch ruleset on `main`** requires *both* checks, blocks force-pushes and deletion, and has **no
-  bypass actors** so it applies to the maintainer too. The exact command is in
-  [`docs/SETTINGS.md`](docs/SETTINGS.md) (settings are not committable — applying it is a manual step).
+- **A branch ruleset on `main` — once you apply it** (it is a manual step; settings are not committable,
+  so this is NOT enforced by anything in the PR until you run the command). When applied, it requires
+  *both* checks, blocks force-pushes and deletion, and has **no bypass actors** so it applies to the
+  maintainer too. Exact command + a verify step (`gh api …/rules/branches/main`) in
+  [`docs/SETTINGS.md`](docs/SETTINGS.md). Until then, the gating above is advisory.
 - **`CODEOWNERS`** marks the gate paths and notifies the owner. It is **notify-only**, deliberately not
   a required Code Owner review (see above).
+
+**Verdict records are append-only history.** Each `gate-reviews/<NNNN>-*.md` is the durable evidence for
+one PR; treat them as immutable once merged. They are deliberately *not* in `.github/gate-paths` (every
+gate PR adds one, so gating them would be self-referential), but editing a past verdict is discouraged
+and is itself a gate-review-worthy act if ever done — the audit trail's value is that it does not change
+after the fact.
 
 ### The honest ceiling (what this can and cannot promise)
 

@@ -75,11 +75,14 @@ PROMPT_VERSION_RE = re.compile(r"gate-review-prompt\.md\s+v\d+\.\d+\.\d+", re.IG
 # A "Coverage: N/M" line: the literal word, then ':'/'=', then the fraction — so a date ("6/29") or a
 # passing prose mention ("we discussed coverage on 6/29") does NOT satisfy it. It is searched only
 # WITHIN the replay section (see shape_problems), and N<=M with M>0 is enforced there.
-COVERAGE_LINE_RE = re.compile(r"^\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*(\d+)",
+# NB: every line-anchored field below tolerates an optional Markdown bullet ('- '/'* '), because the
+# verdict template writes these as list items ('- Tier: ...', '- Light-path justification: ...').
+# Missing that silently dropped the template's OWN light path (a different-vendor review caught it).
+COVERAGE_LINE_RE = re.compile(r"^\s*[-*]?\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*(\d+)",
                               re.IGNORECASE | re.MULTILINE)
 # The EFFECTIVE verdict is the LAST "Verdict: <token>" line, so a PASS quoted in prose mid-document
 # cannot satisfy a record whose actual conclusion is BLOCK. The token must be exactly PASS/BLOCK/FAIL.
-VERDICT_LINE_RE = re.compile(r"^\s*verdict:\s*([A-Za-z][A-Za-z-]*)", re.IGNORECASE | re.MULTILINE)
+VERDICT_LINE_RE = re.compile(r"^\s*[-*]?\s*verdict:\s*([A-Za-z][A-Za-z-]*)", re.IGNORECASE | re.MULTILINE)
 ANY_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
 # The four mandated lens sections PLUS a Findings section — five required headings in total. Matched at
 # TOP level only ('#'/'##'), so a '###' decoy subsection carrying a trigger word cannot hijack the
@@ -94,14 +97,19 @@ REQUIRED_SECTIONS = {
 # Proportionality: the review TIER scales the evidence to the change. 'full' (the default — never
 # granted by omission) needs a real coverage fraction; 'light' is allowed ONLY for a declared
 # non-behavioral change and must carry an explicit justification in place of a fraction.
-TIER_LINE_RE = re.compile(r"^\s*tier:\s*(light|full)\b", re.IGNORECASE | re.MULTILINE)
-COVERAGE_NA_RE = re.compile(r"^\s*coverage\s*[:=]\s*n/?a\b", re.IGNORECASE | re.MULTILINE)
-JUSTIFICATION_RE = re.compile(r"^\s*light-path justification:\s*\S", re.IGNORECASE | re.MULTILINE)
+TIER_LINE_RE = re.compile(r"^\s*[-*]?\s*tier:\s*(light|full)\b", re.IGNORECASE | re.MULTILINE)
+COVERAGE_NA_RE = re.compile(r"^\s*[-*]?\s*coverage\s*[:=]\s*n/?a\b", re.IGNORECASE | re.MULTILINE)
+JUSTIFICATION_RE = re.compile(r"^\s*[-*]?\s*light-path justification:\s*\S", re.IGNORECASE | re.MULTILINE)
 # Evidence, not a stamp: the Findings section must carry a real path anchor (file:line — a token with a
 # '/' or a '.ext' of 2-8 letters before ':N'), or an explicit 'none' on its own leading line. The path
 # requirement rejects a clock time ('2:30'), a bare port, or a version ('x.y:1') masquerading as proof.
 FINDING_ANCHOR_RE = re.compile(r"(?=[\w./-]*(?:/|\.[A-Za-z]{2,8}))[\w./-]+:\d+")
-FINDINGS_NONE_RE = re.compile(r"^\s*(none|no findings)\b", re.IGNORECASE | re.MULTILINE)
+FINDINGS_NONE_RE = re.compile(r"^\s*[-*]?\s*(none|no findings)\b", re.IGNORECASE | re.MULTILINE)
+# Unfilled verdict-template placeholders: their presence means the reviewer copied the template without
+# filling the provenance, so the record proves nothing about THIS PR. Rejected (catches the lazy
+# rubber-stamp — a template copy with only the Verdict line changed). A determined fabrication that
+# fills them is the irreducible good-faith residual, stated plainly in CONTRIBUTING's honest ceiling.
+PLACEHOLDER_DENY = ("[pr_ref]", "[base..head]", "[changed_gate_paths]")
 
 
 def die(msg: str, code: int = 2) -> NoReturn:
@@ -189,6 +197,11 @@ def shape_problems(text: str, allow_light: bool = True) -> list[str]:
     if not PROMPT_VERSION_RE.search(text):
         problems.append("does not name the gate-review-prompt.md version it ran "
                         "(expected e.g. 'gate-review-prompt.md v1.0.0')")
+    left = [p for p in PLACEHOLDER_DENY if p in text]
+    if left:
+        problems.append(f"unfilled template placeholder(s) {', '.join(left)} — fill the provenance "
+                        f"(PR, diff range, changed gate paths); a copied-but-unfilled template proves "
+                        f"nothing about this PR")
     for name, rx in REQUIRED_SECTIONS.items():
         if not rx.search(text):
             problems.append(f"missing the '{name}' section")
