@@ -30,6 +30,14 @@ a hollowed-out contract is a visible diff. Add them if you want maximal coverage
 These paths share one property: **each can pass CI green while silently weakening or mis-describing a
 check.** That is why a green build is not enough for them.
 
+**Self-inclusion is the load-bearing property.** The enforcement's own files —
+`.github/workflows/gate-review.yml`, `.github/gate-paths`, `gate-review-prompt.md`,
+`gate-review-check.py`, and this policy — are themselves in the gate-paths set (the first three via the
+`.github/` subtree; the rest by name). Single-sourcing the list is necessary but **not** sufficient:
+if the gate's own files were not gated, the review could be quietly weakened in an unreviewed PR and the
+whole thing would unravel from the inside. A regression assertion in `tests/run-golden.py`
+(`gate-review-check` section) locks this so it can't silently regress.
+
 ### Why CI green is necessary but not sufficient
 
 Two real failures here shipped — or sat in an open PR — fully CI-green, because both were judgement
@@ -132,6 +140,15 @@ this policy (that would couple the mechanism to unrelated content):
   open a PR for any gap.
 
 ### Running a gate-review
+
+**Scale the review to the change (proportionality).** The default is the full blind multi-lens review,
+but a one-line comment fix should not demand a 4-agent crew — if it always did, you would be tempted to
+turn the gate off, and then it is theatre. So `gate-review-prompt.md` defines two tiers: a **light** path
+(a single reviewer; `Tier: light` + `Coverage: N/A` + a `Light-path justification:`) allowed **only**
+for a declared non-behavioral change (comment/doc/whitespace, no change to a check's logic, the gated
+set, a count/threshold, or the policy); and the **full** path (the crew + a real `Coverage: N/M` + the
+optional different-vendor pass) for everything else. The tier defaults to **full**, so the lighter bar
+is never granted by omission, and the verdict still carries file:line findings (or an explicit `none`).
 
 1. **Find the changed gate paths.** `python3 gate-review-check.py --base origin/main --head HEAD` (it
    prints the gate paths your PR touches, or tells you none are).

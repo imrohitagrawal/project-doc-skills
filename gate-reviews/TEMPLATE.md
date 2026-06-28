@@ -1,11 +1,16 @@
 # Gate-review verdict — [pr_ref]
 
 - Prompt: gate-review-prompt.md v1.0.0
+- Tier: full   <!-- 'full' (default) for any behavioral change; 'light' ONLY for a declared
+                    non-behavioral change — see gate-review-prompt.md "Proportionality" -->
 - PR / branch: [pr_ref]
 - Diff range: [base..head]
 - Gate-layer paths changed: [changed_gate_paths]   (the list gate-review-check.py printed)
 - Reviewers / instruments: [e.g. 3 blind same-model lenses + adjudicator; + different-vendor cold pass]
 - Independence limit honestly stated: [e.g. same-model = context isolation, not weight decorrelation]
+<!-- LIGHT path only: uncomment the next line and set Coverage: N/A below.
+- Light-path justification: [comment/doc/whitespace only; no change to any check's logic, the gated
+  set, a count/threshold, or the policy's meaning] -->
 
 > Copy this file to `gate-reviews/<short-name>.md`, fill every `[...]`, and commit it in the PR.
 > The required `gate-review` check reads it and verifies the shape AND the evidence — a blind copy of
@@ -18,7 +23,8 @@
 from the incident — not a toy mutation of an already-guarded case — and measure coverage. List every
 site/case the failure can occur in, and how many the gate actually covers.]
 
-Coverage: [N]/[M] [units, e.g. enumeration sites]   <!-- replace [N]/[M] with real digits, e.g. 5/5 -->
+Coverage: [N]/[M] [units, e.g. enumeration sites]   <!-- replace [N]/[M] with real digits, e.g. 5/5;
+                                                         a LIGHT-tier verdict uses 'Coverage: N/A' -->
 [If N < M: name the M-N sites the gate silently ignores.]
 
 ## Coverage vs advertising

@@ -25,7 +25,13 @@ WHAT IT CHECKS (for the changed-file set of a PR)
          Findings section — five required headings in total,
        - the replay section carries a real 'Coverage: N/M' fraction (M>0, N<=M) — the
          evidence the failure was reproduced and measured, not a date or a stray mention,
+       - the Findings section carries file:line anchors, or an explicit 'none' (evidence, not
+         a bare heading over a PASS line),
        - its EFFECTIVE (last) 'Verdict:' line is exactly PASS.
+     PROPORTIONALITY: a declared 'Tier: light' verdict (a non-behavioral change — comment/doc/
+     whitespace, no change to a check's logic, the gated set, a count/threshold, or the policy)
+     may use 'Coverage: N/A' with a 'Light-path justification:' line instead of a fraction. Tier
+     defaults to 'full', so the lighter bar is never granted by omission.
      A record that is malformed, whose effective verdict is BLOCK/FAIL, or that only quotes
      'PASS' in prose, FAILS this check. A co-committed BLOCK record blocks even if a PASS
      record is also present (a blocking review is not overridden by adding a passing one).
@@ -82,6 +88,15 @@ REQUIRED_SECTIONS = {
     "fixture-requirement": re.compile(r"^#{1,6}\s.*fixture", re.IGNORECASE | re.MULTILINE),
     "findings": re.compile(r"^#{1,6}\s.*findings", re.IGNORECASE | re.MULTILINE),
 }
+# Proportionality: the review TIER scales the evidence to the change. 'full' (the default — never
+# granted by omission) needs a real coverage fraction; 'light' is allowed ONLY for a declared
+# non-behavioral change and must carry an explicit justification in place of a fraction.
+TIER_LINE_RE = re.compile(r"^\s*tier:\s*(light|full)\b", re.IGNORECASE | re.MULTILINE)
+COVERAGE_NA_RE = re.compile(r"^\s*coverage\s*[:=]\s*n/?a\b", re.IGNORECASE | re.MULTILINE)
+JUSTIFICATION_RE = re.compile(r"^\s*light-path justification:\s*\S", re.IGNORECASE | re.MULTILINE)
+# Evidence, not a stamp: the Findings section must carry file:line anchors, or an explicit 'none'.
+FINDING_ANCHOR_RE = re.compile(r"\S+:\d+")
+FINDINGS_NONE_RE = re.compile(r"\b(none|no findings|no blockers?|no issues?)\b", re.IGNORECASE)
 
 
 def die(msg: str, code: int = 2) -> NoReturn:
@@ -152,6 +167,13 @@ def effective_verdict(text: str) -> str | None:
     return matches[-1].upper() if matches else None
 
 
+def effective_tier(text: str) -> str:
+    """The review tier — 'full' (default) or 'light'. Absence defaults to full, so the lighter
+    evidence bar is never granted by omission; light must be declared and justified."""
+    m = TIER_LINE_RE.findall(text)
+    return m[-1].lower() if m else "full"
+
+
 def shape_problems(text: str) -> list[str]:
     """Structural/evidence problems with a verdict record (independent of the verdict VALUE).
     Empty list == the record carries the required evidence shape."""
@@ -164,15 +186,36 @@ def shape_problems(text: str) -> list[str]:
             problems.append(f"missing the '{name}' section")
     # The coverage figure must be a real fraction on a 'Coverage:' line INSIDE the replay section, so a
     # date or a passing mention elsewhere cannot stand in as 'evidence the real failure was replayed'.
+    # Proportionality: a declared 'Tier: light' (non-behavioral change) may use 'Coverage: N/A' instead,
+    # but then must carry a 'Light-path justification:' line — the lighter bar still leaves evidence.
+    tier = effective_tier(text)
     replay = _section_text(text, REQUIRED_SECTIONS["replay-the-real-failure"])
     cm = COVERAGE_LINE_RE.search(replay)
-    if not cm:
-        problems.append("no 'Coverage: N/M' line in the replay section (the evidence the real failure "
-                        "was reproduced and its coverage measured)")
-    else:
+    if cm:
         n, m = int(cm.group(1)), int(cm.group(2))
         if m == 0 or n > m:
             problems.append(f"coverage figure {n}/{m} is not a real fraction (need M>0 and N<=M)")
+    elif tier == "light" and COVERAGE_NA_RE.search(replay):
+        if not JUSTIFICATION_RE.search(text):
+            problems.append("a 'Tier: light' verdict needs a 'Light-path justification:' line stating "
+                            "why the change is non-behavioral (no change to any check's logic, the "
+                            "gated set, a count/threshold, or the policy's meaning)")
+    else:
+        problems.append("no 'Coverage: N/M' line in the replay section (a real fraction proving the "
+                        "real failure was replayed; or, for a declared non-behavioral change, "
+                        "'Tier: light' + 'Coverage: N/A' + a 'Light-path justification:' line)")
+    # Evidence, not a stamp: the Findings section must carry file:line anchors, or an explicit 'none' —
+    # a bare heading over a PASS line is not a review. The section may use '###' subsections, so scan
+    # from its heading to the next TOP-LEVEL ('#'/'##') heading (not any heading) or EOF.
+    fh = REQUIRED_SECTIONS["findings"].search(text)
+    findings = ""
+    if fh:
+        rest = text[fh.end():]
+        stop = re.search(r"^#{1,2}\s", rest, re.MULTILINE)
+        findings = rest[: stop.start()] if stop else rest
+    if not (FINDING_ANCHOR_RE.search(findings) or FINDINGS_NONE_RE.search(findings)):
+        problems.append("the Findings section carries no evidence (need file:line findings, or an "
+                        "explicit 'none' if the review genuinely found nothing)")
     return problems
 
 

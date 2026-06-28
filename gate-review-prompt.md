@@ -43,8 +43,28 @@ Pull request **[pr_ref]**, diff **[base..head]**, touching the gate layer at **[
 The **gate layer** is the set of files that can pass CI green while silently weakening or
 mis-describing a check: `release-gate.sh`, `build-skills.sh`, `validate_skill.py`, `check-version.py`,
 `pkgtools.py`, every `lint-*.py`, `shared/verify.py`, `tests/**`, `.github/**`, and the governance
-files themselves (`gate-review-prompt.md`, `gate-review-check.py`, `CONTRIBUTING.md`). The canonical,
-machine-read list is `.github/gate-paths` — read it; do not assume it.
+files themselves (`gate-review-prompt.md`, `gate-review-check.py`, `CONTRIBUTING.md`, the policy). The
+canonical, machine-read list is `.github/gate-paths` — read it; do not assume it. Note those governance
+files are deliberately **self-included**: this review can also be run on a change to the gate itself.
+
+## Proportionality — scale the review to the change (don't always run the heavy crew)
+
+The full multi-lens blind review below is the default, but it must not be mandatory for a one-line
+comment fix — if every gate-touching change demands a 4-agent crew, you will be tempted to switch the
+gate off, and then it is theatre. So:
+
+- **Light path (single reviewer, ~10 minutes).** Allowed **only** for a genuinely **non-behavioral**
+  change: a comment, docstring, prose, or whitespace edit with **no** change to any check's logic, to
+  the gated set (`.github/gate-paths`), to a count/threshold/enumeration, or to the policy's meaning.
+  One reviewer reads the whole diff, confirms the change is non-behavioral, and records a verdict with
+  `Tier: light`, `Coverage: N/A`, and a one-line `Light-path justification:` naming the change class.
+  Still produce the full record (all sections + Findings); the lenses below are answered briefly.
+- **Full path (the crew).** Everything else — any change to a check's behavior, the gated set, a
+  count/threshold, a fixture, the policy, or anything you are unsure about. Run the blind decorrelated
+  lenses + adjudicator, replay the real failure, and state a real `Coverage: N/M`. The different-vendor
+  cold pass is a full-path instrument; a light change does not need it.
+- **When in doubt, go full.** The light path is a declared, justified exception, never the default, and
+  `gate-review-check.py` defaults the tier to `full` if you do not declare one.
 
 ---
 
@@ -163,11 +183,15 @@ stamp):
 
 - a line naming the prompt version: `gate-review-prompt.md v1.0.0`;
 - the sections **Replay the real failure**, **Coverage vs advertising**, **Self-description drift**,
-  **Fixture requirement**, and **Findings**;
+  **Fixture requirement**, and **Findings** (five headings);
 - a **`Coverage: N/M`** line inside the replay section (the evidence the real failure was reproduced
-  and measured, not synthetically mutated);
-- a final **`Verdict: PASS`** — and you may only write PASS if every BLOCKER and MAJOR is resolved in
-  the change under review. If any remain, write `Verdict: BLOCK` and list them; the check will (rightly)
-  keep the PR red until they are fixed and the review re-run.
+  and measured, not synthetically mutated) — **or**, for a declared `Tier: light` non-behavioral
+  change, `Coverage: N/A` plus a `Light-path justification:` line in place of the fraction;
+- a **Findings** section carrying **file:line** findings (severity-ranked) — or an explicit `none` if
+  the review genuinely found nothing. A bare heading over a PASS line is not evidence and is rejected;
+- a final **`Verdict: PASS`** — you may only write PASS if every BLOCKER and MAJOR is resolved in the
+  change under review. If any remain, write `Verdict: BLOCK` and list them; the check will (rightly)
+  keep the PR red until they are fixed and the review re-run. The check reads the **last** `Verdict:`
+  line, so do not leave a stray `PASS` elsewhere.
 
 Report only. The owner merges — you do not.

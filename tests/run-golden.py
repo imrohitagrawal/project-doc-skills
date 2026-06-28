@@ -26,9 +26,10 @@ What it locks
     - a Flesch-Kincaid grade pin on a fixed string (so "simplify until green" cannot game the gate by
       turning readability into a no-op)
   gate-review-check.py (the enforcement linchpin's own regression, CONTRIBUTING.md requirement ii):
-    - matches_gate classifies gate vs non-gate paths; decide_verdicts/effective_verdict reject the
-      rubber-stamp vectors an independent review caught (PASS quoted in prose over a BLOCK, coverage
-      0/0 or outside the replay section, PASS-WITH-NITS, a co-committed BLOCK) and accept a clean PASS
+    - matches_gate classifies gate vs non-gate paths AND keeps the enforcement's own files self-included;
+      decide_verdicts/effective_verdict accept a clean PASS (full: real coverage fraction; light: N/A +
+      justification; findings carry file:line or 'none') and reject the rubber-stamp vectors a review
+      caught (PASS in prose over a BLOCK, coverage 0/0 / outside replay, PASS-WITH-NITS, co-committed BLOCK)
 
 Run by hand or from the release gate:
     python3 tests/run-golden.py            # exit 0 if every assertion holds, 1 otherwise
@@ -279,9 +280,11 @@ def doc_critic_mapping(res: Results, verbose: bool) -> None:
 
 def gate_review_check(res: Results, verbose: bool) -> None:
     """Regression fixture for gate-review-check.py — the enforcement linchpin (CONTRIBUTING.md
-    requirement ii applied to the new mechanism itself). Locks the path classifier and the verdict
-    decision, INCLUDING the rubber-stamp vectors an independent review caught, so a future no-op revert
-    of any of them turns this red. Pure: drives the imported functions, no network, no clock."""
+    requirement ii applied to the new mechanism itself). Locks the path classifier, the load-bearing
+    SELF-INCLUSION property (the enforcement's own files are gate-layer), the proportional review tiers
+    (full needs a real coverage fraction; light needs N/A + a justification), the findings-evidence
+    rule, and the rubber-stamp vectors an independent review caught — so a future no-op revert of any of
+    them turns this red. Pure: drives the imported functions, no network, no clock."""
     print("gate-review-check (the enforcement linchpin guards itself):")
     grc = _load("grc", GATE_REVIEW_CHECK)
     patterns = grc.load_gate_patterns(grc.GATE_PATHS_FILE)
@@ -299,26 +302,48 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     res.check(not false_gated, "matches_gate: non-gate paths are not gated",
               ", ".join(false_gated) or "none gated")
 
+    # 1a. SELF-INCLUSION (load-bearing): the enforcement's OWN files must be gate-layer, or the gate
+    # could be weakened in an unreviewed PR and the whole edifice unravels from the inside.
+    enforcement = ["gate-review-check.py", "gate-review-prompt.md", ".github/workflows/gate-review.yml",
+                   ".github/gate-paths", "CONTRIBUTING.md", "gate-reviews/TEMPLATE.md"]
+    self_missed = [p for p in enforcement if not grc.matches_gate(p, patterns)]
+    res.check(not self_missed, "self-inclusion: the enforcement's own files are gated",
+              ", ".join(self_missed) or "all self-included")
+
     # 2. Verdict decision — a well-formed PASS clears; the rubber-stamp vectors a review caught block.
     base = ("- Prompt: gate-review-prompt.md v1.0.0\n"
             "## Replay the real failure\nCoverage: {cov}\n{body}"
             "## Coverage vs advertising\nx\n## Self-description drift\nx\n"
             "## Fixture requirement\nx\n## Findings\n{find}\nVerdict: {v}\n")
     good = base.format(cov="5/5 sites", body="", find="none", v="PASS")
+    good_anchor = base.format(cov="5/5", body="", find="MAJOR gate-review-check.py:66 — fixed", v="PASS")
+    vague = base.format(cov="5/5", body="", find="looks fine to me", v="PASS")
     prose_block = base.format(cov="5/5", body="I may only write Verdict: PASS once clean.\n",
                               find="BLOCKER: x", v="BLOCK")
     zero = base.format(cov="0/0", body="", find="none", v="PASS")
     nits = base.format(cov="5/5", body="", find="none", v="PASS-WITH-NITS")
+    full_na = base.format(cov="N/A", body="", find="none", v="PASS")
     misplaced = ("- Prompt: gate-review-prompt.md v1.0.0\n## Replay the real failure\n"
                  "measured coverage on 6/29\n## Coverage vs advertising\nx\n## Self-description drift\n"
                  "x\n## Fixture requirement\nx\n## Findings\nCoverage: 3/5\nVerdict: PASS\n")
+    light_base = ("- Prompt: gate-review-prompt.md v1.0.0\nTier: light\n{just}"
+                  "## Replay the real failure\nCoverage: N/A\n## Coverage vs advertising\nx\n"
+                  "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\nnone\n"
+                  "Verdict: PASS\n")
+    light_ok = light_base.format(just="Light-path justification: comment-only; no logic/gated-set change\n")
+    light_nojust = light_base.format(just="")
     cases = [
         ("well-formed PASS clears", [("good.md", good)], True),
+        ("full PASS with file:line findings clears", [("ga.md", good_anchor)], True),
+        ("full PASS with vague findings (no anchor/none) blocks", [("vg.md", vague)], False),
         ("PASS-in-prose over an effective BLOCK blocks", [("p.md", prose_block)], False),
         ("coverage 0/0 blocks", [("z.md", zero)], False),
         ("coverage outside the replay section blocks", [("m.md", misplaced)], False),
         ("Verdict: PASS-WITH-NITS blocks", [("n.md", nits)], False),
         ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False),
+        ("light tier: N/A + justification clears", [("lo.md", light_ok)], True),
+        ("light tier: N/A without justification blocks", [("ln.md", light_nojust)], False),
+        ("full tier: Coverage N/A blocks (full needs a fraction)", [("fn.md", full_na)], False),
         ("no verdict record blocks", [], False),
     ]
     for name, records, want in cases:
