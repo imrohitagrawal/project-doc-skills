@@ -1,8 +1,10 @@
 # Gate-review verdict — [pr_ref]
 
 - Prompt: gate-review-prompt.md v1.0.0
-- Tier: full   <!-- 'full' (default) for any behavioral change; 'light' ONLY for a declared
-                    non-behavioral change — see gate-review-prompt.md "Proportionality" -->
+- Tier: full   <!-- CHANGE this single line to 'Tier: light' for a declared non-behavioral change
+                    (do not add a second tier line — mixed full+light resolves to full). The check
+                    refuses light unless every changed gate path is docs-only (*.md); any code/config
+                    gate change forces full. See gate-review-prompt.md "Proportionality". -->
 - PR / branch: [pr_ref]
 - Diff range: [base..head]
 - Gate-layer paths changed: [changed_gate_paths]   (the list gate-review-check.py printed)

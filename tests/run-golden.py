@@ -305,7 +305,7 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     # 1a. SELF-INCLUSION (load-bearing): the enforcement's OWN files must be gate-layer, or the gate
     # could be weakened in an unreviewed PR and the whole edifice unravels from the inside.
     enforcement = ["gate-review-check.py", "gate-review-prompt.md", ".github/workflows/gate-review.yml",
-                   ".github/gate-paths", "CONTRIBUTING.md", "gate-reviews/TEMPLATE.md"]
+                   ".github/gate-paths", ".github/CODEOWNERS", "CONTRIBUTING.md", "gate-reviews/TEMPLATE.md"]
     self_missed = [p for p in enforcement if not grc.matches_gate(p, patterns)]
     res.check(not self_missed, "self-inclusion: the enforcement's own files are gated",
               ", ".join(self_missed) or "all self-included")
@@ -332,22 +332,39 @@ def gate_review_check(res: Results, verbose: bool) -> None:
                   "Verdict: PASS\n")
     light_ok = light_base.format(just="Light-path justification: comment-only; no logic/gated-set change\n")
     light_nojust = light_base.format(just="")
+    # Round-3 fixtures (a different-model cold pass found these holes in the round-2 additions):
+    time_anchor = base.format(cov="5/5", body="", find="discussed at 2:30, fine", v="PASS")  # not a path
+    no_blockers = base.format(cov="5/5", body="", find="No blockers, though MAJOR concerns remain", v="PASS")
+    both_tiers = ("- Prompt: gate-review-prompt.md v1.0.0\nTier: full\nTier: light\n"
+                  "Light-path justification: x\n## Replay the real failure\nCoverage: N/A\n"
+                  "## Coverage vs advertising\nx\n## Self-description drift\nx\n## Fixture requirement\n"
+                  "x\n## Findings\nnone\nVerdict: PASS\n")  # mixed tiers -> full -> N/A insufficient
+    decoy = ("- Prompt: gate-review-prompt.md v1.0.0\n### Prior findings recap\nold foo.py:42\n"
+             "## Replay the real failure\nCoverage: 5/5\n## Coverage vs advertising\nx\n"
+             "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\nclean, ship it\n"
+             "Verdict: PASS\n")  # real ## Findings has no anchor; the ### decoy must not stand in
+    # (name, records, want, allow_light)
     cases = [
-        ("well-formed PASS clears", [("good.md", good)], True),
-        ("full PASS with file:line findings clears", [("ga.md", good_anchor)], True),
-        ("full PASS with vague findings (no anchor/none) blocks", [("vg.md", vague)], False),
-        ("PASS-in-prose over an effective BLOCK blocks", [("p.md", prose_block)], False),
-        ("coverage 0/0 blocks", [("z.md", zero)], False),
-        ("coverage outside the replay section blocks", [("m.md", misplaced)], False),
-        ("Verdict: PASS-WITH-NITS blocks", [("n.md", nits)], False),
-        ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False),
-        ("light tier: N/A + justification clears", [("lo.md", light_ok)], True),
-        ("light tier: N/A without justification blocks", [("ln.md", light_nojust)], False),
-        ("full tier: Coverage N/A blocks (full needs a fraction)", [("fn.md", full_na)], False),
-        ("no verdict record blocks", [], False),
+        ("well-formed PASS clears", [("good.md", good)], True, True),
+        ("full PASS with file:line findings clears", [("ga.md", good_anchor)], True, True),
+        ("full PASS with vague findings (no anchor/none) blocks", [("vg.md", vague)], False, True),
+        ("time '2:30' is not a path anchor -> blocks", [("t.md", time_anchor)], False, True),
+        ("'No blockers, though MAJOR...' is not a clean 'none' -> blocks", [("nb.md", no_blockers)], False, True),
+        ("a ### decoy heading cannot stand in for the real ## Findings -> blocks", [("d.md", decoy)], False, True),
+        ("PASS-in-prose over an effective BLOCK blocks", [("p.md", prose_block)], False, True),
+        ("coverage 0/0 blocks", [("z.md", zero)], False, True),
+        ("coverage outside the replay section blocks", [("m.md", misplaced)], False, True),
+        ("Verdict: PASS-WITH-NITS blocks", [("n.md", nits)], False, True),
+        ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False, True),
+        ("light tier: N/A + justification clears (docs-only)", [("lo.md", light_ok)], True, True),
+        ("light tier: N/A without justification blocks", [("ln.md", light_nojust)], False, True),
+        ("light tier is REFUSED when the change touches code (allow_light=False)", [("lc.md", light_ok)], False, False),
+        ("mixed Tier full+light resolves to full -> N/A insufficient -> blocks", [("mt.md", both_tiers)], False, True),
+        ("full tier: Coverage N/A blocks (full needs a fraction)", [("fn.md", full_na)], False, True),
+        ("no verdict record blocks", [], False, True),
     ]
-    for name, records, want in cases:
-        ok, _ = grc.decide_verdicts(records)
+    for name, records, want, allow in cases:
+        ok, _ = grc.decide_verdicts(records, allow)
         res.check(ok == want, f"decide_verdicts: {name}", f"ok={ok} want={want}")
 
     # 3. effective_verdict takes the LAST verdict line (not any PASS mentioned earlier).

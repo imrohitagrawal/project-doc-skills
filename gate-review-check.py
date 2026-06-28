@@ -28,10 +28,11 @@ WHAT IT CHECKS (for the changed-file set of a PR)
        - the Findings section carries file:line anchors, or an explicit 'none' (evidence, not
          a bare heading over a PASS line),
        - its EFFECTIVE (last) 'Verdict:' line is exactly PASS.
-     PROPORTIONALITY: a declared 'Tier: light' verdict (a non-behavioral change — comment/doc/
-     whitespace, no change to a check's logic, the gated set, a count/threshold, or the policy)
-     may use 'Coverage: N/A' with a 'Light-path justification:' line instead of a fraction. Tier
-     defaults to 'full', so the lighter bar is never granted by omission.
+     PROPORTIONALITY: a declared 'Tier: light' verdict may use 'Coverage: N/A' with a 'Light-path
+     justification:' line instead of a fraction — but ONLY when every changed gate path is docs-only
+     ('*.md'); a code/config gate change (*.py/*.sh/*.yml/.github/gate-paths) refuses the light path
+     and demands the full review. Tier defaults to 'full' (and a mixed full+light resolves to full),
+     so the lighter bar is never granted by omission or by a stray later 'Tier: light' line.
      A record that is malformed, whose effective verdict is BLOCK/FAIL, or that only quotes
      'PASS' in prose, FAILS this check. A co-committed BLOCK record blocks even if a PASS
      record is also present (a blocking review is not overridden by adding a passing one).
@@ -80,13 +81,15 @@ COVERAGE_LINE_RE = re.compile(r"^\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*(\d+)",
 # cannot satisfy a record whose actual conclusion is BLOCK. The token must be exactly PASS/BLOCK/FAIL.
 VERDICT_LINE_RE = re.compile(r"^\s*verdict:\s*([A-Za-z][A-Za-z-]*)", re.IGNORECASE | re.MULTILINE)
 ANY_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
-# The four mandated lens sections PLUS a Findings section — five required headings in total.
+# The four mandated lens sections PLUS a Findings section — five required headings in total. Matched at
+# TOP level only ('#'/'##'), so a '###' decoy subsection carrying a trigger word cannot hijack the
+# section anchor (e.g. a "### Prior findings recap" must not stand in for the real "## Findings").
 REQUIRED_SECTIONS = {
-    "replay-the-real-failure": re.compile(r"^#{1,6}\s.*replay", re.IGNORECASE | re.MULTILINE),
-    "coverage-vs-advertising": re.compile(r"^#{1,6}\s.*coverage\s+vs", re.IGNORECASE | re.MULTILINE),
-    "self-description-drift": re.compile(r"^#{1,6}\s.*self-description", re.IGNORECASE | re.MULTILINE),
-    "fixture-requirement": re.compile(r"^#{1,6}\s.*fixture", re.IGNORECASE | re.MULTILINE),
-    "findings": re.compile(r"^#{1,6}\s.*findings", re.IGNORECASE | re.MULTILINE),
+    "replay-the-real-failure": re.compile(r"^#{1,2}\s.*replay", re.IGNORECASE | re.MULTILINE),
+    "coverage-vs-advertising": re.compile(r"^#{1,2}\s.*coverage\s+vs", re.IGNORECASE | re.MULTILINE),
+    "self-description-drift": re.compile(r"^#{1,2}\s.*self-description", re.IGNORECASE | re.MULTILINE),
+    "fixture-requirement": re.compile(r"^#{1,2}\s.*fixture", re.IGNORECASE | re.MULTILINE),
+    "findings": re.compile(r"^#{1,2}\s.*findings", re.IGNORECASE | re.MULTILINE),
 }
 # Proportionality: the review TIER scales the evidence to the change. 'full' (the default — never
 # granted by omission) needs a real coverage fraction; 'light' is allowed ONLY for a declared
@@ -94,9 +97,11 @@ REQUIRED_SECTIONS = {
 TIER_LINE_RE = re.compile(r"^\s*tier:\s*(light|full)\b", re.IGNORECASE | re.MULTILINE)
 COVERAGE_NA_RE = re.compile(r"^\s*coverage\s*[:=]\s*n/?a\b", re.IGNORECASE | re.MULTILINE)
 JUSTIFICATION_RE = re.compile(r"^\s*light-path justification:\s*\S", re.IGNORECASE | re.MULTILINE)
-# Evidence, not a stamp: the Findings section must carry file:line anchors, or an explicit 'none'.
-FINDING_ANCHOR_RE = re.compile(r"\S+:\d+")
-FINDINGS_NONE_RE = re.compile(r"\b(none|no findings|no blockers?|no issues?)\b", re.IGNORECASE)
+# Evidence, not a stamp: the Findings section must carry a real path anchor (file:line — a token with a
+# '/' or a '.ext' of 2-8 letters before ':N'), or an explicit 'none' on its own leading line. The path
+# requirement rejects a clock time ('2:30'), a bare port, or a version ('x.y:1') masquerading as proof.
+FINDING_ANCHOR_RE = re.compile(r"(?=[\w./-]*(?:/|\.[A-Za-z]{2,8}))[\w./-]+:\d+")
+FINDINGS_NONE_RE = re.compile(r"^\s*(none|no findings)\b", re.IGNORECASE | re.MULTILINE)
 
 
 def die(msg: str, code: int = 2) -> NoReturn:
@@ -168,15 +173,18 @@ def effective_verdict(text: str) -> str | None:
 
 
 def effective_tier(text: str) -> str:
-    """The review tier — 'full' (default) or 'light'. Absence defaults to full, so the lighter
-    evidence bar is never granted by omission; light must be declared and justified."""
-    m = TIER_LINE_RE.findall(text)
-    return m[-1].lower() if m else "full"
+    """The review tier — 'full' (default) or 'light'. Light only when light is the SOLE declared tier:
+    absence defaults to full, and a mix of 'full' and 'light' lines resolves to full (the safe choice),
+    so a stray later 'Tier: light' cannot silently downgrade a verdict the template pre-fills as full."""
+    tiers = {t.lower() for t in TIER_LINE_RE.findall(text)}
+    return "light" if tiers == {"light"} else "full"
 
 
-def shape_problems(text: str) -> list[str]:
+def shape_problems(text: str, allow_light: bool = True) -> list[str]:
     """Structural/evidence problems with a verdict record (independent of the verdict VALUE).
-    Empty list == the record carries the required evidence shape."""
+    Empty list == the record carries the required evidence shape. allow_light is False when the change
+    touches gate-layer code/config, in which case the light path is refused (the machine cross-check
+    that 'Tier: light' cannot wave a behavioral change through with no coverage)."""
     problems: list[str] = []
     if not PROMPT_VERSION_RE.search(text):
         problems.append("does not name the gate-review-prompt.md version it ran "
@@ -187,22 +195,27 @@ def shape_problems(text: str) -> list[str]:
     # The coverage figure must be a real fraction on a 'Coverage:' line INSIDE the replay section, so a
     # date or a passing mention elsewhere cannot stand in as 'evidence the real failure was replayed'.
     # Proportionality: a declared 'Tier: light' (non-behavioral change) may use 'Coverage: N/A' instead,
-    # but then must carry a 'Light-path justification:' line — the lighter bar still leaves evidence.
+    # but only when the change is docs-only (allow_light) and it carries a 'Light-path justification:'.
     tier = effective_tier(text)
+    if tier == "light" and not allow_light:
+        problems.append("a 'Tier: light' verdict is not permitted here: this change touches gate-layer "
+                        "code/config — only a docs-only ('*.md') gate change may use the light path. "
+                        "Run the full review with a real 'Coverage: N/M'.")
+    light_ok = tier == "light" and allow_light
     replay = _section_text(text, REQUIRED_SECTIONS["replay-the-real-failure"])
     cm = COVERAGE_LINE_RE.search(replay)
     if cm:
         n, m = int(cm.group(1)), int(cm.group(2))
         if m == 0 or n > m:
             problems.append(f"coverage figure {n}/{m} is not a real fraction (need M>0 and N<=M)")
-    elif tier == "light" and COVERAGE_NA_RE.search(replay):
+    elif light_ok and COVERAGE_NA_RE.search(replay):
         if not JUSTIFICATION_RE.search(text):
             problems.append("a 'Tier: light' verdict needs a 'Light-path justification:' line stating "
                             "why the change is non-behavioral (no change to any check's logic, the "
                             "gated set, a count/threshold, or the policy's meaning)")
     else:
         problems.append("no 'Coverage: N/M' line in the replay section (a real fraction proving the "
-                        "real failure was replayed; or, for a declared non-behavioral change, "
+                        "real failure was replayed; or, for a docs-only non-behavioral change, "
                         "'Tier: light' + 'Coverage: N/A' + a 'Light-path justification:' line)")
     # Evidence, not a stamp: the Findings section must carry file:line anchors, or an explicit 'none' —
     # a bare heading over a PASS line is not a review. The section may use '###' subsections, so scan
@@ -219,13 +232,13 @@ def shape_problems(text: str) -> list[str]:
     return problems
 
 
-def decide_verdicts(records: list[tuple[str, str]]) -> tuple[bool, list[str]]:
+def decide_verdicts(records: list[tuple[str, str]], allow_light: bool = True) -> tuple[bool, list[str]]:
     """Pure decision over (name, text) verdict records. Returns (ok, message_lines).
 
     Fail-safe rules: a BLOCK/FAIL record blocks even if a PASS also exists (a blocking review is not
     overridden by adding a passing one); a malformed record blocks; the gate clears only if at least
-    one record is a well-formed PASS and none is BLOCK/FAIL. Pure (no disk/network) so it is unit-tested
-    directly in tests/run-golden.py."""
+    one record is a well-formed PASS and none is BLOCK/FAIL. allow_light=False forbids the light path
+    (passed through to shape_problems). Pure (no disk/network) so it is unit-tested in run-golden.py."""
     if not records:
         return False, ["No gate-reviews/ verdict was added/modified in this PR."]
 
@@ -233,7 +246,7 @@ def decide_verdicts(records: list[tuple[str, str]]) -> tuple[bool, list[str]]:
     passing: list[str] = []
     blocking = False
     for name, text in records:
-        probs = shape_problems(text)
+        probs = shape_problems(text, allow_light)
         verdict = effective_verdict(text)
         if verdict in {"BLOCK", "FAIL"}:
             blocking = True
@@ -255,9 +268,12 @@ def decide_verdicts(records: list[tuple[str, str]]) -> tuple[bool, list[str]]:
     return False, msgs
 
 
-def evaluate_verdicts(changed: list[str]) -> tuple[bool, list[str]]:
+def evaluate_verdicts(changed: list[str], gate_paths: list[str]) -> tuple[bool, list[str]]:
     """Read the changed gate-reviews/ records from disk and decide (see decide_verdicts). A deleted
-    verdict simply isn't a record, so deleting the only verdict blocks via the empty-records path."""
+    verdict simply isn't a record, so deleting the only verdict blocks via the empty-records path.
+    The light path is admissible only when every changed gate path is docs-only ('*.md') — a code or
+    config gate change (a *.py / *.sh / *.yml / .github/gate-paths edit) requires the full review."""
+    allow_light = bool(gate_paths) and all(p.endswith(".md") for p in gate_paths)
     candidates = [
         c for c in changed
         if c.startswith(VERDICT_DIR + "/")
@@ -266,7 +282,7 @@ def evaluate_verdicts(changed: list[str]) -> tuple[bool, list[str]]:
     ]
     records = [(c, (ROOT / c).read_text(encoding="utf-8", errors="ignore"))
                for c in candidates if (ROOT / c).is_file()]
-    return decide_verdicts(records)
+    return decide_verdicts(records, allow_light)
 
 
 def get_changed(args: argparse.Namespace) -> list[str]:
@@ -307,7 +323,7 @@ def main() -> int:
     for c, pat in touched:
         print(f"    • {c}   (matched: {pat})")
 
-    ok, lines = evaluate_verdicts(changed)
+    ok, lines = evaluate_verdicts(changed, [c for c, _ in touched])
     if ok:
         print(f"gate-review-check: PASS — {lines[0]}")
         return 0

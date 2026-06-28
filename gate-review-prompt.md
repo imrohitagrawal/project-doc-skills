@@ -56,9 +56,11 @@ gate off, and then it is theatre. So:
 - **Light path (single reviewer, ~10 minutes).** Allowed **only** for a genuinely **non-behavioral**
   change: a comment, docstring, prose, or whitespace edit with **no** change to any check's logic, to
   the gated set (`.github/gate-paths`), to a count/threshold/enumeration, or to the policy's meaning.
-  One reviewer reads the whole diff, confirms the change is non-behavioral, and records a verdict with
-  `Tier: light`, `Coverage: N/A`, and a one-line `Light-path justification:` naming the change class.
-  Still produce the full record (all sections + Findings); the lenses below are answered briefly.
+  The check enforces a floor on this: it **refuses** the light path unless every changed gate path is
+  docs-only (`*.md`) — any `*.py`/`*.sh`/`*.yml`/`.github/gate-paths` edit demands the full review,
+  whatever you declare. One reviewer reads the whole diff, confirms the change is non-behavioral, and
+  records a verdict with `Tier: light`, `Coverage: N/A`, and a one-line `Light-path justification:`
+  naming the change class. Still produce the full record (all sections + Findings) answered briefly.
 - **Full path (the crew).** Everything else — any change to a check's behavior, the gated set, a
   count/threshold, a fixture, the policy, or anything you are unsure about. Run the blind decorrelated
   lenses + adjudicator, replay the real failure, and state a real `Coverage: N/M`. The different-vendor
