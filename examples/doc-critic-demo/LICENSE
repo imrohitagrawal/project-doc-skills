@@ -1,0 +1,24 @@
+License — doc-critic worked example
+===================================
+
+Documentation (the files under docs/)
+--------------------------------------
+© 2026 Rohit Agrawal (StackClimb).
+Licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0
+International License (CC BY-NC-ND 4.0).
+You may share the material with attribution, for non-commercial use, without
+derivatives. Full terms: https://creativecommons.org/licenses/by-nc-nd/4.0/
+
+Sample code (the files under sample_app/)
+-----------------------------------------
+© 2026 Rohit Agrawal. Licensed under the MIT License for illustration.
+
+Disclaimer of warranty
+----------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
