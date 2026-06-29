@@ -37,6 +37,12 @@ All notable changes to this skill. Format: [Keep a Changelog](https://keepachang
   its axis-coverage lines cannot drift apart. doc-critic is non-deterministic, so this locks the
   method's docs for consistency — it does not run the critique (`verify.py` stays the deterministic
   gate); it is a suite-level pin, not a per-skill `evals/` dir.
+- **Stated the harness dependency, honestly** (a fourth *Honest limitations* item): the blind,
+  each-axis-in-its-own-context independence the method relies on is real only in an
+  **isolated-subagent** run; in a plain single chat the axes run sequentially in one context and lose
+  most of their decorrelation, so such a run is a structured self-review, not an independent gate —
+  lean harder on the different-vendor pass, whose decorrelation is from model weights rather than
+  context isolation.
 - Clarified, per review: auto-chain is via doc-critic's *own* description + an authoring-skill body
   handoff (an authoring skill's description cannot trigger it); reviewers get the *neutralized
   paraphrase* in the shared brief, not the house-style file; the different-vendor pass is "not
