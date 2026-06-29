@@ -32,23 +32,41 @@ in-flight skill-count PR.
 - **`docs/SETTINGS.md`** — the exact branch-ruleset command to apply by hand (settings are not
   committable): require `release-gate` + `gate-review`, no bypass actors, block force-push/deletion.
 
+### Fixed — light review was admissible for any gated markdown, not just the inert doc (gate hygiene)
+- **`gate-review-check.py`** (`light_admissible`) — replaced the open-by-default denylist (`any '*.md'
+  not in a small behavioral set`) with a **closed allow-list** `LIGHT_ADMISSIBLE_GATE_PATHS =
+  {"gate-reviews/README.md"}`. The old predicate silently admitted every OTHER gated markdown for the
+  *light* single-reviewer path — test fixtures under `tests/`, any future `.github/**/*.md` — though
+  those are gate-layer subtrees that must take the **full** review. The advertised contract had always
+  said "the sole light-eligible gate path is `gate-reviews/README.md`"; the code now matches it. The gap
+  was pre-existing (introduced with the seam in the gate-layer governance work) and was caught by the
+  different-vendor cold pass of this PR's own gate-review. Locked by new regression cases (below), per
+  requirement (ii).
+
 ### Changed — the integrity manifest is byte-stable on unchanged content (gate hygiene)
 - **`pkgtools.py` / `dist/MANIFEST.sha256`** — dropped the `# source-commit:` manifest line. It recorded
   the build-time HEAD, which is always the **parent** of the commit that carries the manifest, so it
   flipped on every build and produced spurious manifest diffs on content-free changes. The per-file
   SHA-256 rows are the integrity guarantee (`sha256sum -c` ignores `#` comments); rebuilding on unchanged
-  content now reproduces the manifest byte-for-byte (proven by two back-to-back builds). Self-descriptions
-  were updated in lockstep so none drifts from the manifest: `README.md` and `check-version.py`'s
-  not-a-git-checkout note.
+  content now reproduces the manifest byte-for-byte (proven by two back-to-back builds). The live
+  self-descriptions were updated in lockstep — `pkgtools.py`'s docstring, `README.md`, and
+  `check-version.py`'s not-a-git-checkout note — so no live/gated description still promises a commit
+  field. (The point-in-time `SUITE-HARDENING-PASS-2-SCOPE.md` planning notes are historical and left as
+  written.)
 
-### Added — integration lock for the gate-review light-tier seam (gate hygiene)
+### Added — integration lock for the gate-review light-tier seam + manifest stability (gate hygiene)
 - **`tests/run-golden.py`** (`gate-review-check SEAM` section) — a regression that drives
   `evaluate_verdicts` end-to-end and proves it wires `light_admissible(gate_paths)` into the verdict
   decision. Holding one on-disk light verdict fixed and flipping only the changed gate paths, the light
-  path clears **only** for an inert gated doc (`gate-reviews/README.md`) and is refused — full review
-  required — for code (`*.py`/`*.sh`/`*.yml`), the `.github/` subtree, and the behavioral governance docs
-  (the lenses, the verdict contract, the policy, the recorded ruleset). The seam was previously covered
-  only by a one-off CLI demo; a no-op revert (hard-coding `allow_light=True`) now turns 10 assertions red.
+  path clears **only** for the inert allow-listed doc (`gate-reviews/README.md`) and is refused — full
+  review required — for code (`*.py`/`*.sh`/`*.yml`), the `.github/` subtree, the behavioral governance
+  docs, **and gated markdown under `tests/` / `.github/`** (the class the old denylist wrongly admitted).
+  The seam was previously covered only by a one-off CLI demo; no-op reverts turn it red (hard-coding
+  `allow_light=True` → 10 reds; dropping the disk read → 2 reds; reverting the allow-list → the
+  gated-markdown rows red).
+- **`tests/run-golden.py`** (`manifest byte-stability` section) — locks the item-2 invariant: two
+  `write_manifest` runs on identical content are byte-identical, and the manifest carries no
+  build-commit / timestamp field. A future edit re-adding a volatile field would turn this red.
 
 ## [1.2.0] — 2026-06-28 (suite lint: the skill-enumeration guard)
 

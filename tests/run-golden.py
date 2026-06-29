@@ -30,6 +30,13 @@ What it locks
       decide_verdicts/effective_verdict accept a clean PASS (full: real coverage fraction; light: N/A +
       justification; findings carry file:line or 'none') and reject the rubber-stamp vectors a review
       caught (PASS in prose over a BLOCK, coverage 0/0 / outside replay, PASS-WITH-NITS, co-committed BLOCK)
+    - the evaluate_verdicts SEAM end-to-end against a temp root: one on-disk light verdict held fixed,
+      only the changed gate paths flipped — light clears ONLY for the inert allow-listed doc
+      (gate-reviews/README.md) and is refused (full review) for code, the .github/ subtree, the behavioral
+      governance docs, AND gated markdown under tests/ (the class the old denylist wrongly admitted)
+  manifest byte-stability (pkgtools.write_manifest, item 2):
+    - two runs on identical content produce byte-identical bytes, with no build-commit / timestamp field
+      (a re-added volatile field would reinstate the spurious-diff failure this guards)
 
 Run by hand or from the release gate:
     python3 tests/run-golden.py            # exit 0 if every assertion holds, 1 otherwise
@@ -60,6 +67,7 @@ GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
 LINT_SKILL_COUNT = ROOT / "lint-skill-count.py"
+PKGTOOLS = ROOT / "pkgtools.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
 # golden-good assertion is 0 FAIL (a staleness WARN would still be allowed), and the EXACT staleness
@@ -315,11 +323,20 @@ def gate_review_check(res: Results, verbose: bool) -> None:
 
     # 1b. light_admissible (pure): light is for INERT gated docs only (today: gate-reviews/README.md).
     # The behavioral governance docs (lenses/contract/policy/ruleset) and all code/config take full.
+    # REGRESSION (PR #9 gate-review, different-vendor cold pass): an earlier denylist predicate ("any
+    # '*.md' not in the behavioral set") was open-by-default and admitted any OTHER gated markdown — test
+    # fixtures under tests/, files under .github/ — for the light path, though those are gate-layer
+    # subtrees. The closed allow-list refuses them; these cases lock that (each was True under the bug).
     light_cases = [
         (["gate-review-prompt.md"], False), (["CONTRIBUTING.md"], False),
         (["docs/SETTINGS.md"], False), (["gate-reviews/TEMPLATE.md"], False),
         (["gate-reviews/README.md"], True), (["gate-reviews/README.md", "CONTRIBUTING.md"], False),
         ([], False),
+        # gated markdown under a subtree must NOT be light-eligible (the closed-allow-list fix):
+        (["tests/golden-bad/leaked-credential.md"], False),
+        (["tests/golden-good/learning-track-module.md"], False),
+        ([".github/PULL_REQUEST_TEMPLATE.md"], False),
+        (["gate-reviews/README.md", "tests/golden-bad/leaked-credential.md"], False),
     ]
     for paths, want in light_cases:
         got = grc.light_admissible(paths)
@@ -444,13 +461,19 @@ def gate_review_seam(res: Results, verbose: bool) -> None:
     # One representative gate path per class the task calls out; light must be REFUSED for all of them.
     # Code by extension (*.py/*.sh/*.yml), the .github/ subtree (no extension), and the behavioral
     # governance docs (the lenses, the verdict contract, the policy, the recorded ruleset) all force full.
+    # The gated-markdown-subtree rows (tests/**/*.md, .github/**/*.md) are the class the original denylist
+    # let through with light — they are gate-layer subtrees, so they MUST be refused end-to-end too (the
+    # different-vendor cold pass on PR #9 found the seam fixture missed exactly this class).
     refuse_full = [
         ["build-skills.sh"], ["pkgtools.py"], ["tests/run-golden.py"],     # *.sh / *.py code
         [".github/workflows/gate-review.yml"],                             # *.yml
         [".github/gate-paths"],                                            # .github/ path, no extension
         ["gate-review-prompt.md"], ["gate-reviews/TEMPLATE.md"],          # behavioral governance docs
         ["CONTRIBUTING.md"], ["docs/SETTINGS.md"],
+        ["tests/golden-bad/leaked-credential.md"],                       # gated markdown under tests/
+        [".github/PULL_REQUEST_TEMPLATE.md"],                            # gated markdown under .github/
         ["gate-reviews/README.md", "CONTRIBUTING.md"],                    # mixed inert + behavioral -> full
+        ["gate-reviews/README.md", "tests/golden-bad/leaked-credential.md"],  # mixed inert + gated md -> full
     ]
     orig_root = grc.ROOT
     try:
@@ -470,6 +493,45 @@ def gate_review_seam(res: Results, verbose: bool) -> None:
                   f"code={ok_full_code} doc={ok_full_doc}")
     finally:
         grc.ROOT = orig_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def manifest_byte_stability(res: Results, verbose: bool) -> None:
+    """Lock the item-2 invariant: pkgtools.write_manifest is byte-stable on unchanged content and carries
+    NO HEAD/clock-dependent field. The old '# source-commit:' line recorded the build HEAD and flipped on
+    every build, producing spurious manifest diffs on content-free changes; a future edit re-adding a
+    volatile field (a build commit, an mtime, a build-id) would reinstate exactly that. Drives the REAL
+    write_manifest twice on identical fixed inputs; the only I/O is a self-contained temp dir.
+    """
+    print("manifest byte-stability (item 2: identical content -> identical bytes; no HEAD/clock field):")
+    pkg = _load("pkgtools", PKGTOOLS)
+    tmp = Path(tempfile.mkdtemp(prefix="manifest-stable-"))
+    try:
+        dist, shared = tmp / "dist", tmp / "shared"
+        dist.mkdir(); shared.mkdir()
+        # Fixed inputs: pinned content, so the only way the bytes could differ build-to-build is a
+        # volatile manifest field (the failure this guards).
+        (dist / "alpha.skill").write_bytes(b"alpha-bytes")
+        (shared / "house-style.md").write_text("shared\n", encoding="utf-8")
+        out1, out2 = tmp / "M1.sha256", tmp / "M2.sha256"
+        pkg.write_manifest(dist, shared, out1, version="9.9.9", root=tmp)
+        pkg.write_manifest(dist, shared, out2, version="9.9.9", root=tmp)
+        b1, b2 = out1.read_bytes(), out2.read_bytes()
+        res.check(b1 == b2, "write_manifest is byte-identical across two runs on identical content",
+                  f"{len(b1)} vs {len(b2)} bytes")
+        text = out1.read_text(encoding="utf-8")
+        # A re-added volatile field would show up as a build-commit token or a date. The 64-hex integrity
+        # rows do NOT trip the 40-hex commit pattern (no word boundary mid-run) and carry no '-' dates.
+        no_commit = not re.search(r"source-commit|\b[0-9a-f]{40}\b", text)
+        no_clock = not re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
+        res.check(no_commit, "manifest carries no build-commit field",
+                  "clean" if no_commit else "found a commit-like token")
+        res.check(no_clock, "manifest carries no date/timestamp field",
+                  "clean" if no_clock else "found a date")
+        # The integrity rows that replaced the dropped field are still emitted (one per input file).
+        rows = re.findall(r"(?m)^[0-9a-f]{64}  ", text)
+        res.check(len(rows) == 2, "manifest still emits the per-file SHA-256 rows", f"{len(rows)} rows")
+    finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -582,7 +644,7 @@ def main() -> int:
     args = ap.parse_args()
 
     for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
-                   LINT_SKILL_COUNT):
+                   LINT_SKILL_COUNT, PKGTOOLS):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -599,6 +661,8 @@ def main() -> int:
     gate_review_check(res, args.verbose)
     print()
     gate_review_seam(res, args.verbose)
+    print()
+    manifest_byte_stability(res, args.verbose)
     print()
     skill_count_extractors(res, args.verbose)
     print()

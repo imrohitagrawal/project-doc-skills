@@ -69,18 +69,16 @@ GATE_PATHS_FILE = ROOT / ".github" / "gate-paths"
 VERDICT_DIR = "gate-reviews"
 # Files under gate-reviews/ that are scaffolding, not a verdict for a specific PR.
 VERDICT_NON_RECORDS = {"TEMPLATE.md", "README.md"}
-# Gated Markdown that ENCODES enforced behavior — the review lenses, the verdict contract, the policy,
-# and the recorded ruleset. Editing one changes how the gate itself works, so it must take the FULL
-# review even though it is '*.md'. Without this, "light = docs-only" was a loophole: the only gated .md
-# you can reach is a governance instrument, so light was reachable only by lightly editing the gate's
-# own rules. gate-reviews/README.md is deliberately EXCLUDED — it is descriptive, no enforced behavior
-# depends on it, so it stays the light path's one legitimate inert member.
-BEHAVIORAL_GATE_DOCS = {
-    "gate-review-prompt.md",     # the review lenses
-    "gate-reviews/TEMPLATE.md",  # the verdict contract
-    "CONTRIBUTING.md",           # the policy
-    "docs/SETTINGS.md",          # the recorded ruleset
-}
+# The EXPLICIT allow-list of gate paths for which the LIGHT review is admissible — CLOSED by default.
+# Light is for an INERT gated doc whose wording no enforced behavior depends on; today that is exactly
+# gate-reviews/README.md. This MUST be an allow-list, not a denylist. An earlier predicate ("any '*.md'
+# not in a small set of behavioral docs") was open-by-default and silently admitted every OTHER gated
+# markdown — test-fixture '.md' under tests/, any future '.github/**/*.md' — which ARE gate-layer (the
+# 'tests/' and '.github/' subtrees in .github/gate-paths) and must take the FULL review. The advertised
+# contract always said "the sole light-eligible gate path is gate-reviews/README.md"; the code now
+# matches it. (Gap caught by a different-vendor gate-review on PR #9.) Add a path here only by a
+# deliberate, reviewed act — never reintroduce a broadening rule.
+LIGHT_ADMISSIBLE_GATE_PATHS = frozenset({"gate-reviews/README.md"})
 
 # A verdict's required shape. Each is a low-false-positive structural marker; together
 # they require the reviewer to have produced EVIDENCE, so a one-line rubber stamp fails.
@@ -298,12 +296,11 @@ def decide_verdicts(records: list[tuple[str, str]], allow_light: bool = True) ->
 
 def light_admissible(gate_paths: list[str]) -> bool:
     """Whether the light review path is permitted for this set of changed gate paths. Pure (no disk),
-    so it is unit-locked directly in tests/run-golden.py. Light is allowed ONLY when every changed gate
-    path is an INERT gated doc: a '*.md' that is not in BEHAVIORAL_GATE_DOCS. So code/config and the
-    behavioral governance docs (lenses, contract, policy, ruleset) all require the full review; today
-    the sole light-eligible gate path is gate-reviews/README.md."""
-    return bool(gate_paths) and all(
-        p.endswith(".md") and p not in BEHAVIORAL_GATE_DOCS for p in gate_paths)
+    so it is unit-locked directly in tests/run-golden.py. Light is allowed ONLY when EVERY changed gate
+    path is in LIGHT_ADMISSIBLE_GATE_PATHS (today exactly gate-reviews/README.md) — a closed allow-list,
+    so code/config, the behavioral governance docs (lenses, contract, policy, ruleset), AND any other
+    gated markdown (test fixtures under tests/, files under .github/) all require the full review."""
+    return bool(gate_paths) and set(gate_paths) <= LIGHT_ADMISSIBLE_GATE_PATHS
 
 
 def evaluate_verdicts(changed: list[str], gate_paths: list[str]) -> tuple[bool, list[str]]:
