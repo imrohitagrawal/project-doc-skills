@@ -103,6 +103,16 @@ if ! python3 "$ROOT/lint-placeholders.py" "$ROOT" --strict; then
   failed=$((failed+1))
 fi
 
+# Suite-level skill-enumeration guard. README.md and per-skill-review-prompt.md are root scaffolding
+# (never bundled), so they are invisible to validate_skill.py, the two lints above, and
+# check-version.py — the blind spot that let the skill count/table/pick-list drift twice. This asserts
+# both files enumerate exactly the skills in skills/. A drift FAILS the build (counted into $failed)
+# and is named; run by hand it defaults to WARN.
+if ! python3 "$ROOT/lint-skill-count.py" "$ROOT" --strict; then
+  echo "FAIL  skill-count lint reported a skill-enumeration drift (see above)"
+  failed=$((failed+1))
+fi
+
 if [[ "$CHECK" -eq 1 ]]; then
   echo "--- check: $checked byte-identical, $mismatched mismatched/missing, $failed validation/lint failure(s) ---"
   [[ "$mismatched" -gt 0 || "$failed" -gt 0 ]] && exit 1 || exit 0

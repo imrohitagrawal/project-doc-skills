@@ -32,6 +32,32 @@ in-flight skill-count PR.
 - **`docs/SETTINGS.md`** — the exact branch-ruleset command to apply by hand (settings are not
   committable): require `release-gate` + `gate-review`, no bypass actors, block force-push/deletion.
 
+## [1.2.0] — 2026-06-28 (suite lint: the skill-enumeration guard)
+
+A new root-level suite lint, composed into the release gate. Suite tooling, never copied into a `.skill`.
+
+### Added — `lint-skill-count.py` (new suite gate)
+- `README.md` and `per-skill-review-prompt.md` are root scaffolding (never bundled), so they were
+  invisible to `validate_skill.py`, the render/placeholder lints, and `check-version.py`. That blind
+  spot let the skill **enumeration** drift twice — a stale count, and several sites missing the new
+  skill (in `README.md`: the skill table, the repo tree, and the improve-order list; in
+  `per-skill-review-prompt.md`: the `{SKILL_NAME}` pick-list and the attachment table) — and ship
+  uncaught (all fixed in the doc-critic PR, `b65041f`). This lint derives the canonical set from
+  `skills/<name>/` and asserts that **every one of those five enumeration sites** lists exactly that
+  set, plus the suite count phrases (word or digit, every occurrence).
+- **Low false-positive by design:** the set checks are exact directory-vs-document comparisons; the
+  count checks are anchored to specific suite-count phrases, so the legitimate "the other seven
+  skills" (N-1), "Six [authoring skills] turn ..." (a sub-count), and the dated "all seven skills were
+  clean" history line never trip it.
+- `build-skills.sh` runs it with `--strict` alongside the render-restatement and placeholder lints, so
+  a drift now FAILS the build — and the release gate, via build step 1. Run by hand it defaults to WARN.
+- **Scope (honest):** this guards **accidental** enumeration drift — the class above, which it catches.
+  It is **not** adversarially-decoy-proof: because it reads raw Markdown, a canonical run hidden in
+  markup right after the introducing phrase (HTML comment, code span, reference definition), or a decoy
+  phrase that merely contains the anchor substring, can mask a broken visible list. The structural fix —
+  generating each enumeration from the source of truth and checking it byte-identical, so no parsing and
+  no decoy class — is tracked as a follow-up (`feat/skill-count-generate`).
+
 ## [1.1.0] — 2026-06-28 (new skill: doc-critic — the independent critic gate)
 
 The eighth skill plus one shared-layer addition that supports it. Additive and good for all skills.

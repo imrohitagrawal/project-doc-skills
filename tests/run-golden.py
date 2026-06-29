@@ -58,6 +58,7 @@ GOLDEN_GOOD = ROOT / "tests" / "golden-good"
 GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
+LINT_SKILL_COUNT = ROOT / "lint-skill-count.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
 # golden-good assertion is 0 FAIL (a staleness WARN would still be allowed), and the EXACT staleness
@@ -407,13 +408,116 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     res.check(ev == "BLOCK", "effective_verdict: the last verdict line wins", f"got {ev}")
 
 
+def skill_count_extractors(res: Results, verbose: bool) -> None:
+    """Unit-lock every enumeration-site extractor in lint-skill-count.py: each must find the full set,
+    and a drop must change it. (Guards the guard — the lint once shipped covering only 2 of its 5 sites
+    and printed 'clean' on real drift.) Synthetic inputs, so this never couples to the live README.
+    """
+    print("skill-count lint — each site extractor finds the set, and a drop is detected:")
+    m = _load("skillcount", LINT_SKILL_COUNT)
+    canon = {"alpha", "beta", "gamma"}
+    # (label, extractor, full-text -> {alpha,beta,gamma}, dropped-text -> {alpha,beta})
+    cases = [
+        ("README skill table", m.readme_table_skills,
+         "| **alpha** | x |\n| **beta** | y |\n| **gamma** | z |\n",
+         "| **alpha** | x |\n| **beta** | y |\n"),
+        ("README repo tree", m.readme_tree_skills,
+         "├─ skills/\n│  ├─ alpha/\n│  ├─ beta/\n│  └─ gamma/\n├─ build.sh\n",
+         "├─ skills/\n│  ├─ alpha/\n│  └─ beta/\n├─ build.sh\n"),
+        ("README improve-order", m.improve_order_skills,
+         "in this order (producers before consumers):\n**alpha → beta → gamma.**\n",
+         "in this order (producers before consumers):\n**alpha → beta.**\n"),
+        ("prompt pick-list", m.pick_list_skills,
+         "below with one of\n`alpha · beta · gamma`\n",
+         "below with one of\n`alpha · beta`\n"),
+        ("prompt attachment table", m.attach_table_skills,
+         "### File-attachment guide\n| alpha | a |\n| beta | b |\n| gamma | c |\n",
+         "### File-attachment guide\n| alpha | a |\n| beta | b |\n"),
+    ]
+    for label, fn, full_text, dropped_text in cases:
+        full = fn(full_text, canon)
+        dropped = fn(dropped_text, canon)
+        ok = (full == canon) and (dropped == {"alpha", "beta"})
+        res.check(ok, f"site extractor: {label}",
+                  f"full={sorted(full)} dropped={sorted(dropped)}" if verbose else f"{len(full)}->{len(dropped)}")
+
+    # Count phrases: correct passes; a wrong count is caught in BOTH word and digit form.
+    good = m.check_count_phrases("a suite of three independent skills", m.README_COUNT_PHRASES, 3, "x")
+    bad_word = m.check_count_phrases("a suite of two independent skills", m.README_COUNT_PHRASES, 3, "x")
+    bad_digit = m.check_count_phrases("a suite of 2 independent skills", m.README_COUNT_PHRASES, 3, "x")
+    res.check(not good and len(bad_word) == 1 and len(bad_digit) == 1,
+              "count phrase: correct passes, wrong caught (word + digit)",
+              f"good={good} word={len(bad_word)} digit={len(bad_digit)}")
+
+    # Fail-CLOSED: an unparseable reformat of each site must yield a set that does NOT match canonical
+    # (so the lint reports "could not locate" / a mismatch and exits 1), never a silent clean — the
+    # interim safeguard until the generate-don't-lint redesign. Each input below is a plausible reformat
+    # the extractor cannot parse; it must return empty (or a wrong set), never the canonical set.
+    reformatted = [
+        ("README table un-bolded", m.readme_table_skills, "| alpha | x |\n| beta | y |\n| gamma | z |\n"),
+        ("README tree as markdown list", m.readme_tree_skills, "- skills/\n  - alpha/\n  - beta/\n  - gamma/\n"),
+        ("README improve-order delimiter changed", m.improve_order_skills,
+         "in this order (producers before consumers):\n**alpha, beta, gamma.**\n"),
+        ("prompt pick-list delimiter changed", m.pick_list_skills,
+         "replace `{SKILL_NAME}` below with one of\n`alpha, beta, gamma`\n"),
+        ("prompt attachment table, no section heading", m.attach_table_skills,
+         "| alpha | a |\n| beta | b |\n| gamma | c |\n"),
+    ]
+    for label, fn, text in reformatted:
+        got = fn(text, canon)
+        res.check(got != canon, f"fail-closed on reformat: {label}",
+                  "empty -> could-not-locate" if not got else f"got {sorted(got)}")
+
+    # Decoy-proof (the position-scoped → / · selectors): a BROKEN real list (missing a skill) with a
+    # FULL decoy run of the same delimiter elsewhere must yield the BROKEN set, never canonical. The
+    # earlier best-match selector was fooled — the full decoy won on overlap and masked the broken list.
+    io_decoy = ("in this order (producers before consumers):\n**alpha → beta.**\n\n"
+                "decoy elsewhere: **alpha → beta → gamma**\n")
+    pl_decoy = "below with one of\n`alpha · beta`\n\ndecoy: `alpha · beta · gamma`\n"
+    io_got = m.improve_order_skills(io_decoy, canon)
+    pl_got = m.pick_list_skills(pl_decoy, canon)
+    res.check(io_got == {"alpha", "beta"}, "decoy-proof: improve-order ignores a full decoy run",
+              f"got {sorted(io_got)} (must be the broken real list, not canonical)")
+    res.check(pl_got == {"alpha", "beta"}, "decoy-proof: pick-list ignores a full decoy run",
+              f"got {sorted(pl_got)} (must be the broken real list, not canonical)")
+
+    # Post-anchor decoys (an independent gate-review reproduced these silent-passes in the first
+    # position-scoped fix): a DUPLICATE introducing phrase (1b) or a reformatted adjacent list with a
+    # DISTANT canonical decoy (1c) must NOT yield canonical — the extractor fails closed (empty).
+    full_io, broke_io = "alpha → beta → gamma", "alpha → beta"
+    full_pl, broke_pl = "alpha · beta · gamma", "alpha · beta"
+    post_anchor = [
+        ("1b improve-order: duplicate anchor", m.improve_order_skills,
+         f"producers before consumers {full_io}\n\nx\n\nproducers before consumers {broke_io}\n"),
+        ("1c improve-order: reformatted adjacent + distant decoy", m.improve_order_skills,
+         f"producers before consumers\n- a (no arrows)\n\nlater: {full_io}\n"),
+        ("1b pick-list: duplicate anchor", m.pick_list_skills,
+         f"below with one of {full_pl}\n\nx\n\nbelow with one of {broke_pl}\n"),
+        ("1c pick-list: reformatted adjacent + distant decoy", m.pick_list_skills,
+         f"below with one of\n- a (no dots)\n\nlater: {full_pl}\n"),
+        ("same-paragraph improve-order decoy", m.improve_order_skills,
+         f"producers before consumers\n- a (no arrows) later: {full_io}\n"),
+        ("no-blank-tail improve-order decoy", m.improve_order_skills,
+         f"producers before consumers\n- a (no arrows)\nlater: {full_io}\n"),
+        ("same-paragraph pick-list decoy", m.pick_list_skills,
+         f"below with one of\n- a (no dots) later: {full_pl}\n"),
+        ("no-blank-tail pick-list decoy", m.pick_list_skills,
+         f"below with one of\n- a (no dots)\nlater: {full_pl}\n"),
+    ]
+    for label, fn, text in post_anchor:
+        got = fn(text, canon)
+        res.check(got != canon, f"post-anchor decoy rejected: {label}",
+                  "empty -> exit 1" if not got else f"got {sorted(got)}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Golden-fixture regression: the gates that guard the gates.")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print each verifier's resolved-values line / fixture findings")
     args = ap.parse_args()
 
-    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK):
+    for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
+                   LINT_SKILL_COUNT):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -428,6 +532,8 @@ def main() -> int:
     doc_critic_mapping(res, args.verbose)
     print()
     gate_review_check(res, args.verbose)
+    print()
+    skill_count_extractors(res, args.verbose)
     print()
     total = res.passed + res.failed
     print(f"--- golden: {res.passed}/{total} assertions passed, {res.failed} failed ---")
