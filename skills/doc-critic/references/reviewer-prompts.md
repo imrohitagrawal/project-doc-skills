@@ -51,7 +51,9 @@ senses across pages, or an analogy that drifts; (3) a term used before it is def
 the glossary; (4) built/designed/measured markers inconsistent across pages; (5) a forward-reference
 ("as page X covers…") that the target page never delivers. Read for the SHAPE each analogy teaches —
 does it import the wrong intuition (a comparison drawn as a trend; inverted direction; two distinct
-ideas conflated)? You are NOT checking code correctness — that is another axis.
+ideas conflated)? Treat the glossary as the canonical definition of record: when a module's prose,
+analogy, or example disagrees with a glossary entry, the module is wrong, not the glossary — that
+disagreement is a finding. You are NOT checking code correctness — that is another axis.
 ```
 
 ## Axis 2 — Code-grounded correctness (verify, don't recall)
@@ -62,7 +64,10 @@ claim ([verify_command], a demo, a build) and compare output. Tag every finding 
 [ASSERTED: from expertise, double-check], or [NEEDS-CODE-CHECK: could not verify here]. Audit: every
 "built / tested / measured" claim; every figure or threshold; every CLI invocation; and each analogy
 for TECHNICAL fidelity (a friendly analogy that is technically wrong is a signature failure). Do not
-state what the code does without opening the file. List the files you opened and what you verified.
+state what the code does without opening the file. Also verify every FILE the docs reference by path
+(a LICENSE, a config, a linked page): open it and confirm it exists at the stated location and matches
+what the prose claims — a wrong path, or a referenced file that is missing or mismatched, is a finding.
+List the files you opened and what you verified.
 ```
 
 ## Axis 3 — Beginner floor
