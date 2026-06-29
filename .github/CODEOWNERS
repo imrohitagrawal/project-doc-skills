@@ -1,0 +1,30 @@
+# CODEOWNERS — gate layer. NOTIFY / PATH-MARKER ONLY. Deliberately NOT wired as a required review.
+#
+# A solo maintainer cannot approve their own pull request, so enabling "Require review from Code
+# Owners" would make every gate-layer PR un-mergeable except by admin override — training exactly the
+# reflex this governance exists to prevent. Enforcement is the `gate-review` REQUIRED STATUS CHECK,
+# which a solo owner CAN satisfy (by producing the independent review record) without a second human.
+# See CONTRIBUTING.md "Governance".
+#
+# CANONICAL SOURCE: the machine-read gate-layer list is .github/gate-paths, read by
+# gate-review-check.py. This file is a human-facing mirror for the GitHub "Files changed" UI only.
+# The two lists can drift; the gate-review's self-description-drift lens (Lens C) is responsible for
+# catching that when either file changes. Keep them in step, or drop this file — gate-paths is the
+# one that gates.
+
+/release-gate.sh        @imrohitagrawal
+/build-skills.sh        @imrohitagrawal
+/pkgtools.py            @imrohitagrawal
+/validate_skill.py      @imrohitagrawal
+/check-version.py       @imrohitagrawal
+/lint-*.py              @imrohitagrawal
+/shared/verify.py       @imrohitagrawal
+/shared/ci/             @imrohitagrawal
+/tests/                 @imrohitagrawal
+/.github/               @imrohitagrawal
+/gate-review-check.py   @imrohitagrawal
+/gate-review-prompt.md  @imrohitagrawal
+/gate-reviews/TEMPLATE.md  @imrohitagrawal
+/gate-reviews/README.md @imrohitagrawal
+/CONTRIBUTING.md        @imrohitagrawal
+/docs/SETTINGS.md       @imrohitagrawal
