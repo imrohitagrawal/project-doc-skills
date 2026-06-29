@@ -26,9 +26,10 @@ in-flight skill-count PR.
     missing its ©/credits/ISO defaults). golden-good now **directly asserts** the regenerated HTML
     carries all three defaults (verify.py's 0-FAIL catches only the ©; credits is un-gated and a missing
     ISO stamp is INFO), and the missing-© golden-bad locks the verifier-catch half.
-  The **`lint-skill-count.py` `b65041f` (2-of-5) fixture is deferred** to the `feat/skill-count-generate`
-  redesign of that exact lint (landing it here would collide); **`check-version.py`** stays audit-owed.
-  See CONTRIBUTING's "Backfill log".
+  The **`lint-skill-count.py` `b65041f` (2-of-5) fixture** is now **resolved by the
+  `feat/skill-count-generate` redesign** (#7, this Unreleased set): the lint is retired and the
+  accidental-drift class it guarded is locked by the new `skill_enumerations` fixtures. **`check-version.py`**
+  stays audit-owed. See CONTRIBUTING's "Backfill log".
 
 ### Added — the enforced independent gate-review (CI green is necessary, not sufficient)
 - **`gate-review-prompt.md`** — the versioned, reusable independent-review prompt for any gate-layer
@@ -89,6 +90,22 @@ in-flight skill-count PR.
 - **`tests/run-golden.py`** (`manifest byte-stability` section) — locks the item-2 invariant: two
   `write_manifest` runs on identical content are byte-identical, and the manifest carries no
   build-commit / timestamp field. A future edit re-adding a volatile field would turn this red.
+
+### Changed — skill-enumeration gate by GENERATION, not parsing (#7; supersedes 1.2.0's parser)
+- **`generate-skill-enumerations.py`** replaces **`lint-skill-count.py`** (now deleted). Each of the five
+  skill enumerations (README skill table, repo tree, improve-order list; per-skill-review-prompt
+  pick-list and attachment table) is GENERATED from a new **`skills-order`** source of truth and checked
+  at a fail-closed marked location — three pure sites byte-identical, two tables name-ordered. No
+  document parse selects the enumeration, so the markup-hidden-decoy class that bypassed the parser four
+  times is closed structurally: the `6f66dfa` decoy that the lint could **not** catch now **FAILS** the
+  check (`tests/run-golden.py`, `skill_enumerations`). The 1.2.0 "KNOWN LIMITATION (markup-hidden decoy
+  not closed)" no longer holds — the claim is now "no decoy class", true and machine-verifiable.
+- **`skills-order`** — the canonical order, validated as an exact permutation of `skills/` (fail closed
+  on missing / extra / duplicate / unknown).
+- Wired into `build-skills.sh` (replacing the lint step) and the gate layer (`.github/gate-paths` names
+  the generator + `skills-order`); `release-gate.sh` prose updated so the gate's self-description does not
+  drift. Suite tooling, never bundled; no `VERSION` bump (folds into the next cut under `Unreleased`).
+  See `docs/adr/0001-generate-skill-enumerations.md`.
 
 ## [1.2.0] — 2026-06-28 (suite lint: the skill-enumeration guard)
 

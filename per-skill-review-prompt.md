@@ -1,8 +1,12 @@
 # Per-skill review & rebuild prompt (reusable)
 
-**How to use:** start a fresh chat, replace `{SKILL_NAME}` below with one of
-`learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook ·
-onboarding-companion · doc-critic · publish-mirror`, and attach:
+**How to use:** start a fresh chat, replace `{SKILL_NAME}` below with exactly one of these:
+
+<!-- skills:pick-list:begin -->
+`learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook · onboarding-companion · doc-critic · publish-mirror`
+<!-- skills:pick-list:end -->
+
+and attach:
 
 1. **`project-doc-skills-source.zip`** — the whole skills workspace (shared files, all eight skills,
    the build script, and the validator). This is the unit of work; the chat hands it back updated.
@@ -197,6 +201,7 @@ for them.
 
 | `{SKILL_NAME}` | Attach these (besides the workspace zip) |
 |---|---|
+<!-- skills:attach-table:begin (first column generated/checked from skills-order; the attach column is authored by hand) -->
 | learning-track | `CONTENT-BUILD-BRIEF.md`, the learning-companion + build-template handoffs, `M0/M1/M2`, the ai-deep-dive and building-with-ai-and-practice handoffs |
 | architecture-and-decisions | ADR files `0001`–`0019`, `aegis-diagram-set-handoff.md`, `failure-mode-analysis-and-recovery.md`, `0015-scalability-design.md`, backbone `m2`/`m4` |
 | project-faq | `aegis-faq-generation-handoff.md`, `glossary.md`, `M0/M1/M2` |
@@ -205,3 +210,4 @@ for them.
 | onboarding-companion | `aegis-building-with-ai-and-practice-handoff.md`, `aegis-cowork-operating-blueprint.md`, `M0` |
 | doc-critic | (none beyond the workspace zip — its review method + profiles ship in its own `references/`; attach a recently-produced doc set if you want a live example to test the axes against) |
 | publish-mirror | `aegis-integration-handoff-v2.md`, `aegis-cowork-operating-blueprint.md`, `aegis-learning-companion-build-template-handoff.md` (the Markdown→Confluence mapping), `aegis-diagram-set-handoff.md` (watermark/border/colour rules), backbone `m3-governance-and-process.md` (record-before-edit, publish-reviewer, closure) |
+<!-- skills:attach-table:end -->

@@ -70,7 +70,7 @@ GOLDEN_GOOD = ROOT / "tests" / "golden-good"
 GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
-LINT_SKILL_COUNT = ROOT / "lint-skill-count.py"
+GEN = ROOT / "generate-skill-enumerations.py"
 PKGTOOLS = ROOT / "pkgtools.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
@@ -607,107 +607,146 @@ def manifest_byte_stability(res: Results, verbose: bool) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def skill_count_extractors(res: Results, verbose: bool) -> None:
-    """Unit-lock every enumeration-site extractor in lint-skill-count.py: each must find the full set,
-    and a drop must change it. (Guards the guard — the lint once shipped covering only 2 of its 5 sites
-    and printed 'clean' on real drift.) Synthetic inputs, so this never couples to the live README.
+def skill_enumerations(res: Results, verbose: bool) -> None:
+    """Lock the generate-don't-lint enumeration gate (replaces skill_count_extractors). Each enumeration
+    is GENERATED from skills-order and checked at a FAIL-CLOSED marked location, so there is no
+    whole-document parse to fool — the structural fix tracked since the parser was bypassed four times.
+    Synthetic inputs (so this never couples to the live README), PLUS a live `--check`. The headline is
+    the REAL-INCIDENT regression: the markup-hidden decoy that beat the old parser (6f66dfa) must FAIL.
     """
-    print("skill-count lint — each site extractor finds the set, and a drop is detected:")
-    m = _load("skillcount", LINT_SKILL_COUNT)
+    print("skill-enumerations — generated & byte-identically checked (no parse, no decoy class):")
+    g = _load("genenum", GEN)
+    order = ["alpha", "beta", "gamma"]
     canon = {"alpha", "beta", "gamma"}
-    # (label, extractor, full-text -> {alpha,beta,gamma}, dropped-text -> {alpha,beta})
-    cases = [
-        ("README skill table", m.readme_table_skills,
-         "| **alpha** | x |\n| **beta** | y |\n| **gamma** | z |\n",
-         "| **alpha** | x |\n| **beta** | y |\n"),
-        ("README repo tree", m.readme_tree_skills,
-         "├─ skills/\n│  ├─ alpha/\n│  ├─ beta/\n│  └─ gamma/\n├─ build.sh\n",
-         "├─ skills/\n│  ├─ alpha/\n│  └─ beta/\n├─ build.sh\n"),
-        ("README improve-order", m.improve_order_skills,
-         "in this order (producers before consumers):\n**alpha → beta → gamma.**\n",
-         "in this order (producers before consumers):\n**alpha → beta.**\n"),
-        ("prompt pick-list", m.pick_list_skills,
-         "below with one of\n`alpha · beta · gamma`\n",
-         "below with one of\n`alpha · beta`\n"),
-        ("prompt attachment table", m.attach_table_skills,
-         "### File-attachment guide\n| alpha | a |\n| beta | b |\n| gamma | c |\n",
-         "### File-attachment guide\n| alpha | a |\n| beta | b |\n"),
-    ]
-    for label, fn, full_text, dropped_text in cases:
-        full = fn(full_text, canon)
-        dropped = fn(dropped_text, canon)
-        ok = (full == canon) and (dropped == {"alpha", "beta"})
-        res.check(ok, f"site extractor: {label}",
-                  f"full={sorted(full)} dropped={sorted(dropped)}" if verbose else f"{len(full)}->{len(dropped)}")
 
-    # Count phrases: correct passes; a wrong count is caught in BOTH word and digit form.
-    good = m.check_count_phrases("a suite of three independent skills", m.README_COUNT_PHRASES, 3, "x")
-    bad_word = m.check_count_phrases("a suite of two independent skills", m.README_COUNT_PHRASES, 3, "x")
-    bad_digit = m.check_count_phrases("a suite of 2 independent skills", m.README_COUNT_PHRASES, 3, "x")
-    res.check(not good and len(bad_word) == 1 and len(bad_digit) == 1,
+    # 1. Renderers emit the exact documented bytes (the three pure sites).
+    res.check(g.render_improve_order(order) == "**alpha → beta → gamma.**",
+              "render improve-order", repr(g.render_improve_order(order)))
+    res.check(g.render_pick_list(order) == "`alpha · beta · gamma`",
+              "render pick-list", repr(g.render_pick_list(order)))
+    res.check(g.render_tree(order) == "│  ├─ alpha/\n│  ├─ beta/\n│  └─ gamma/",
+              "render tree (last node uses └─)", repr(g.render_tree(order)))
+
+    # 2. Marker extraction happy path.
+    doc = ("x\n<!-- skills:improve-order:begin -->\n**alpha → beta → gamma.**\n"
+           "<!-- skills:improve-order:end -->\ny\n")
+    res.check(g.extract_marked_block(doc, "improve-order") == "**alpha → beta → gamma.**",
+              "extract_marked_block returns the inner bytes")
+
+    # 3. Byte-identical pure check: correct matches the renderer; a drop does not.
+    res.check(g.extract_marked_block(doc, "improve-order") == g.render_improve_order(order),
+              "pure site: correct block is byte-identical")
+    dropped = doc.replace("**alpha → beta → gamma.**", "**alpha → beta.**")
+    res.check(g.extract_marked_block(dropped, "improve-order") != g.render_improve_order(order),
+              "pure site: a dropped skill fails byte-identical")
+
+    # 4. REAL-INCIDENT REGRESSION (6f66dfa). A markup-hidden CANONICAL run right after the anchor masks a
+    #    BROKEN visible list. The OLD parser selected the hidden run and passed; the new check reads ONLY
+    #    the bytes between the markers, so the broken visible block != generated -> FAIL.
+    incident = ("Improve ... (producers before consumers):\n"
+                "<!-- producers before consumers: alpha → beta → gamma -->\n"   # the canonical decoy
+                "<!-- skills:improve-order:begin -->\n"
+                "**alpha → beta.**\n"                                                # broken visible list
+                "<!-- skills:improve-order:end -->\n")
+    blk = g.extract_marked_block(incident, "improve-order")
+    res.check(blk == "**alpha → beta.**" and blk != g.render_improve_order(order),
+              "REAL-INCIDENT: markup-hidden decoy no longer hides a broken improve-order list",
+              f"checked block={blk!r}; the decoy in the comment is never read")
+    pl_incident = ("replace below with one of\n`alpha · beta · gamma`\n"          # code-span decoy
+                   "<!-- skills:pick-list:begin -->\n`alpha · beta`\n<!-- skills:pick-list:end -->\n")
+    res.check(g.extract_marked_block(pl_incident, "pick-list") != g.render_pick_list(order),
+              "REAL-INCIDENT: pick-list code-span decoy no longer hides a broken list")
+
+    # 5. Marker handling FAILS CLOSED (the load-bearing property — absent/dup/malformed must error).
+    fail_closed = [
+        ("absent begin", "<!-- skills:pick-list:end -->\n"),
+        ("absent both", "no markers here\n"),
+        ("duplicated begin",
+         "<!-- skills:pick-list:begin -->\na\n<!-- skills:pick-list:begin -->\n"
+         "`x`\n<!-- skills:pick-list:end -->\n"),
+        ("end before begin",
+         "<!-- skills:pick-list:end -->\n`x`\n<!-- skills:pick-list:begin -->\n"),
+    ]
+    for label, text in fail_closed:
+        try:
+            g.extract_marked_block(text, "pick-list")
+            ok = False
+        except g.MarkerError:
+            ok = True
+        res.check(ok, f"fail-closed marker: {label} -> MarkerError")
+
+    # 6. skills-order permutation validation (fail closed on missing/extra/duplicate/unknown).
+    res.check(g.validate_order(["alpha", "beta", "gamma"], canon) == [], "order: exact permutation ok")
+    res.check(g.validate_order(["alpha", "beta"], canon) != [], "order: missing skill rejected")
+    res.check(g.validate_order(["alpha", "beta", "gamma", "delta"], canon) != [],
+              "order: extra/unknown name rejected")
+    res.check(g.validate_order(["alpha", "alpha", "beta", "gamma"], canon) != [],
+              "order: duplicate line rejected")
+
+    # 7. Table name-column: positional, ordered; bold and un-bold first columns; a drop/reorder fails;
+    #    a markup-hidden decoy row is never read (extraction == a visible |-leading row).
+    tbl = ("<!-- skills:table:begin -->\n| **alpha** | x | y |\n| **beta** | x | y |\n"
+           "| **gamma** | x | y |\n<!-- skills:table:end -->\n")
+    res.check(g.extract_table_names(g.extract_marked_block(tbl, "table")) == order,
+              "table: ordered name column equals the order")
+    at = ("<!-- skills:attach-table:begin -->\n| alpha | a |\n| beta | b |\n| gamma | c |\n"
+          "<!-- skills:attach-table:end -->\n")
+    res.check(g.extract_table_names(g.extract_marked_block(at, "attach-table")) == order,
+              "attach-table: un-bolded name column equals the order")
+    res.check(g.extract_table_names("| **beta** | x |\n| **alpha** | x |\n| **gamma** | x |\n") != order,
+              "table: a reorder fails the ordered check")
+    res.check(g.extract_table_names("| **alpha** | x |\n<!-- | beta | hidden | -->\n| **gamma** | x |\n")
+              == ["alpha", "gamma"],
+              "table: a commented decoy row is never read (extraction == visible row)")
+
+    # 8. Scalar count phrases (carried from the retired lint): correct passes, wrong caught word+digit.
+    good = g.check_count_phrases("a suite of three independent skills", g.README_COUNT_PHRASES, 3, "x")
+    bw = g.check_count_phrases("a suite of two independent skills", g.README_COUNT_PHRASES, 3, "x")
+    bd = g.check_count_phrases("a suite of 2 independent skills", g.README_COUNT_PHRASES, 3, "x")
+    res.check(not good and len(bw) == 1 and len(bd) == 1,
               "count phrase: correct passes, wrong caught (word + digit)",
-              f"good={good} word={len(bad_word)} digit={len(bad_digit)}")
+              f"good={good} word={len(bw)} digit={len(bd)}")
 
-    # Fail-CLOSED: an unparseable reformat of each site must yield a set that does NOT match canonical
-    # (so the lint reports "could not locate" / a mismatch and exits 1), never a silent clean — the
-    # interim safeguard until the generate-don't-lint redesign. Each input below is a plausible reformat
-    # the extractor cannot parse; it must return empty (or a wrong set), never the canonical set.
-    reformatted = [
-        ("README table un-bolded", m.readme_table_skills, "| alpha | x |\n| beta | y |\n| gamma | z |\n"),
-        ("README tree as markdown list", m.readme_tree_skills, "- skills/\n  - alpha/\n  - beta/\n  - gamma/\n"),
-        ("README improve-order delimiter changed", m.improve_order_skills,
-         "in this order (producers before consumers):\n**alpha, beta, gamma.**\n"),
-        ("prompt pick-list delimiter changed", m.pick_list_skills,
-         "replace `{SKILL_NAME}` below with one of\n`alpha, beta, gamma`\n"),
-        ("prompt attachment table, no section heading", m.attach_table_skills,
-         "| alpha | a |\n| beta | b |\n| gamma | c |\n"),
-    ]
-    for label, fn, text in reformatted:
-        got = fn(text, canon)
-        res.check(got != canon, f"fail-closed on reformat: {label}",
-                  "empty -> could-not-locate" if not got else f"got {sorted(got)}")
+    # 9. Idempotence on a synthetic mini-repo: write fills the pure blocks, --check is then clean, and a
+    #    hand-drop in a generated block is then caught.
+    import shutil
+    tmp = Path(tempfile.mkdtemp(prefix="genenum-"))
+    for s in order:
+        (tmp / "skills" / s).mkdir(parents=True)
+        (tmp / "skills" / s / "SKILL.md").write_text("x", encoding="utf-8")
+    (tmp / "skills-order").write_text("\n".join(order) + "\n", encoding="utf-8")
+    (tmp / "README.md").write_text(
+        "# r\nsuite of three independent skills; three copies of the house style; build all three\n\n"
+        "<!-- skills:improve-order:begin -->\nPLACEHOLDER\n<!-- skills:improve-order:end -->\n\n"
+        "```\n│  ├─ skills/  # skills:tree:begin\nPLACEHOLDER\n│  # skills:tree:end\n```\n\n"
+        "<!-- skills:table:begin -->\n| **alpha** | x |\n| **beta** | x |\n| **gamma** | x |\n"
+        "<!-- skills:table:end -->\n", encoding="utf-8")
+    (tmp / "per-skill-review-prompt.md").write_text(
+        "now **three** skills in a three-skill documentation suite\n\n"
+        "<!-- skills:pick-list:begin -->\nPLACEHOLDER\n<!-- skills:pick-list:end -->\n\n"
+        "<!-- skills:attach-table:begin -->\n| alpha | a |\n| beta | b |\n| gamma | c |\n"
+        "<!-- skills:attach-table:end -->\n", encoding="utf-8")
+    g.write(tmp)
+    res.check(g.check(tmp) == [], "idempotence: write then --check is clean",
+              "; ".join(g.check(tmp)) or "clean")
+    rd = (tmp / "README.md").read_text(encoding="utf-8")
+    (tmp / "README.md").write_text(rd.replace("**alpha → beta → gamma.**", "**alpha → beta.**"),
+                                   encoding="utf-8")
+    res.check(g.check(tmp) != [], "a hand-drop in a generated block is caught by --check")
+    shutil.rmtree(tmp, ignore_errors=True)
 
-    # Decoy-proof (the position-scoped → / · selectors): a BROKEN real list (missing a skill) with a
-    # FULL decoy run of the same delimiter elsewhere must yield the BROKEN set, never canonical. The
-    # earlier best-match selector was fooled — the full decoy won on overlap and masked the broken list.
-    io_decoy = ("in this order (producers before consumers):\n**alpha → beta.**\n\n"
-                "decoy elsewhere: **alpha → beta → gamma**\n")
-    pl_decoy = "below with one of\n`alpha · beta`\n\ndecoy: `alpha · beta · gamma`\n"
-    io_got = m.improve_order_skills(io_decoy, canon)
-    pl_got = m.pick_list_skills(pl_decoy, canon)
-    res.check(io_got == {"alpha", "beta"}, "decoy-proof: improve-order ignores a full decoy run",
-              f"got {sorted(io_got)} (must be the broken real list, not canonical)")
-    res.check(pl_got == {"alpha", "beta"}, "decoy-proof: pick-list ignores a full decoy run",
-              f"got {sorted(pl_got)} (must be the broken real list, not canonical)")
+    # 10. Self-inclusion: the new gate check + its source of truth are in the gate layer (locks the
+    #     .github/gate-paths addition against a silent regression).
+    grc = _load("grc_si", GATE_REVIEW_CHECK)
+    pats = grc.load_gate_patterns(grc.GATE_PATHS_FILE)
+    for p in ["generate-skill-enumerations.py", "skills-order"]:
+        res.check(grc.matches_gate(p, pats), f"self-inclusion: {p} is gate-layer")
 
-    # Post-anchor decoys (an independent gate-review reproduced these silent-passes in the first
-    # position-scoped fix): a DUPLICATE introducing phrase (1b) or a reformatted adjacent list with a
-    # DISTANT canonical decoy (1c) must NOT yield canonical — the extractor fails closed (empty).
-    full_io, broke_io = "alpha → beta → gamma", "alpha → beta"
-    full_pl, broke_pl = "alpha · beta · gamma", "alpha · beta"
-    post_anchor = [
-        ("1b improve-order: duplicate anchor", m.improve_order_skills,
-         f"producers before consumers {full_io}\n\nx\n\nproducers before consumers {broke_io}\n"),
-        ("1c improve-order: reformatted adjacent + distant decoy", m.improve_order_skills,
-         f"producers before consumers\n- a (no arrows)\n\nlater: {full_io}\n"),
-        ("1b pick-list: duplicate anchor", m.pick_list_skills,
-         f"below with one of {full_pl}\n\nx\n\nbelow with one of {broke_pl}\n"),
-        ("1c pick-list: reformatted adjacent + distant decoy", m.pick_list_skills,
-         f"below with one of\n- a (no dots)\n\nlater: {full_pl}\n"),
-        ("same-paragraph improve-order decoy", m.improve_order_skills,
-         f"producers before consumers\n- a (no arrows) later: {full_io}\n"),
-        ("no-blank-tail improve-order decoy", m.improve_order_skills,
-         f"producers before consumers\n- a (no arrows)\nlater: {full_io}\n"),
-        ("same-paragraph pick-list decoy", m.pick_list_skills,
-         f"below with one of\n- a (no dots) later: {full_pl}\n"),
-        ("no-blank-tail pick-list decoy", m.pick_list_skills,
-         f"below with one of\n- a (no dots)\nlater: {full_pl}\n"),
-    ]
-    for label, fn, text in post_anchor:
-        got = fn(text, canon)
-        res.check(got != canon, f"post-anchor decoy rejected: {label}",
-                  "empty -> exit 1" if not got else f"got {sorted(got)}")
-
+    # 11. LIVE docs: the real README + per-skill-prompt pass --check via the CLI (proves the migration).
+    p = subprocess.run([sys.executable, str(GEN), str(ROOT), "--check"], capture_output=True, text=True)
+    tail = (p.stdout + p.stderr).strip().splitlines()
+    res.check(p.returncode == 0, "live README + prompt pass generate-skill-enumerations.py --check",
+              tail[-1] if tail else f"exit {p.returncode}")
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Golden-fixture regression: the gates that guard the gates.")
@@ -716,7 +755,7 @@ def main() -> int:
     args = ap.parse_args()
 
     for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
-                   LINT_SKILL_COUNT, PKGTOOLS, LINT_PLACEHOLDERS):
+                   GEN, PKGTOOLS, LINT_PLACEHOLDERS):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -736,7 +775,7 @@ def main() -> int:
     print()
     manifest_byte_stability(res, args.verbose)
     print()
-    skill_count_extractors(res, args.verbose)
+    skill_enumerations(res, args.verbose)
     print()
     total = res.passed + res.failed
     print(f"--- golden: {res.passed}/{total} assertions passed, {res.failed} failed ---")

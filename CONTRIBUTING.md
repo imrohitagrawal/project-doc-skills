@@ -155,13 +155,14 @@ this policy (that would couple the mechanism to unrelated content):
   block, and the ISO last-reviewed stamp (necessary because `verify.py`'s 0-FAIL catches only the © — a
   missing ISO stamp is INFO and there is no credits gate); and the verifier-catch half (the © itself) by
   golden-bad case 1 (the missing-© page).
-- **`lint-skill-count.py` — its `b65041f` (2-of-5) fixture is DEFERRED to the `feat/skill-count-generate`
-  work.** The lint is now on `main` (PR #2), but that exact file is being redesigned there
-  ("generate-don't-lint"); landing the `b65041f` fixture in this PR would collide with the redesign and
-  likely be rewritten, so it lands with (or right after) that work. The fixture must reconstruct the
-  actual stale enumerations `b65041f` fixed (README table + count words + the "improve in this order"
-  list + repo-tree; the per-skill prompt's pick-list + attachment table; `build-skills.sh` "all seven")
-  and assert the lint catches each — measuring real coverage, not a mutation of an already-guarded line.
+- **`lint-skill-count.py` — RETIRED, superseded by `generate-skill-enumerations.py` (#7); the owed
+  `b65041f` fixture is discharged by the replacement.** The parser could not be made adversarially robust
+  (a regex cannot tell a rendered enumeration from a markup-hidden decoy), so it is replaced by the
+  generate-don't-lint gate that closes the decoy class structurally. The `b65041f` real-incident —
+  accidental enumeration drift across the five sites — is now locked by the new gate's fixtures
+  (`tests/run-golden.py`, `skill_enumerations`): a dropped skill in any marked block fails byte-identical
+  / name-ordered. And the `6f66dfa` markup-hidden decoy the parser could **not** catch now **FAILS** the
+  check (the headline regression). See `docs/adr/0001-generate-skill-enumerations.md`.
 - **`gate-review-check.py` — fixture LANDED** (`tests/run-golden.py`, the `gate-review-check` +
   `gate-review-check SEAM` sections): path classification, the verdict decision, and the
   `evaluate_verdicts -> light_admissible` seam, locking the rubber-stamp vectors the bootstrap review

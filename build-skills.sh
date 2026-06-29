@@ -103,13 +103,16 @@ if ! python3 "$ROOT/lint-placeholders.py" "$ROOT" --strict; then
   failed=$((failed+1))
 fi
 
-# Suite-level skill-enumeration guard. README.md and per-skill-review-prompt.md are root scaffolding
-# (never bundled), so they are invisible to validate_skill.py, the two lints above, and
-# check-version.py — the blind spot that let the skill count/table/pick-list drift twice. This asserts
-# both files enumerate exactly the skills in skills/. A drift FAILS the build (counted into $failed)
-# and is named; run by hand it defaults to WARN.
-if ! python3 "$ROOT/lint-skill-count.py" "$ROOT" --strict; then
-  echo "FAIL  skill-count lint reported a skill-enumeration drift (see above)"
+# Suite-level skill-enumeration guard — BY GENERATION, not parsing. README.md and per-skill-review-prompt.md
+# are root scaffolding (never bundled), invisible to validate_skill.py, the two lints above, and
+# check-version.py — the blind spot that let the skill table/tree/pick-list drift. Each of the five
+# enumerations is generated from skills-order and checked at a fail-closed marked location (three pure
+# sites byte-identical, two tables name-ordered), so no markup-hidden decoy can masquerade as the list —
+# the class that bypassed the old parser four times. A drift FAILS the build (counted into $failed) and
+# names the remedy: `python3 generate-skill-enumerations.py`. (Replaces lint-skill-count.py; see
+# docs/adr/0001-generate-skill-enumerations.md.)
+if ! python3 "$ROOT/generate-skill-enumerations.py" "$ROOT" --check; then
+  echo "FAIL  skill-enumeration check reported a drift (see above)"
   failed=$((failed+1))
 fi
 

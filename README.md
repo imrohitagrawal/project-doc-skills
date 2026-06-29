@@ -7,6 +7,7 @@ wiki or portal without re-authoring them:
 
 | Skill | Diátaxis mode | Scope | Reading grade |
 |---|---|---|---|
+<!-- skills:table:begin (first column generated/checked from skills-order; the other columns are authored by hand) -->
 | **learning-track** | tutorial + explanation | public | ~9 |
 | **architecture-and-decisions** | explanation / reference | public | ~11 |
 | **project-faq** | reference | internal | ~8 |
@@ -15,6 +16,7 @@ wiki or portal without re-authoring them:
 | **onboarding-companion** | tutorial (contributors) | internal | ~7 |
 | **doc-critic** | review gate (no Diátaxis mode) | internal | — |
 | **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |
+<!-- skills:table:end -->
 
 ## Why this structure (independent skills, one source of truth)
 
@@ -37,15 +39,16 @@ project-doc-skills/
 │  ├─ publish-targets.yaml     #   the per-project manifest of publish destinations + their coordinates
 │  ├─ verify.py                #   the documentation verifier
 │  └─ ci/                      #   ready pre-commit + CI snippet
-├─ skills/                     # bespoke files per skill (SKILL.md + that skill's own references)
+├─ skills/                     # skills:tree:begin — bespoke files per skill; node list generated from skills-order
 │  ├─ learning-track/
 │  ├─ architecture-and-decisions/
 │  ├─ project-faq/
 │  ├─ usage-guide/
 │  ├─ operations-runbook/
 │  ├─ onboarding-companion/
-│  ├─ doc-critic/              #   the independent review gate (critiques produced docs before publish)
-│  └─ publish-mirror/          #   the publish step (mirrors verified pages out; never authors)
+│  ├─ doc-critic/
+│  └─ publish-mirror/
+│                              # skills:tree:end (doc-critic = the review gate; publish-mirror = the publish step)
 ├─ build-skills.sh             # assembles dist/<name>.skill = skills/<name>/ + shared/ (deterministic)
 ├─ pkgtools.py                 # deterministic packer + SHA-256 integrity manifest writer
 ├─ lint-placeholders.py        # every {{...}} resolves to a profile key / manifest slot / runtime token
@@ -113,11 +116,15 @@ skill-specific changes in that skill's changelog. `check-version.py` enforces th
 that the root changelog names it, and that every skill is versioned.
 
 Improve a skill in its own focused session, in this order (producers before consumers):
-**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook →
-onboarding-companion → doc-critic → publish-mirror.** (doc-critic is the review gate and publish-mirror
-the publish step, both downstream of the authoring skills, so they are reviewed last.) When a change belongs to a shared file, make it in `shared/` (it benefits
-every skill) rather than forking the bundled copy; then rebuild. Record skill-specific changes in
-`skills/<name>/CHANGELOG.md` and shared/suite changes in the root `CHANGELOG.md`.
+
+<!-- skills:improve-order:begin -->
+**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → doc-critic → publish-mirror.**
+<!-- skills:improve-order:end -->
+
+(doc-critic is the review gate and publish-mirror the publish step, both downstream of the authoring
+skills, so they are reviewed last.) When a change belongs to a shared file, make it in `shared/` (it
+benefits every skill) rather than forking the bundled copy; then rebuild. Record skill-specific changes
+in `skills/<name>/CHANGELOG.md` and shared/suite changes in the root `CHANGELOG.md`.
 
 ## The verifier, in one line
 
