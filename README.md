@@ -100,7 +100,7 @@ artifact was changed or rebuilt on a different toolchain — rebuild and re-veri
 it.
 
 **One gate for a release.** `./release-gate.sh` composes everything a release must pass: the build
-(validation + the render-restatement and placeholder lints), the golden fixtures
+(validation + the render-restatement, placeholder, and skill-count lints), the golden fixtures
 (`tests/run-golden.py` — produced docs must pass with 0 FAIL and every deliberately-broken fixture must
 be caught), the `--check` reproducibility assertion, the manifest, and `check-version.py`. CI runs the
 same script (`.github/workflows/release-gate.yml`).
