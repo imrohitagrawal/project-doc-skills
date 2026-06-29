@@ -51,6 +51,12 @@ A new root-level suite lint, composed into the release gate. Suite tooling, neve
   clean" history line never trip it.
 - `build-skills.sh` runs it with `--strict` alongside the render-restatement and placeholder lints, so
   a drift now FAILS the build — and the release gate, via build step 1. Run by hand it defaults to WARN.
+- **Scope (honest):** this guards **accidental** enumeration drift — the class above, which it catches.
+  It is **not** adversarially-decoy-proof: because it reads raw Markdown, a canonical run hidden in
+  markup right after the introducing phrase (HTML comment, code span, reference definition), or a decoy
+  phrase that merely contains the anchor substring, can mask a broken visible list. The structural fix —
+  generating each enumeration from the source of truth and checking it byte-identical, so no parsing and
+  no decoy class — is tracked as a follow-up (`feat/skill-count-generate`).
 
 ## [1.1.0] — 2026-06-28 (new skill: doc-critic — the independent critic gate)
 

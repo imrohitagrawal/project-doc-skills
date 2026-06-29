@@ -24,13 +24,17 @@ What it checks (each an exact directory-vs-document set comparison):
 Why it is low-false-positive by design:
   - Every site check is an exact set comparison (no prose heuristics). Each site is position/region
     scoped — the two tables by their row shape and the attachment table's section, the tree by the
-    skills/ block, and the "→"/"·" lists by the SINGLE immediate run their introducing phrase opens
-    (the anchor must occur exactly once, and after it only whitespace/markup/punctuation may appear
-    before the run). A list/table in a different region, a distant decoy run, a duplicate introducing
-    phrase, reformatted/prose content before the run, a same-paragraph decoy, or a no-blank-tail decoy
-    makes the extractor fail closed (empty -> exit 1) rather than match. No known decoy class remains
-    for these anchored-run extractors; the longer-term generate-the-enumerations redesign can still
-    remove the parser dependency entirely.
+    skills/ block, and the "→"/"·" lists by the run that begins immediately after their introducing
+    phrase (the anchor must occur exactly once, with only whitespace/markup/punctuation before the run).
+    This closes ACCIDENTAL drift: a list/table in a different region, a distant decoy run, a duplicate
+    or reformatted-away phrase, a same-paragraph decoy, or a no-blank-tail decoy fails closed
+    (empty -> exit 1). KNOWN LIMITATION (not closed): the run is read from raw Markdown, so a canonical
+    run hidden in non-rendered/markup syntax right after the anchor — an HTML comment, a code span, a
+    reference definition — or a decoy phrase that merely CONTAINS the anchor substring, can be selected
+    while the visible list is broken. This lint therefore guards ACCIDENTAL enumeration drift (its
+    purpose — the class of the original 2-of-5 incident), NOT an adversarially-hidden decoy. The
+    structural fix that removes this class is the generate-don't-lint redesign (tracked:
+    feat/skill-count-generate).
   - The count checks are anchored to SPECIFIC suite-count phrases, so the legitimate "the other seven
     skills" (N-1), "Six [authoring skills] turn ..." (a sub-count), and a dated "all seven skills were
     clean" history line never match. A non-numeric capture and a reworded-away phrase are skipped — a
@@ -113,11 +117,15 @@ def attach_table_skills(text: str, _canonical: set[str]) -> set[str]:
 
 
 def _anchored_run(text: str, sep: str, anchor: "re.Pattern[str]") -> set[str]:
-    """The <sep>-separated run that starts immediately after the SINGLE introducing anchor, allowing only
-    whitespace, markup, and punctuation between the anchor and the run. Fails CLOSED (empty -> exit 1)
-    if the anchor is absent, occurs MORE THAN ONCE, or prose/a reformatted list appears before the run.
-    Immediate adjacency closes the duplicate-anchor, distant-decoy, same-paragraph-decoy, and
-    no-blank-tail silent-pass family: the extractor never searches forward for a later best match."""
+    """The <sep>-separated run that begins immediately after the SINGLE introducing anchor (only
+    whitespace/markup/punctuation may precede it). Fails CLOSED (empty -> exit 1) if the anchor is
+    absent, occurs MORE THAN ONCE, or prose/a reformatted list appears before the run. This closes the
+    duplicate-anchor, distant-decoy, same-paragraph, and no-blank-tail families — i.e. ACCIDENTAL drift.
+    KNOWN LIMITATION (not closed): because the run is read from raw Markdown, a canonical run hidden in
+    markup right after the anchor (HTML comment, code span, reference definition) or a decoy phrase
+    containing the anchor substring can still be selected while the visible list is broken. The lint
+    guards accidental drift, not an adversarially-hidden decoy; generate-don't-lint is the structural
+    fix (see feat/skill-count-generate)."""
     occurrences = list(anchor.finditer(text))
     if len(occurrences) != 1:
         return set()
