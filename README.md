@@ -84,7 +84,8 @@ timestamp pinned, and fixed permissions, so identical source produces a **byte-i
   `dist/<name>.skill`; a one-character source change shows up as **DRIFT** and fails. This is how you
   prove an artifact still matches its source.
 - A clean full build writes `dist/MANIFEST.sha256` — a SHA-256 over every `.skill` and every `shared/`
-  file, plus the suite version and (when built from git) the source commit.
+  file, plus the suite version. The per-file hashes are the integrity guarantee, so the manifest is
+  byte-stable: rebuilding on unchanged content reproduces it exactly.
 
 **Consumer flow — build, verify the manifest, then install:**
 

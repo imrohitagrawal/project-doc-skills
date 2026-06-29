@@ -10,8 +10,10 @@ Two reasons a plain `zip` is not enough for a released artifact:
      the zip epoch (1980-01-01) and writes entries in sorted arcname order, with a fixed compression
      level, so identical source -> byte-identical .skill (within one toolchain; see the honesty note).
   2. Integrity. `manifest` emits a SHA-256 over each built .skill AND each shared/ source file, plus
-     the suite version and the source commit (when this is a git checkout). A consumer verifies the
-     bundle before install; tampering or drift shows up as a hash mismatch.
+     the suite version. A consumer verifies the bundle before install; tampering or drift shows up as a
+     hash mismatch. (No build-time commit field: it recorded the build HEAD, which is always the PARENT
+     of the commit that carries the manifest, so it flipped on every commit and produced spurious diffs
+     on content-free changes. The SHA-256 rows are the integrity guarantee — see write_manifest.)
 
 Honesty note (built-vs-designed applies to tooling): byte-identity holds for rebuilds on the same
 zlib/Python toolchain (DEFLATE output is deterministic for fixed input + level on a given zlib). The
@@ -26,7 +28,6 @@ Commands:
 from __future__ import annotations
 import argparse
 import hashlib
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -72,17 +73,6 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _git_commit(root: Path) -> str:
-    try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                             capture_output=True, text=True, timeout=5)
-        if out.returncode == 0 and out.stdout.strip():
-            return out.stdout.strip()
-    except Exception:
-        pass
-    return "unknown (not a git checkout)"
-
-
 def write_manifest(dist_dir: Path, shared_dir: Path, out_path: Path,
                    version: str, root: Path) -> Path:
     # All paths are written relative to the repo root, so a single `cd <repo-root> && sha256sum -c
@@ -97,7 +87,10 @@ def write_manifest(dist_dir: Path, shared_dir: Path, out_path: Path,
     lines = []
     lines.append("# MANIFEST.sha256 — integrity manifest for the project-doc-skills suite")
     lines.append(f"# suite-version: {version}")
-    lines.append(f"# source-commit: {_git_commit(root)}")
+    # Deliberately NO build-commit line: it recorded the build HEAD, always the PARENT of the commit
+    # carrying the manifest, so it flipped on every build and produced spurious diffs on content-free
+    # changes. The SHA-256 rows below are the integrity guarantee; identical hashed content now yields a
+    # byte-identical manifest. (The commit that adds a manifest is its own provenance, via git.)
     lines.append("# Verify before install:  cd <repo-root> && sha256sum -c dist/MANIFEST.sha256")
     lines.append("# Paths are relative to the repo root. Each line: <sha256>  <path>")
     lines.append("#")

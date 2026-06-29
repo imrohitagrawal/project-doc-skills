@@ -43,6 +43,7 @@ import argparse
 import datetime as _dt
 import importlib.util
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -408,6 +409,70 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     res.check(ev == "BLOCK", "effective_verdict: the last verdict line wins", f"got {ev}")
 
 
+def gate_review_seam(res: Results, verbose: bool) -> None:
+    """Integration lock for the evaluate_verdicts -> light_admissible(gate_paths) SEAM.
+
+    The section above pins light_admissible() in isolation and decide_verdicts() with allow_light passed
+    in explicitly; neither exercises the WIRING in evaluate_verdicts — that it (a) reads the changed
+    gate-reviews/ record from DISK and (b) computes allow_light from the changed gate paths via
+    light_admissible and threads it into decide_verdicts. Before this, that seam was proven only by a
+    one-off CLI demo. Here evaluate_verdicts runs end-to-end against a temp repo root, holding the
+    on-disk verdict FIXED and flipping only gate_paths — so the verdict can change ONLY through the seam.
+    A no-op revert (e.g. hard-coding allow_light=True, or dropping the light_admissible call) turns this
+    red. Drives the real imported function; the only I/O is a self-contained temp dir.
+    """
+    print("gate-review-check SEAM (evaluate_verdicts wires gate_paths -> light_admissible -> decide):")
+    grc = _load("grc_seam", GATE_REVIEW_CHECK)
+
+    # The SAME on-disk light verdict for every case below: inert-doc shape (Tier: light + Coverage: N/A
+    # + justification). It is admissible only when light_admissible(gate_paths) is True.
+    light_verdict = ("- Prompt: gate-review-prompt.md v1.0.0\n- Tier: light\n"
+                     "- Light-path justification: inert gated doc; no enforced behavior depends on it\n"
+                     "## Replay the real failure\nCoverage: N/A\n## Coverage vs advertising\nx\n"
+                     "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\n- none\n"
+                     "Verdict: PASS\n")
+    full_verdict = ("- Prompt: gate-review-prompt.md v1.0.0\n## Replay the real failure\nCoverage: 5/5\n"
+                    "## Coverage vs advertising\nx\n## Self-description drift\nx\n"
+                    "## Fixture requirement\nx\n## Findings\nnone\nVerdict: PASS\n")
+
+    tmp = Path(tempfile.mkdtemp(prefix="gate-seam-"))
+    (tmp / "gate-reviews").mkdir(parents=True)
+    light_rec, full_rec = "gate-reviews/seam-light.md", "gate-reviews/seam-full.md"
+    (tmp / light_rec).write_text(light_verdict, encoding="utf-8")
+    (tmp / full_rec).write_text(full_verdict, encoding="utf-8")
+
+    # One representative gate path per class the task calls out; light must be REFUSED for all of them.
+    # Code by extension (*.py/*.sh/*.yml), the .github/ subtree (no extension), and the behavioral
+    # governance docs (the lenses, the verdict contract, the policy, the recorded ruleset) all force full.
+    refuse_full = [
+        ["build-skills.sh"], ["pkgtools.py"], ["tests/run-golden.py"],     # *.sh / *.py code
+        [".github/workflows/gate-review.yml"],                             # *.yml
+        [".github/gate-paths"],                                            # .github/ path, no extension
+        ["gate-review-prompt.md"], ["gate-reviews/TEMPLATE.md"],          # behavioral governance docs
+        ["CONTRIBUTING.md"], ["docs/SETTINGS.md"],
+        ["gate-reviews/README.md", "CONTRIBUTING.md"],                    # mixed inert + behavioral -> full
+    ]
+    orig_root = grc.ROOT
+    try:
+        grc.ROOT = tmp
+        # 1. The SAME on-disk light verdict CLEARS for the inert doc, and is REFUSED everywhere else.
+        ok_inert, _ = grc.evaluate_verdicts([light_rec], ["gate-reviews/README.md"])
+        res.check(ok_inert, "seam: light verdict clears when the sole gate path is gate-reviews/README.md",
+                  f"ok={ok_inert}")
+        for paths in refuse_full:
+            ok, _ = grc.evaluate_verdicts([light_rec], paths)
+            res.check(not ok, f"seam: light verdict refused -> full required for {paths}", f"ok={ok}")
+        # 2. A full verdict clears regardless of the gate-path class (full is always sufficient).
+        ok_full_code, _ = grc.evaluate_verdicts([full_rec], ["build-skills.sh"])
+        ok_full_doc, _ = grc.evaluate_verdicts([full_rec], ["gate-reviews/README.md"])
+        res.check(ok_full_code and ok_full_doc,
+                  "seam: full verdict clears for both a code path and the inert doc",
+                  f"code={ok_full_code} doc={ok_full_doc}")
+    finally:
+        grc.ROOT = orig_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def skill_count_extractors(res: Results, verbose: bool) -> None:
     """Unit-lock every enumeration-site extractor in lint-skill-count.py: each must find the full set,
     and a drop must change it. (Guards the guard — the lint once shipped covering only 2 of its 5 sites
@@ -532,6 +597,8 @@ def main() -> int:
     doc_critic_mapping(res, args.verbose)
     print()
     gate_review_check(res, args.verbose)
+    print()
+    gate_review_seam(res, args.verbose)
     print()
     skill_count_extractors(res, args.verbose)
     print()

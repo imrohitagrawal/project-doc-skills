@@ -1,6 +1,5 @@
 # MANIFEST.sha256 — integrity manifest for the project-doc-skills suite
 # suite-version: 1.2.0
-# source-commit: 3ab733c0409f9b99bd5d25b74d2bc3dad3930ba7
 # Verify before install:  cd <repo-root> && sha256sum -c dist/MANIFEST.sha256
 # Paths are relative to the repo root. Each line: <sha256>  <path>
 #

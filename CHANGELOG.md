@@ -32,6 +32,24 @@ in-flight skill-count PR.
 - **`docs/SETTINGS.md`** — the exact branch-ruleset command to apply by hand (settings are not
   committable): require `release-gate` + `gate-review`, no bypass actors, block force-push/deletion.
 
+### Changed — the integrity manifest is byte-stable on unchanged content (gate hygiene)
+- **`pkgtools.py` / `dist/MANIFEST.sha256`** — dropped the `# source-commit:` manifest line. It recorded
+  the build-time HEAD, which is always the **parent** of the commit that carries the manifest, so it
+  flipped on every build and produced spurious manifest diffs on content-free changes. The per-file
+  SHA-256 rows are the integrity guarantee (`sha256sum -c` ignores `#` comments); rebuilding on unchanged
+  content now reproduces the manifest byte-for-byte (proven by two back-to-back builds). Self-descriptions
+  were updated in lockstep so none drifts from the manifest: `README.md` and `check-version.py`'s
+  not-a-git-checkout note.
+
+### Added — integration lock for the gate-review light-tier seam (gate hygiene)
+- **`tests/run-golden.py`** (`gate-review-check SEAM` section) — a regression that drives
+  `evaluate_verdicts` end-to-end and proves it wires `light_admissible(gate_paths)` into the verdict
+  decision. Holding one on-disk light verdict fixed and flipping only the changed gate paths, the light
+  path clears **only** for an inert gated doc (`gate-reviews/README.md`) and is refused — full review
+  required — for code (`*.py`/`*.sh`/`*.yml`), the `.github/` subtree, and the behavioral governance docs
+  (the lenses, the verdict contract, the policy, the recorded ruleset). The seam was previously covered
+  only by a one-off CLI demo; a no-op revert (hard-coding `allow_light=True`) now turns 10 assertions red.
+
 ## [1.2.0] — 2026-06-28 (suite lint: the skill-enumeration guard)
 
 A new root-level suite lint, composed into the release gate. Suite tooling, never copied into a `.skill`.
