@@ -495,6 +495,14 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
          f"below with one of {full_pl}\n\nx\n\nbelow with one of {broke_pl}\n"),
         ("1c pick-list: reformatted adjacent + distant decoy", m.pick_list_skills,
          f"below with one of\n- a (no dots)\n\nlater: {full_pl}\n"),
+        ("same-paragraph improve-order decoy", m.improve_order_skills,
+         f"producers before consumers\n- a (no arrows) later: {full_io}\n"),
+        ("no-blank-tail improve-order decoy", m.improve_order_skills,
+         f"producers before consumers\n- a (no arrows)\nlater: {full_io}\n"),
+        ("same-paragraph pick-list decoy", m.pick_list_skills,
+         f"below with one of\n- a (no dots) later: {full_pl}\n"),
+        ("no-blank-tail pick-list decoy", m.pick_list_skills,
+         f"below with one of\n- a (no dots)\nlater: {full_pl}\n"),
     ]
     for label, fn, text in post_anchor:
         got = fn(text, canon)

@@ -24,11 +24,13 @@ What it checks (each an exact directory-vs-document set comparison):
 Why it is low-false-positive by design:
   - Every site check is an exact set comparison (no prose heuristics). Each site is position/region
     scoped — the two tables by their row shape and the attachment table's section, the tree by the
-    skills/ block, and the "→"/"·" lists by the SINGLE paragraph their introducing phrase opens (which
-    must occur exactly once). A list/table in a different region, a distant decoy run, or a duplicate
-    introducing phrase makes the extractor fail closed (empty -> exit 1) rather than match. The one
-    decoy this does NOT defeat — planted inside that same paragraph, after a reformatted real list — is
-    the residual only the generate-the-enumerations redesign removes.
+    skills/ block, and the "→"/"·" lists by the SINGLE immediate run their introducing phrase opens
+    (the anchor must occur exactly once, and after it only whitespace/markup/punctuation may appear
+    before the run). A list/table in a different region, a distant decoy run, a duplicate introducing
+    phrase, reformatted/prose content before the run, a same-paragraph decoy, or a no-blank-tail decoy
+    makes the extractor fail closed (empty -> exit 1) rather than match. No known decoy class remains
+    for these anchored-run extractors; the longer-term generate-the-enumerations redesign can still
+    remove the parser dependency entirely.
   - The count checks are anchored to SPECIFIC suite-count phrases, so the legitimate "the other seven
     skills" (N-1), "Six [authoring skills] turn ..." (a sub-count), and a dated "all seven skills were
     clean" history line never match. A non-numeric capture and a reworded-away phrase are skipped — a
@@ -111,24 +113,18 @@ def attach_table_skills(text: str, _canonical: set[str]) -> set[str]:
 
 
 def _anchored_run(text: str, sep: str, anchor: "re.Pattern[str]") -> set[str]:
-    """The <sep>-separated run inside the SINGLE paragraph the anchor introduces. Fails CLOSED (returns
-    empty -> "could not locate" -> exit 1) if the anchor is absent, appears MORE THAN ONCE, or its
-    paragraph holds no run. Two guards, each closing a silent-pass an independent review reproduced:
-      - duplicate anchor (1b): if the introducing phrase occurs more than once we cannot tell which
-        following run is the real list, so we refuse rather than pick the first (which a decoy can own);
-      - bounded region (1c): the search stops at the anchor's paragraph (the next blank line) and never
-        scans forward, so a reformatted adjacent list + a distant canonical decoy yields empty, not the
-        decoy.
-    Residual (honest): a decoy planted INSIDE the anchor's own paragraph, after a reformatted real list,
-    is NOT defeated by this bound — only the generate-the-enumerations redesign removes that class."""
+    """The <sep>-separated run that starts immediately after the SINGLE introducing anchor, allowing only
+    whitespace, markup, and punctuation between the anchor and the run. Fails CLOSED (empty -> exit 1)
+    if the anchor is absent, occurs MORE THAN ONCE, or prose/a reformatted list appears before the run.
+    Immediate adjacency closes the duplicate-anchor, distant-decoy, same-paragraph-decoy, and
+    no-blank-tail silent-pass family: the extractor never searches forward for a later best match."""
     occurrences = list(anchor.finditer(text))
     if len(occurrences) != 1:
         return set()
     after = text[occurrences[0].end():]
-    paragraph = re.split(r"\n[ \t]*\n", after, maxsplit=1)[0]   # bound to the anchor's own paragraph
     esep = re.escape(sep)
-    run = re.search(rf"[a-z][a-z0-9-]+(?:\s*{esep}\s*[a-z][a-z0-9-]+)+", paragraph)
-    return set(re.split(rf"\s*{esep}\s*", run.group(0).strip())) if run else set()
+    mrun = re.match(rf"[\s\W]*([a-z][a-z0-9-]+(?:\s*{esep}\s*[a-z][a-z0-9-]+)+)", after)
+    return set(re.split(rf"\s*{esep}\s*", mrun.group(1).strip())) if mrun else set()
 
 
 # Region anchors: the distinctive phrase that introduces each list (position-scoped, not best-match).
