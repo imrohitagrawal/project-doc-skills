@@ -24,8 +24,11 @@ What it checks (each an exact directory-vs-document set comparison):
 Why it is low-false-positive by design:
   - Every site check is an exact set comparison (no prose heuristics). Each site is position/region
     scoped — the two tables by their row shape and the attachment table's section, the tree by the
-    skills/ block, and the "→"/"·" lists by the phrase that introduces them (the FIRST run after the
-    anchor, never a whole-doc best-match) — so a decoy list/table elsewhere cannot be selected.
+    skills/ block, and the "→"/"·" lists by the SINGLE paragraph their introducing phrase opens (which
+    must occur exactly once). A list/table in a different region, a distant decoy run, or a duplicate
+    introducing phrase makes the extractor fail closed (empty -> exit 1) rather than match. The one
+    decoy this does NOT defeat — planted inside that same paragraph, after a reformatted real list — is
+    the residual only the generate-the-enumerations redesign removes.
   - The count checks are anchored to SPECIFIC suite-count phrases, so the legitimate "the other seven
     skills" (N-1), "Six [authoring skills] turn ..." (a sub-count), and a dated "all seven skills were
     clean" history line never match. A non-numeric capture and a reworded-away phrase are skipped — a
@@ -108,16 +111,23 @@ def attach_table_skills(text: str, _canonical: set[str]) -> set[str]:
 
 
 def _anchored_run(text: str, sep: str, anchor: "re.Pattern[str]") -> set[str]:
-    """The FIRST <sep>-separated run of kebab names AFTER the region anchor, so a decoy run elsewhere in
-    the document cannot be selected. (An earlier 'best-match across the whole doc' selection could be
-    fooled: a full decoy list would win on overlap and mask a broken real list.) Empty set if the anchor
-    is absent or no run follows it — there is NO fall-back to a whole-document scan, which would
-    reinstate the decoy-match silent-pass."""
-    m = anchor.search(text)
-    if not m:
+    """The <sep>-separated run inside the SINGLE paragraph the anchor introduces. Fails CLOSED (returns
+    empty -> "could not locate" -> exit 1) if the anchor is absent, appears MORE THAN ONCE, or its
+    paragraph holds no run. Two guards, each closing a silent-pass an independent review reproduced:
+      - duplicate anchor (1b): if the introducing phrase occurs more than once we cannot tell which
+        following run is the real list, so we refuse rather than pick the first (which a decoy can own);
+      - bounded region (1c): the search stops at the anchor's paragraph (the next blank line) and never
+        scans forward, so a reformatted adjacent list + a distant canonical decoy yields empty, not the
+        decoy.
+    Residual (honest): a decoy planted INSIDE the anchor's own paragraph, after a reformatted real list,
+    is NOT defeated by this bound — only the generate-the-enumerations redesign removes that class."""
+    occurrences = list(anchor.finditer(text))
+    if len(occurrences) != 1:
         return set()
+    after = text[occurrences[0].end():]
+    paragraph = re.split(r"\n[ \t]*\n", after, maxsplit=1)[0]   # bound to the anchor's own paragraph
     esep = re.escape(sep)
-    run = re.search(rf"[a-z][a-z0-9-]+(?:\s*{esep}\s*[a-z][a-z0-9-]+)+", text[m.end():])
+    run = re.search(rf"[a-z][a-z0-9-]+(?:\s*{esep}\s*[a-z][a-z0-9-]+)+", paragraph)
     return set(re.split(rf"\s*{esep}\s*", run.group(0).strip())) if run else set()
 
 

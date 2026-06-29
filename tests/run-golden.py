@@ -481,6 +481,26 @@ def skill_count_extractors(res: Results, verbose: bool) -> None:
     res.check(pl_got == {"alpha", "beta"}, "decoy-proof: pick-list ignores a full decoy run",
               f"got {sorted(pl_got)} (must be the broken real list, not canonical)")
 
+    # Post-anchor decoys (an independent gate-review reproduced these silent-passes in the first
+    # position-scoped fix): a DUPLICATE introducing phrase (1b) or a reformatted adjacent list with a
+    # DISTANT canonical decoy (1c) must NOT yield canonical — the extractor fails closed (empty).
+    full_io, broke_io = "alpha → beta → gamma", "alpha → beta"
+    full_pl, broke_pl = "alpha · beta · gamma", "alpha · beta"
+    post_anchor = [
+        ("1b improve-order: duplicate anchor", m.improve_order_skills,
+         f"producers before consumers {full_io}\n\nx\n\nproducers before consumers {broke_io}\n"),
+        ("1c improve-order: reformatted adjacent + distant decoy", m.improve_order_skills,
+         f"producers before consumers\n- a (no arrows)\n\nlater: {full_io}\n"),
+        ("1b pick-list: duplicate anchor", m.pick_list_skills,
+         f"below with one of {full_pl}\n\nx\n\nbelow with one of {broke_pl}\n"),
+        ("1c pick-list: reformatted adjacent + distant decoy", m.pick_list_skills,
+         f"below with one of\n- a (no dots)\n\nlater: {full_pl}\n"),
+    ]
+    for label, fn, text in post_anchor:
+        got = fn(text, canon)
+        res.check(got != canon, f"post-anchor decoy rejected: {label}",
+                  "empty -> exit 1" if not got else f"got {sorted(got)}")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Golden-fixture regression: the gates that guard the gates.")
