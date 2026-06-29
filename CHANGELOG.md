@@ -36,8 +36,9 @@ in-flight skill-count PR.
 - **`gate-review-check.py`** (`light_admissible`) — replaced the open-by-default denylist (`any '*.md'
   not in a small behavioral set`) with a **closed allow-list** `LIGHT_ADMISSIBLE_GATE_PATHS =
   {"gate-reviews/README.md"}`. The old predicate silently admitted every OTHER gated markdown for the
-  *light* single-reviewer path — test fixtures under `tests/`, any future `.github/**/*.md` — though
-  those are gate-layer subtrees that must take the **full** review. The advertised contract had always
+  *light* single-reviewer path — test fixtures under `tests/`, `.github/**/*.md`, and the `shared/ci/`
+  docs-as-code gate (`shared/ci/README.md`) — though those are gate-layer subtrees that must take the
+  **full** review. The advertised contract had always
   said "the sole light-eligible gate path is `gate-reviews/README.md`"; the code now matches it. The gap
   was pre-existing (introduced with the seam in the gate-layer governance work) and was caught by the
   different-vendor cold pass of this PR's own gate-review. Locked by new regression cases (below), per
@@ -60,7 +61,8 @@ in-flight skill-count PR.
   decision. Holding one on-disk light verdict fixed and flipping only the changed gate paths, the light
   path clears **only** for the inert allow-listed doc (`gate-reviews/README.md`) and is refused — full
   review required — for code (`*.py`/`*.sh`/`*.yml`), the `.github/` subtree, the behavioral governance
-  docs, **and gated markdown under `tests/` / `.github/`** (the class the old denylist wrongly admitted).
+  docs, **and gated markdown under `tests/` / `.github/` / `shared/ci/`** (the class the old denylist
+  wrongly admitted — sampled exhaustively over those subtrees).
   The seam was previously covered only by a one-off CLI demo; no-op reverts turn it red (hard-coding
   `allow_light=True` → 10 reds; dropping the disk read → 2 reds; reverting the allow-list → the
   gated-markdown rows red).

@@ -323,10 +323,13 @@ def gate_review_check(res: Results, verbose: bool) -> None:
 
     # 1b. light_admissible (pure): light is for INERT gated docs only (today: gate-reviews/README.md).
     # The behavioral governance docs (lenses/contract/policy/ruleset) and all code/config take full.
-    # REGRESSION (PR #9 gate-review, different-vendor cold pass): an earlier denylist predicate ("any
-    # '*.md' not in the behavioral set") was open-by-default and admitted any OTHER gated markdown — test
-    # fixtures under tests/, files under .github/ — for the light path, though those are gate-layer
+    # REGRESSION (PR #9 gate-review): an earlier denylist predicate ("any '*.md' not in the behavioral
+    # set") was open-by-default and admitted any OTHER gated markdown — fixtures under tests/, files under
+    # .github/, the shared/ci/ docs-as-code gate — for the light path, though those are gate-layer
     # subtrees. The closed allow-list refuses them; these cases lock that (each was True under the bug).
+    # The subtree sample is EXHAUSTIVE over the gated-markdown subtrees in .github/gate-paths (tests/,
+    # .github/, shared/ci/) — a partial sample is the 2-of-5 trap (a guard that covers some sites of its
+    # class while a re-broadening slips through an unsampled one).
     light_cases = [
         (["gate-review-prompt.md"], False), (["CONTRIBUTING.md"], False),
         (["docs/SETTINGS.md"], False), (["gate-reviews/TEMPLATE.md"], False),
@@ -336,6 +339,7 @@ def gate_review_check(res: Results, verbose: bool) -> None:
         (["tests/golden-bad/leaked-credential.md"], False),
         (["tests/golden-good/learning-track-module.md"], False),
         ([".github/PULL_REQUEST_TEMPLATE.md"], False),
+        (["shared/ci/README.md"], False),
         (["gate-reviews/README.md", "tests/golden-bad/leaked-credential.md"], False),
     ]
     for paths, want in light_cases:
@@ -472,6 +476,7 @@ def gate_review_seam(res: Results, verbose: bool) -> None:
         ["CONTRIBUTING.md"], ["docs/SETTINGS.md"],
         ["tests/golden-bad/leaked-credential.md"],                       # gated markdown under tests/
         [".github/PULL_REQUEST_TEMPLATE.md"],                            # gated markdown under .github/
+        ["shared/ci/README.md"],                                         # gated markdown under shared/ci/
         ["gate-reviews/README.md", "CONTRIBUTING.md"],                    # mixed inert + behavioral -> full
         ["gate-reviews/README.md", "tests/golden-bad/leaked-credential.md"],  # mixed inert + gated md -> full
     ]
@@ -517,11 +522,16 @@ def manifest_byte_stability(res: Results, verbose: bool) -> None:
         pkg.write_manifest(dist, shared, out1, version="9.9.9", root=tmp)
         pkg.write_manifest(dist, shared, out2, version="9.9.9", root=tmp)
         b1, b2 = out1.read_bytes(), out2.read_bytes()
+        # The two assertions cover DIFFERENT volatility shapes and are both load-bearing: byte-identity
+        # catches a field that VARIES between the two in-process calls (e.g. datetime.now()); the regexes
+        # below catch a STATIC volatile field (the exact '# source-commit: <HEAD>' bug — constant within
+        # one process, so byte-identity alone stays green on its revert, as the break-test confirms).
         res.check(b1 == b2, "write_manifest is byte-identical across two runs on identical content",
                   f"{len(b1)} vs {len(b2)} bytes")
         text = out1.read_text(encoding="utf-8")
-        # A re-added volatile field would show up as a build-commit token or a date. The 64-hex integrity
-        # rows do NOT trip the 40-hex commit pattern (no word boundary mid-run) and carry no '-' dates.
+        # A re-added static volatile field shows up as a build-commit token or a date. The 64-hex
+        # integrity rows do NOT trip the 40-hex commit pattern (no word boundary mid-run) and carry no
+        # '-' dates.
         no_commit = not re.search(r"source-commit|\b[0-9a-f]{40}\b", text)
         no_clock = not re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
         res.check(no_commit, "manifest carries no build-commit field",
