@@ -30,6 +30,13 @@ What it locks
       decide_verdicts/effective_verdict accept a clean PASS (full: real coverage fraction; light: N/A +
       justification; findings carry file:line or 'none') and reject the rubber-stamp vectors a review
       caught (PASS in prose over a BLOCK, coverage 0/0 / outside replay, PASS-WITH-NITS, co-committed BLOCK)
+    - the evaluate_verdicts SEAM end-to-end against a temp root: one on-disk light verdict held fixed,
+      only the changed gate paths flipped — light clears ONLY for the inert allow-listed doc
+      (gate-reviews/README.md) and is refused (full review) for code, the .github/ subtree, the behavioral
+      governance docs, AND gated markdown under tests/ (the class the old denylist wrongly admitted)
+  manifest byte-stability (pkgtools.write_manifest, item 2):
+    - two runs on identical content produce byte-identical bytes, with no build-commit / timestamp field
+      (a re-added volatile field would reinstate the spurious-diff failure this guards)
 
 Run by hand or from the release gate:
     python3 tests/run-golden.py            # exit 0 if every assertion holds, 1 otherwise
@@ -43,6 +50,7 @@ import argparse
 import datetime as _dt
 import importlib.util
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -59,6 +67,7 @@ GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
 LINT_SKILL_COUNT = ROOT / "lint-skill-count.py"
+PKGTOOLS = ROOT / "pkgtools.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
 # golden-good assertion is 0 FAIL (a staleness WARN would still be allowed), and the EXACT staleness
@@ -314,11 +323,24 @@ def gate_review_check(res: Results, verbose: bool) -> None:
 
     # 1b. light_admissible (pure): light is for INERT gated docs only (today: gate-reviews/README.md).
     # The behavioral governance docs (lenses/contract/policy/ruleset) and all code/config take full.
+    # REGRESSION (PR #9 gate-review): an earlier denylist predicate ("any '*.md' not in the behavioral
+    # set") was open-by-default and admitted any OTHER gated markdown — fixtures under tests/, files under
+    # .github/, the shared/ci/ docs-as-code gate — for the light path, though those are gate-layer
+    # subtrees. The closed allow-list refuses them; these cases lock that (each was True under the bug).
+    # The subtree sample is EXHAUSTIVE over the gated-markdown subtrees in .github/gate-paths (tests/,
+    # .github/, shared/ci/) — a partial sample is the 2-of-5 trap (a guard that covers some sites of its
+    # class while a re-broadening slips through an unsampled one).
     light_cases = [
         (["gate-review-prompt.md"], False), (["CONTRIBUTING.md"], False),
         (["docs/SETTINGS.md"], False), (["gate-reviews/TEMPLATE.md"], False),
         (["gate-reviews/README.md"], True), (["gate-reviews/README.md", "CONTRIBUTING.md"], False),
         ([], False),
+        # gated markdown under a subtree must NOT be light-eligible (the closed-allow-list fix):
+        (["tests/golden-bad/leaked-credential.md"], False),
+        (["tests/golden-good/learning-track-module.md"], False),
+        ([".github/PULL_REQUEST_TEMPLATE.md"], False),
+        (["shared/ci/README.md"], False),
+        (["gate-reviews/README.md", "tests/golden-bad/leaked-credential.md"], False),
     ]
     for paths, want in light_cases:
         got = grc.light_admissible(paths)
@@ -406,6 +428,121 @@ def gate_review_check(res: Results, verbose: bool) -> None:
     # 3. effective_verdict takes the LAST verdict line (not any PASS mentioned earlier).
     ev = grc.effective_verdict("Verdict: PASS\n...\nVerdict: BLOCK\n")
     res.check(ev == "BLOCK", "effective_verdict: the last verdict line wins", f"got {ev}")
+
+
+def gate_review_seam(res: Results, verbose: bool) -> None:
+    """Integration lock for the evaluate_verdicts -> light_admissible(gate_paths) SEAM.
+
+    The section above pins light_admissible() in isolation and decide_verdicts() with allow_light passed
+    in explicitly; neither exercises the WIRING in evaluate_verdicts — that it (a) reads the changed
+    gate-reviews/ record from DISK and (b) computes allow_light from the changed gate paths via
+    light_admissible and threads it into decide_verdicts. Before this, that seam was proven only by a
+    one-off CLI demo. Here evaluate_verdicts runs end-to-end against a temp repo root, holding the
+    on-disk verdict FIXED and flipping only gate_paths — so the verdict can change ONLY through the seam.
+    A no-op revert (e.g. hard-coding allow_light=True, or dropping the light_admissible call) turns this
+    red. Drives the real imported function; the only I/O is a self-contained temp dir.
+    """
+    print("gate-review-check SEAM (evaluate_verdicts wires gate_paths -> light_admissible -> decide):")
+    grc = _load("grc_seam", GATE_REVIEW_CHECK)
+
+    # The SAME on-disk light verdict for every case below: inert-doc shape (Tier: light + Coverage: N/A
+    # + justification). It is admissible only when light_admissible(gate_paths) is True.
+    light_verdict = ("- Prompt: gate-review-prompt.md v1.0.0\n- Tier: light\n"
+                     "- Light-path justification: inert gated doc; no enforced behavior depends on it\n"
+                     "## Replay the real failure\nCoverage: N/A\n## Coverage vs advertising\nx\n"
+                     "## Self-description drift\nx\n## Fixture requirement\nx\n## Findings\n- none\n"
+                     "Verdict: PASS\n")
+    full_verdict = ("- Prompt: gate-review-prompt.md v1.0.0\n## Replay the real failure\nCoverage: 5/5\n"
+                    "## Coverage vs advertising\nx\n## Self-description drift\nx\n"
+                    "## Fixture requirement\nx\n## Findings\nnone\nVerdict: PASS\n")
+
+    tmp = Path(tempfile.mkdtemp(prefix="gate-seam-"))
+    (tmp / "gate-reviews").mkdir(parents=True)
+    light_rec, full_rec = "gate-reviews/seam-light.md", "gate-reviews/seam-full.md"
+    (tmp / light_rec).write_text(light_verdict, encoding="utf-8")
+    (tmp / full_rec).write_text(full_verdict, encoding="utf-8")
+
+    # One representative gate path per class the task calls out; light must be REFUSED for all of them.
+    # Code by extension (*.py/*.sh/*.yml), the .github/ subtree (no extension), and the behavioral
+    # governance docs (the lenses, the verdict contract, the policy, the recorded ruleset) all force full.
+    # The gated-markdown-subtree rows (tests/**/*.md, .github/**/*.md) are the class the original denylist
+    # let through with light — they are gate-layer subtrees, so they MUST be refused end-to-end too (the
+    # different-vendor cold pass on PR #9 found the seam fixture missed exactly this class).
+    refuse_full = [
+        ["build-skills.sh"], ["pkgtools.py"], ["tests/run-golden.py"],     # *.sh / *.py code
+        [".github/workflows/gate-review.yml"],                             # *.yml
+        [".github/gate-paths"],                                            # .github/ path, no extension
+        ["gate-review-prompt.md"], ["gate-reviews/TEMPLATE.md"],          # behavioral governance docs
+        ["CONTRIBUTING.md"], ["docs/SETTINGS.md"],
+        ["tests/golden-bad/leaked-credential.md"],                       # gated markdown under tests/
+        [".github/PULL_REQUEST_TEMPLATE.md"],                            # gated markdown under .github/
+        ["shared/ci/README.md"],                                         # gated markdown under shared/ci/
+        ["gate-reviews/README.md", "CONTRIBUTING.md"],                    # mixed inert + behavioral -> full
+        ["gate-reviews/README.md", "tests/golden-bad/leaked-credential.md"],  # mixed inert + gated md -> full
+    ]
+    orig_root = grc.ROOT
+    try:
+        grc.ROOT = tmp
+        # 1. The SAME on-disk light verdict CLEARS for the inert doc, and is REFUSED everywhere else.
+        ok_inert, _ = grc.evaluate_verdicts([light_rec], ["gate-reviews/README.md"])
+        res.check(ok_inert, "seam: light verdict clears when the sole gate path is gate-reviews/README.md",
+                  f"ok={ok_inert}")
+        for paths in refuse_full:
+            ok, _ = grc.evaluate_verdicts([light_rec], paths)
+            res.check(not ok, f"seam: light verdict refused -> full required for {paths}", f"ok={ok}")
+        # 2. A full verdict clears regardless of the gate-path class (full is always sufficient).
+        ok_full_code, _ = grc.evaluate_verdicts([full_rec], ["build-skills.sh"])
+        ok_full_doc, _ = grc.evaluate_verdicts([full_rec], ["gate-reviews/README.md"])
+        res.check(ok_full_code and ok_full_doc,
+                  "seam: full verdict clears for both a code path and the inert doc",
+                  f"code={ok_full_code} doc={ok_full_doc}")
+    finally:
+        grc.ROOT = orig_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def manifest_byte_stability(res: Results, verbose: bool) -> None:
+    """Lock the item-2 invariant: pkgtools.write_manifest is byte-stable on unchanged content and carries
+    NO HEAD/clock-dependent field. The old '# source-commit:' line recorded the build HEAD and flipped on
+    every build, producing spurious manifest diffs on content-free changes; a future edit re-adding a
+    volatile field (a build commit, an mtime, a build-id) would reinstate exactly that. Drives the REAL
+    write_manifest twice on identical fixed inputs; the only I/O is a self-contained temp dir.
+    """
+    print("manifest byte-stability (item 2: identical content -> identical bytes; no HEAD/clock field):")
+    pkg = _load("pkgtools", PKGTOOLS)
+    tmp = Path(tempfile.mkdtemp(prefix="manifest-stable-"))
+    try:
+        dist, shared = tmp / "dist", tmp / "shared"
+        dist.mkdir(); shared.mkdir()
+        # Fixed inputs: pinned content, so the only way the bytes could differ build-to-build is a
+        # volatile manifest field (the failure this guards).
+        (dist / "alpha.skill").write_bytes(b"alpha-bytes")
+        (shared / "house-style.md").write_text("shared\n", encoding="utf-8")
+        out1, out2 = tmp / "M1.sha256", tmp / "M2.sha256"
+        pkg.write_manifest(dist, shared, out1, version="9.9.9", root=tmp)
+        pkg.write_manifest(dist, shared, out2, version="9.9.9", root=tmp)
+        b1, b2 = out1.read_bytes(), out2.read_bytes()
+        # The two assertions cover DIFFERENT volatility shapes and are both load-bearing: byte-identity
+        # catches a field that VARIES between the two in-process calls (e.g. datetime.now()); the regexes
+        # below catch a STATIC volatile field (the exact '# source-commit: <HEAD>' bug — constant within
+        # one process, so byte-identity alone stays green on its revert, as the break-test confirms).
+        res.check(b1 == b2, "write_manifest is byte-identical across two runs on identical content",
+                  f"{len(b1)} vs {len(b2)} bytes")
+        text = out1.read_text(encoding="utf-8")
+        # A re-added static volatile field shows up as a build-commit token or a date. The 64-hex
+        # integrity rows do NOT trip the 40-hex commit pattern (no word boundary mid-run) and carry no
+        # '-' dates.
+        no_commit = not re.search(r"source-commit|\b[0-9a-f]{40}\b", text)
+        no_clock = not re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
+        res.check(no_commit, "manifest carries no build-commit field",
+                  "clean" if no_commit else "found a commit-like token")
+        res.check(no_clock, "manifest carries no date/timestamp field",
+                  "clean" if no_clock else "found a date")
+        # The integrity rows that replaced the dropped field are still emitted (one per input file).
+        rows = re.findall(r"(?m)^[0-9a-f]{64}  ", text)
+        res.check(len(rows) == 2, "manifest still emits the per-file SHA-256 rows", f"{len(rows)} rows")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def skill_count_extractors(res: Results, verbose: bool) -> None:
@@ -517,7 +654,7 @@ def main() -> int:
     args = ap.parse_args()
 
     for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
-                   LINT_SKILL_COUNT):
+                   LINT_SKILL_COUNT, PKGTOOLS):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -532,6 +669,10 @@ def main() -> int:
     doc_critic_mapping(res, args.verbose)
     print()
     gate_review_check(res, args.verbose)
+    print()
+    gate_review_seam(res, args.verbose)
+    print()
+    manifest_byte_stability(res, args.verbose)
     print()
     skill_count_extractors(res, args.verbose)
     print()

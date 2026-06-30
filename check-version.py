@@ -109,8 +109,7 @@ def main() -> int:
                       f"staged")
     else:
         print("  [skip] not a git checkout — tag-bump comparison skipped (deterministic checks 1-3 "
-              "above are the gate; the manifest's source-commit field records provenance when built "
-              "from git)")
+              "above are the gate; the manifest's SHA-256 rows are the integrity record)")
 
     print(f"--- check-version: {fails} failure(s) ---")
     return 1 if fails else 0
