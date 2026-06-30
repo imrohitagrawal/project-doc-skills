@@ -140,20 +140,33 @@ This rule binds **new and changed** gate checks immediately. Checks already on `
 backfilled incrementally, each as its own gate-reviewed PR — not bundled into the PR that introduced
 this policy (that would couple the mechanism to unrelated content):
 
-- **`lint-skill-count.py` — its `b65041f` real-incident fixture is owed.** The lint lives on an
-  unmerged PR stack, not on `main`, so the fixture lands with it (or in a follow-up the moment it
-  merges). The fixture must reconstruct the actual stale enumerations `b65041f` fixed (README table +
-  count words + the "improve in this order" list + repo-tree; the per-skill prompt's pick-list +
-  attachment table; `build-skills.sh` "all seven") and assert the lint catches each — measuring real
-  coverage, not a mutation of an already-guarded line.
-- **`gate-review-check.py` — fixture LANDED in this PR** (`tests/run-golden.py`, the `gate-review-check`
-  section): path classification plus the verdict decision, locking the rubber-stamp vectors the
-  bootstrap review caught (PASS quoted in prose over a BLOCK, coverage `0/0` or outside the replay
-  section, `PASS-WITH-NITS`, a co-committed BLOCK). Not owed — done.
-- **Audit owed for the other on-`main` checks** (`lint-placeholders.py`, `check-version.py`;
-  `lint-render-restatement.py` and `shared/verify.py` already have golden-bad coverage in
-  `tests/run-golden.py`): confirm each that guards a real past incident has a no-op-revert fixture, and
-  open a PR for any gap.
+- **`lint-placeholders.py` — real-incident fixture LANDED** (`tests/run-golden.py`, golden-bad case 5,
+  `tests/golden-bad/unresolved-placeholder.md`). Replays **CROSS-SKILL-FINDINGS.md F5**: project-faq's
+  `{{today}}` backed to no profile key. The fixture locks both directions — a still-unresolvable
+  `{{todays_date}}` is caught, and the documented runtime token `{{today}}` plus a real profile key
+  resolve cleanly (a regression dropping `{{today}}` from the runtime set turns it red). This was the
+  real gap: the lint previously had no golden fixture at all. Break-tested both directions.
+- **`lint-render-restatement.py` — upgraded to the real incident** (golden-bad case 4). The fixture now
+  carries **F1**'s verbatim restatement ("callouts become panels", from project-faq's SKILL.md Step 6)
+  rather than a synthetic shape, and the assertion checks that exact span is caught.
+- **`shared/verify.py` (docs gate) — real incident confirmed + cited** as **F4** (the original sin: a
+  generated page missing its ©/credits/ISO defaults). Both halves are locked: the generator-regression
+  half by golden-good (pages regenerated from the live generators) and the verifier-catch half by
+  golden-bad case 1 (the missing-© page).
+- **`lint-skill-count.py` — its `b65041f` (2-of-5) fixture is DEFERRED to the `feat/skill-count-generate`
+  work.** The lint is now on `main` (PR #2), but that exact file is being redesigned there
+  ("generate-don't-lint"); landing the `b65041f` fixture in this PR would collide with the redesign and
+  likely be rewritten, so it lands with (or right after) that work. The fixture must reconstruct the
+  actual stale enumerations `b65041f` fixed (README table + count words + the "improve in this order"
+  list + repo-tree; the per-skill prompt's pick-list + attachment table; `build-skills.sh` "all seven")
+  and assert the lint catches each — measuring real coverage, not a mutation of an already-guarded line.
+- **`gate-review-check.py` — fixture LANDED** (`tests/run-golden.py`, the `gate-review-check` +
+  `gate-review-check SEAM` sections): path classification, the verdict decision, and the
+  `evaluate_verdicts -> light_admissible` seam, locking the rubber-stamp vectors the bootstrap review
+  caught and the closed-allow-list light-tier rule. Not owed — done.
+- **Still audit-owed: `check-version.py`** — confirm its real-incident no-op-revert fixture and open a
+  PR for any gap (out of scope for the fixture-backfill PR above, which covered the suite lints + the
+  verifier docs gate).
 
 ### Running a gate-review
 
