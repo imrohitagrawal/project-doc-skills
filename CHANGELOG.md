@@ -10,6 +10,26 @@ scaffolding shipping no new `.skill` bytes, recorded here under `Unreleased` (wh
 ignores) so it folds into whichever version is cut next — avoiding a number collision with the
 in-flight skill-count PR.
 
+### Added — real-incident regression fixtures backfilled for the on-main suite lints (requirement ii)
+- **`tests/run-golden.py` + `tests/golden-bad/unresolved-placeholder.md`** — backfilled the fixtures the
+  governance "Backfill log" tracked, each replaying the ACTUAL motivating incident (real broken input →
+  caught), cited to `CROSS-SKILL-FINDINGS.md` + root CHANGELOG 1.0.0:
+  - **`lint-placeholders.py`** (the real gap — it had no golden fixture at all): replays **F5**
+    (project-faq's `{{today}}` backed to no profile key). Locks both directions — the still-unresolvable
+    `{{todays_date}}` is caught, while the now-documented runtime token `{{today}}` and a real profile
+    key resolve cleanly. Driven through `scan_text`. Break-tested: a lint no-op **and** dropping
+    `{{today}}` from the runtime set each turn it red.
+  - **`lint-render-restatement.py`**: the golden-bad fixture now carries **F1**'s verbatim restatement
+    ("callouts become panels", from project-faq's SKILL.md Step 6) instead of a synthetic shape, and the
+    assertion checks that exact span is caught.
+  - **`shared/verify.py` docs gate**: confirmed + cited as **F4** (the original sin — a generated page
+    missing its ©/credits/ISO defaults). golden-good now **directly asserts** the regenerated HTML
+    carries all three defaults (verify.py's 0-FAIL catches only the ©; credits is un-gated and a missing
+    ISO stamp is INFO), and the missing-© golden-bad locks the verifier-catch half.
+  The **`lint-skill-count.py` `b65041f` (2-of-5) fixture is deferred** to the `feat/skill-count-generate`
+  redesign of that exact lint (landing it here would collide); **`check-version.py`** stays audit-owed.
+  See CONTRIBUTING's "Backfill log".
+
 ### Added — the enforced independent gate-review (CI green is necessary, not sufficient)
 - **`gate-review-prompt.md`** — the versioned, reusable independent-review prompt for any gate-layer
   change. Composes the suite's blind-axis review idiom (fresh-context lenses + adversarial adjudicator +
