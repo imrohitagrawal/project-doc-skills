@@ -151,7 +151,9 @@ this policy (that would couple the mechanism to unrelated content):
   rather than a synthetic shape, and the assertion checks that exact span is caught.
 - **`shared/verify.py` (docs gate) — real incident confirmed + cited** as **F4** (the original sin: a
   generated page missing its ©/credits/ISO defaults). Both halves are locked: the generator-regression
-  half by golden-good (pages regenerated from the live generators) and the verifier-catch half by
+  half by golden-good, which now **directly asserts** the regenerated HTML contains the ©, the credits
+  block, and the ISO last-reviewed stamp (necessary because `verify.py`'s 0-FAIL catches only the © — a
+  missing ISO stamp is INFO and there is no credits gate); and the verifier-catch half (the © itself) by
   golden-bad case 1 (the missing-© page).
 - **`lint-skill-count.py` — its `b65041f` (2-of-5) fixture is DEFERRED to the `feat/skill-count-generate`
   work.** The lint is now on `main` (PR #2), but that exact file is being redesigned there

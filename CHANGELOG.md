@@ -23,8 +23,9 @@ in-flight skill-count PR.
     ("callouts become panels", from project-faq's SKILL.md Step 6) instead of a synthetic shape, and the
     assertion checks that exact span is caught.
   - **`shared/verify.py` docs gate**: confirmed + cited as **F4** (the original sin — a generated page
-    missing its ©/credits/ISO defaults); both halves are locked (the generator-regression half by
-    golden-good, the verifier-catch half by the missing-© golden-bad).
+    missing its ©/credits/ISO defaults). golden-good now **directly asserts** the regenerated HTML
+    carries all three defaults (verify.py's 0-FAIL catches only the ©; credits is un-gated and a missing
+    ISO stamp is INFO), and the missing-© golden-bad locks the verifier-catch half.
   The **`lint-skill-count.py` `b65041f` (2-of-5) fixture is deferred** to the `feat/skill-count-generate`
   redesign of that exact lint (landing it here would collide); **`check-version.py`** stays audit-owed.
   See CONTRIBUTING's "Backfill log".
