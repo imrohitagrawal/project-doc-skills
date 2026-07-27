@@ -34,7 +34,7 @@ check-version.py
 lint-*.py
 
 # --- The generated-enumeration gate and its source of truth ------------------------
-# generate-skill-enumerations.py checks every skill enumeration BY GENERATION (no parse); skills-order
+# generate-skill-enumerations.py generates every skill enumeration from skills-order and verifies it
 # is the canonical order it generates from. Both can pass CI green while silently weakening the gate
 # (a loosened check, a doctored order), so both are gate layer. (lint-*.py above does NOT match
 # generate-*.py, so the generator is named explicitly.)

@@ -1,34 +1,37 @@
 #!/usr/bin/env python3
 """
-generate-skill-enumerations.py — the skill-enumeration gate, checked against RENDERED Markdown.
+generate-skill-enumerations.py — keep the five skill enumerations consistent with skills-order.
 
 The suite enumerates its skills in five places (README skill table, README repo tree, README
-improve-order list; per-skill-review-prompt {SKILL_NAME} pick-list and attachment table). Two earlier
-designs — a regex parser (`lint-skill-count.py`), then a byte-stream marker check — were each defeated
-by a markup-hidden decoy: independent gate-reviews (`gate-reviews/0002`, `0005`, `0006`) showed that any
-check operating on the raw BYTES cannot tell the enumeration a reader SEES from one hidden in markup
-(an HTML comment, a spanning comment, a `<details>` fold, a code fence, a code-span comment delimiter).
+improve-order list; per-skill-review-prompt {SKILL_NAME} pick-list and attachment table). This gate
+GENERATES each enumeration from one source of truth (skills-order) and verifies it against the PARSED
+Markdown token stream (markdown-it-py, CommonMark + GFM tables), so accidental drift and casual markup
+mistakes are caught at the location a reader actually reads.
 
-This design closes that class by checking against the **parsed Markdown token stream** (markdown-it-py,
-CommonMark + GFM tables — a close proxy for GitHub's renderer), not the bytes:
+WHAT THIS GATE GUARANTEES (its real job):
+  - **Accidental drift is caught, 5/5 sites.** Add/reorder/drop a skill without updating a marked block
+    and the check fails: pure sites (improve-order, pick-list, tree) must match the generated run
+    byte-for-byte in the parse tree; tables must have body rows whose first-cell RENDERED TEXT is the
+    skills in order. `skills-order` is validated as an exact permutation of `skills/`; an empty/missing
+    source fails closed (never a false "clean").
+  - **Casual decoys are caught.** A hidden-comment row, a code-span comment delimiter, a spanning-comment
+    marker, a stray second list, or a differently-formatted competing run is caught by the parse-tree
+    checks and the competing-enumeration scan.
+  - **Raw HTML is banned in the governed docs** (README.md, per-skill-review-prompt.md): a raw-HTML block
+    (`<details>`, `<div>`, `<ol>`, …) or an inline HTML/image token in a marked region is rejected,
+    because raw HTML is the enabler for a reader-visible decoy that renders differently than it reads.
 
-  - The site markers must be STANDALONE top-level `<!-- skills:<id>:begin -->` / `:end` HTML-comment
-    tokens. A marker wrapped in `<details>`, a code fence, or any raw-HTML block is NOT a standalone
-    token (the wrapper swallows it into one block token) → the site is "not found" → fail closed.
-  - The content BETWEEN the markers must be exactly the generated enumeration, read from the PARSED
-    tokens: a top-level paragraph whose source equals the generated run (improve-order, pick-list); a
-    single fenced code block whose body equals the generated tree; or a single table whose body rows'
-    first-cell RENDERED TEXT equals the skills, in order (a decoy row hidden in a comment is a real
-    table row to the parser, so it is read and fails the check; a code-span comment delimiter is a
-    code span, not a comment, so nothing is silently stripped).
-  - No COMPETING rendered enumeration of the same shape may appear elsewhere in the file (closes
-    relocation of a correct block while a broken un-marked list occupies the reader-facing location, and
-    the stray-second-list gap).
+WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration gate: scope"):
+  This is a drift-catcher and casual-decoy guard, NOT a proof of "no reader-visible decoy" against a
+  determined adversary. Three gate-reviews (`gate-reviews/0005`-`0007`) showed that fully closing an
+  adversarial reader-visible decoy over arbitrary Markdown would require rendering to HTML and verifying
+  the DOM (visibility, ancestry) against GitHub's own engine (cmark-gfm) — deliberately out of scope for
+  this internal tooling. The raw-HTML ban removes the main adversarial surface cheaply; residuals
+  (markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover) are the disclosed,
+  accepted limit, tracked for a future render-DOM pass if the threat model ever warrants it.
 
 Source of truth: SET = skills/<name>/ with a SKILL.md; ORDER = the root `skills-order` file, validated
-as an exact permutation of the set (fail closed). Residual (honest): the gate checks against
-markdown-it-py, not GitHub's cmark-gfm; a construct those two parse differently is the remaining, much
-smaller, disclosed gap (see ADR 0001).
+as an exact permutation of the set (fail closed).
 
 Usage:
     python3 generate-skill-enumerations.py [root]            # WRITE: fill the three pure blocks in place
@@ -182,8 +185,9 @@ def _pure_source(tokens, b: int, e: int) -> str | None:
 
 def _fence_body(tokens, b: int, e: int) -> str | None:
     """The body of the single fenced code block between the markers, or None if it is not exactly one."""
-    inner = [t for t in tokens[b + 1:e] if t.type not in ("html_block",) or t.content.strip()]
-    if len(inner) == 1 and inner[0].type == "fence":
+    inner = tokens[b + 1:e]
+    if len(inner) == 1 and inner[0].type == "fence" and inner[0].level == 0 \
+            and inner[0].info.strip() == "" and inner[0].markup == "```":
         return inner[0].content.rstrip("\n")
     return None
 
@@ -195,8 +199,12 @@ def _table_names(tokens, b: int, e: int) -> list[str] | None:
     inner = tokens[b + 1:e]
     if sum(1 for t in inner if t.type == "table_open") != 1:
         return None
+    # positive-ish grammar: the marked region is one top-level table and nothing else smuggled alongside
+    if inner[0].type != "table_open" or inner[-1].type != "table_close" or inner[0].level != 0:
+        return None
     if any(t.type in ("paragraph_open", "fence", "code_block", "html_block", "heading_open",
-                      "bullet_list_open", "blockquote_open") for t in inner):
+                      "bullet_list_open", "ordered_list_open", "list_item_open", "blockquote_open",
+                      "hr") for t in inner):
         return None
     names: list[str] = []
     in_tbody = False
@@ -250,11 +258,38 @@ def _competing(tokens, b: int, e: int, kind: str, order: list[str]) -> bool:
     return False
 
 
+def _table_stray_names(tokens, b: int, e: int, order: list[str]) -> bool:
+    """True if a canonical skill name appears in the marked table OUTSIDE its first body column (a header
+    or other-column decoy — e.g. a reversed enumeration in the header while column one stays correct)."""
+    names = set(order)
+    inner = tokens[b + 1:e]
+    first_col: set[int] = set()
+    in_tbody = False
+    i = 0
+    while i < len(inner):
+        t = inner[i]
+        if t.type == "tbody_open":
+            in_tbody = True
+        elif t.type == "tbody_close":
+            in_tbody = False
+        elif t.type == "tr_open" and in_tbody:
+            j = i + 1
+            while j < len(inner) and inner[j].type != "tr_close":
+                if inner[j].type == "inline":
+                    first_col.add(j)
+                    break
+                j += 1
+        i += 1
+    for idx, t in enumerate(inner):
+        if t.type == "inline" and idx not in first_col and any(nm in _inline_text(t) for nm in names):
+            return True
+    return False
+
+
 def _extra_skill_table(tokens, b: int, e: int, order: list[str]) -> bool:
     """True if a SECOND table (outside the marked block [b, e]) has >= 2 body rows whose first cell is a
     skill name — a relocated/competing table."""
     names = set(order)
-    depth_open = None
     hits = 0
     i = 0
     while i < len(tokens):
@@ -285,6 +320,29 @@ def _extra_skill_table(tokens, b: int, e: int, order: list[str]) -> bool:
     return hits >= 1
 
 
+def _stray_html_block(tokens) -> str | None:
+    """The first RAW-HTML BLOCK token that is not an HTML comment. Governed docs ban raw HTML elements
+    (`<details>`, `<div>`, `<ol>`, …) because raw HTML is the enabler for the reader-visible decoys a
+    byte/token check cannot see (a `<details>` fold nests the marked block in the DOM without moving the
+    token level). HTML COMMENTS are allowed — they are invisible and cannot nest following content."""
+    for t in tokens:
+        s = (t.content or "").strip()
+        if t.type == "html_block" and not s.startswith("<!--"):
+            return s.splitlines()[0][:50] if s else "(empty)"
+    return None
+
+
+def _region_raw_inline(tokens, b: int, e: int) -> str | None:
+    """The first raw inline-HTML or image token inside the marked region — banned, since a name hidden in
+    `<span hidden>`/`<script data-…>`/an image's alt text renders differently than `_inline_text` reads."""
+    for t in tokens[b + 1:e]:
+        if t.type == "inline":
+            for c in (t.children or []):
+                if c.type in ("html_inline", "image"):
+                    return c.type
+    return None
+
+
 def _read(root: Path, fname: str) -> str | None:
     p = root / fname
     return p.read_text(encoding="utf-8") if p.is_file() else None
@@ -308,6 +366,15 @@ def check(root: Path) -> list[str]:
     texts = {f: _read(root, f) for f in {README, PROMPT}}
     tokens = {f: md.parse(t) for f, t in texts.items() if t is not None}
 
+    # Governed-doc raw-HTML ban (the safe-subset add-on): raw HTML is the enabler for the reader-visible
+    # decoys a token check cannot see, so a governed doc may not contain a raw-HTML BLOCK element.
+    for fname in (README, PROMPT):
+        if fname in tokens:
+            stray = _stray_html_block(tokens[fname])
+            if stray:
+                findings.append(f"{fname}: raw HTML block {stray!r} is not allowed in a governed doc — "
+                                f"use Markdown (only the skill markers may be HTML comments)")
+
     for site_id, fname, renderer, kind in PURE_SITES:
         if texts.get(fname) is None:
             findings.append(f"{fname}: not found (needed for site '{site_id}')")
@@ -328,6 +395,10 @@ def check(root: Path) -> list[str]:
             if src != renderer(order):
                 findings.append(f"{fname}: '{site_id}' block is not the generated enumeration "
                                 f"(run generate-skill-enumerations.py)")
+        raw = _region_raw_inline(tks, b, e)
+        if raw:
+            findings.append(f"{fname}: '{site_id}' block contains raw inline {raw} — not allowed in a "
+                            f"governed enumeration (it can render differently than it reads)")
         if _competing(tks, b, e, kind, order):
             findings.append(f"{fname}: a competing '{site_id}' enumeration renders OUTSIDE the "
                             f"marked block (relocation / stray list) — there must be exactly one")
@@ -342,10 +413,17 @@ def check(root: Path) -> list[str]:
         except MarkerError as ex:
             findings.append(f"{fname}: {ex}")
             continue
+        raw = _region_raw_inline(tks, b, e)
+        if raw:
+            findings.append(f"{fname}: '{site_id}' table contains raw inline {raw} — not allowed in a "
+                            f"governed enumeration (it can render differently than it reads)")
         names = _table_names(tks, b, e)
         if names != order:
             findings.append(f"{fname}: '{site_id}' rendered table first column {names} does not equal "
                             f"the order {order} (fix the table to match skills-order)")
+        if _table_stray_names(tks, b, e, order):
+            findings.append(f"{fname}: a skill name appears in the '{site_id}' table outside its first "
+                            f"body column (header / other-column decoy) — names belong only in column one")
         if _extra_skill_table(tks, b, e, order):
             findings.append(f"{fname}: a competing skill table renders OUTSIDE the '{site_id}' marked "
                             f"block (relocation / stray table) — there must be exactly one")
@@ -358,10 +436,13 @@ def check(root: Path) -> list[str]:
 
 
 def check_count_phrases(text: str, phrases, n: int, file_label: str) -> list[str]:
-    """Flag EVERY occurrence (finditer) of each canonical phrase whose count — word OR digit — != n."""
+    """Flag EVERY occurrence (finditer) of each canonical phrase whose count — word OR digit — != n.
+    Emphasis markers are stripped first, so a *rendered* count that is bold/italic/code (`**seven**`,
+    which `\\w+` cannot cross) is still checked against what the reader sees."""
+    norm = re.sub(r"[*_`]", "", text)
     out = []
     for pat, label in phrases:
-        for m in pat.finditer(text):
+        for m in pat.finditer(norm):
             tok = m.group(1).lower()
             if tok.isdigit():
                 val = int(tok)
@@ -432,8 +513,9 @@ def main() -> int:
               f"`python3 generate-skill-enumerations.py` and re-check ---")
         return 1
     n = len(canonical_skills(root))
-    print(f"--- skill-enumerations: clean ({n} skills; 3 pure sites + 2 tables verified against the "
-          f"parsed Markdown, and the count phrases hold) ---")
+    print(f"--- skill-enumerations: clean ({n} skills; every marked enumeration matches skills-order in "
+          f"the parsed Markdown, no raw HTML in governed docs, count phrases consistent — drift-catcher, "
+          f"see CONTRIBUTING for scope) ---")
     return 0
 
 

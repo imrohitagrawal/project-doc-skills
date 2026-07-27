@@ -1,24 +1,30 @@
-# ADR 0001 — Generate skill enumerations, check byte-identical (replace the parse-based skill-count gate)
+# ADR 0001 — Skill-enumeration gate: generate from skills-order, verify against parsed Markdown
 
-- **Status:** Accepted, hardened after review (`feat/skill-count-generate`, issue #7)
-- **Date:** 2026-06-29
+- **Status:** Accepted with an HONESTLY-SCOPED claim (`feat/skill-count-generate`, issue #7).
+- **Date:** 2026-06-29 (final scope 2026-07-27, after gate-reviews 0005–0007)
 - **Gate layer:** yes — merges only through an independent gate-review (CONTRIBUTING.md "Governance").
 - **Supersedes:** the operational scope of `lint-skill-count.py` (PR #2, suite 1.2.0).
 
-> **Update (gate-reviews `0005` then `0006`) — the design pivoted from byte-stream to RENDER-based.**
-> Two byte-stream designs were each defeated by a markup-hidden decoy that independent cold passes
-> reproduced: (0005) substring marker matching let a marker be embedded in a spanning comment; (0006) even
-> exact byte-level markers could not see that a *correct* marked block wrapped in `<details>` / a code
-> fence renders hidden while a broken un-marked list is what the reader sees, and a code-span comment
-> delimiter hid a visible table row from the checker. The root cause both reviews converged on: **a check
-> on the bytes cannot tell the enumeration a reader sees from one hidden in markup.** The shipped design
-> therefore checks against the **parsed Markdown token stream** (markdown-it-py): markers must be
-> standalone top-level HTML-comment tokens (a wrapper swallows them → fail closed), the content between
-> them must match the generated enumeration *in the parse tree*, and no competing rendered enumeration may
-> appear elsewhere. This adds a dependency (`markdown-it-py`) and moves the residual to renderer parity
-> (markdown-it-py vs GitHub's cmark-gfm) — a much smaller, disclosed gap. The §2 prose below predates the
-> pivot and describes the byte-stream markers; read `generate-skill-enumerations.py` for the shipped
-> token-based model.
+> **FINAL DESIGN & HONEST SCOPE (read this; the numbered sections below are the historical design record
+> and are SUPERSEDED where they conflict).** The gate GENERATES each of the five enumerations from
+> `skills-order` and verifies it against the **parsed Markdown** (markdown-it-py), and it BANS raw HTML in
+> the governed docs. Its scope is a **drift-catcher + casual-decoy guard**, *not* a proof of "no
+> reader-visible decoy" — see CONTRIBUTING "Skill-enumeration gate: scope" for the authoritative
+> statement, and `generate-skill-enumerations.py` for the shipped code.
+>
+> **Why the scope is honest and not "no decoy class".** The claim went through three review rounds, each
+> of which closed the previous vector and found a new one one layer up: **regex** (0002) → **byte
+> markers** (0005) → **exact byte markers** (0006, defeated by a `<details>`/fence wrapper the bytes
+> can't see) → **parsed-token markers with `level==0`** (0007, defeated by a *blank-line* `<details>`,
+> because markdown-it token nesting is not HTML-DOM nesting). The converged lesson: fully defeating an
+> adversarial reader-visible decoy over arbitrary Markdown needs a rendered-**DOM** check against
+> GitHub's own engine (cmark-gfm) — real machinery for a threat (a malicious contributor) that this
+> internal doc-tooling repo does not actually face. So #7 ships as an honest drift-catcher: it catches the
+> real, recurring failure (accidental drift, 5/5) and casual decoys, the raw-HTML ban removes the main
+> adversarial surface cheaply and *by enforcement*, and the residual (render-DOM completeness;
+> markdown-it-py vs cmark-gfm parse edge cases) is disclosed and tracked, not claimed away. The
+> earlier over-claims ("no decoy class", "byte-identical", "the 6f66dfa decoy now FAILS") were the exact
+> mistake this repo exists to prevent and have been removed from the code and docs.
 
 ---
 

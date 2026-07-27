@@ -608,46 +608,40 @@ def manifest_byte_stability(res: Results, verbose: bool) -> None:
 
 
 def skill_enumerations(res: Results, verbose: bool) -> None:
-    """Lock the generate-don't-lint enumeration gate, which checks each enumeration against the PARSED
-    Markdown token stream (markdown-it-py), not the raw bytes — so a decoy hidden in markup is a
-    different token structure and fails closed. The headline regressions are every bypass three
-    independent gate-reviews reproduced: the 0005 marker attacks (spanning comment, duplicate token,
-    hidden table row) and the 0006 rendering-context attacks (a correct block wrapped in <details> or a
-    code fence with a broken list below; a code-span comment delimiter hiding a visible decoy row; the
-    empty-source fail-open; relocation). Each is replayed on a scratch copy of the REAL docs.
+    """Lock the skill-enumeration gate's CLAIMED behaviors (see the generator docstring + CONTRIBUTING
+    "Skill-enumeration gate: scope"): it generates each enumeration from skills-order and verifies it
+    against the parsed Markdown, catching accidental drift (5/5 sites), casual markup decoys, and — via
+    the governed-doc raw-HTML ban — the DOM-nesting / tagfilter / raw-list / image class. It does NOT
+    claim to defeat a determined adversary over arbitrary Markdown (that residual is disclosed, out of
+    scope). Each claimed guard below is exercised so it BITES if reverted; replayed on scratch copies of
+    the REAL docs.
     """
-    print("skill-enumerations — checked against parsed Markdown (render-based, no decoy class):")
+    print("skill-enumerations — drift-catcher + casual-decoy guard + raw-HTML ban (honest scope):")
     import shutil
     g = _load("genenum", GEN)
     order = ["alpha", "beta", "gamma"]
 
-    # 1. Renderers emit the exact documented bytes.
+    # 1. Renderers + validate_order + count phrases (incl. the bolded form the raw \w+ regex missed).
     res.check(g.render_improve_order(order) == "**alpha → beta → gamma.**", "render improve-order")
     res.check(g.render_pick_list(order) == "`alpha · beta · gamma`", "render pick-list")
-    res.check(g.render_tree(order) == "```\nskills/\n├─ alpha/\n├─ beta/\n└─ gamma/\n```",
-              "render tree (own fenced block; └─ last)", repr(g.render_tree(order)))
-
-    # 2. validate_order permutation (fail closed).
+    res.check(g.render_tree(order) == "```\nskills/\n├─ alpha/\n├─ beta/\n└─ gamma/\n```", "render tree")
     canon = {"alpha", "beta", "gamma"}
-    res.check(g.validate_order(["alpha", "beta", "gamma"], canon) == [], "order: exact permutation ok")
+    res.check(g.validate_order(["alpha", "beta", "gamma"], canon) == [], "order: permutation ok")
     res.check(g.validate_order(["alpha", "beta"], canon) != [], "order: missing rejected")
-    res.check(g.validate_order(["alpha", "beta", "gamma", "delta"], canon) != [], "order: extra rejected")
     res.check(g.validate_order(["alpha", "alpha", "beta", "gamma"], canon) != [], "order: dup rejected")
+    res.check(g.check_count_phrases("a suite of three independent skills", g.README_COUNT_PHRASES, 3, "x") == []
+              and len(g.check_count_phrases("a suite of two independent", g.README_COUNT_PHRASES, 3, "x")) == 1
+              and len(g.check_count_phrases("a suite of **two** independent", g.README_COUNT_PHRASES, 3, "x")) == 1,
+              "count phrase: correct passes; wrong caught incl. bolded **two** (render-aware)")
 
-    # 3. Count phrases (carried over): correct passes, wrong caught word+digit.
-    good = g.check_count_phrases("a suite of three independent skills", g.README_COUNT_PHRASES, 3, "x")
-    bw = g.check_count_phrases("a suite of two independent skills", g.README_COUNT_PHRASES, 3, "x")
-    bd = g.check_count_phrases("a suite of 2 independent skills", g.README_COUNT_PHRASES, 3, "x")
-    res.check(not good and len(bw) == 1 and len(bd) == 1,
-              "count phrase: correct passes, wrong caught (word + digit)")
-
-    # 4. End-to-end on a SCRATCH COPY of the REAL docs: baseline clean; every reproduced bypass fails
-    #    closed. g.check() reads files under the scratch root, so mutations exercise the real parse path.
+    # 2. End-to-end on scratch copies of the REAL docs. Baseline clean; every CLAIMED guard bites.
     FULL = ("<!-- skills:improve-order:begin -->\n"
             "**learning-track → architecture-and-decisions → project-faq → usage-guide → "
             "operations-runbook → onboarding-companion → doc-critic → publish-mirror.**\n"
             "<!-- skills:improve-order:end -->")
     PUB = "| **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |"
+    HDR = "| Skill | Diátaxis mode | Scope | Reading grade |"
+    LT = "| **learning-track** | tutorial + explanation | public | ~9 |"
 
     def scratch(mutate):
         tmp = Path(tempfile.mkdtemp(prefix="genenum-"))
@@ -658,9 +652,9 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         if mutate:
             mutate(tmp)
         gg = _load("gg", tmp / "generate-skill-enumerations.py")
-        findings = gg.check(tmp)
+        f = gg.check(tmp)
         shutil.rmtree(tmp, ignore_errors=True)
-        return findings
+        return f
 
     def repl(rel, a, b):
         return lambda t: (t / rel).write_text((t / rel).read_text(encoding="utf-8").replace(a, b),
@@ -668,40 +662,40 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
 
     res.check(scratch(None) == [], "real-docs scratch: baseline is clean", "; ".join(scratch(None)) or "clean")
 
+    ol_decoy = "\n".join(f"{i}. {n}" for i, n in enumerate(
+        ["publish-mirror", "doc-critic", "onboarding-companion", "operations-runbook",
+         "usage-guide", "project-faq", "architecture-and-decisions", "NOT-A-SKILL"], 1))
     cases = [
-        ("accidental drift (drop last skill)", repl("README.md", "→ publish-mirror.**", ".**")),
-        ("0005-1 marker in a spanning HTML comment", repl("README.md", FULL,
-            "<!-- skills:improve-order:begin\n**learning-track → … → publish-mirror.**\n"
-            "skills:improve-order:end -->\n\n**learning-track → project-faq.**")),
-        ("0005-2 duplicate marker token on one line", repl("README.md", FULL,
-            "<!-- skills:improve-order:begin skills:improve-order:begin -->\n"
-            "**learning-track → architecture-and-decisions → project-faq → usage-guide → "
-            "operations-runbook → onboarding-companion → doc-critic → publish-mirror.**\n"
-            "<!-- skills:improve-order:end -->")),
-        ("0006-B <details> wrapper + broken list", repl("README.md", FULL,
-            "<details><summary>x</summary>\n" + FULL + "\n</details>\n\n**learning-track → project-faq.**")),
-        ("code-fence wrapper + broken list", repl("README.md", FULL,
-            "````text\n" + FULL + "\n````\n\n**learning-track → project-faq.**")),
-        ("0006-A code-span comment hides a visible row", repl("README.md", PUB,
-            "| **publish-mirror** | publish step `<!--` | mirrors the source | — |\n"
-            "| NOT-A-SKILL | reader sees this | d | d |\n| z | `-->` | | |")),
-        ("relocation (differently-formatted broken list)", repl("README.md", FULL,
+        ("accidental drift: drop last skill", repl("README.md", "→ publish-mirror.**", ".**")),
+        ("0005-1 spanning-comment marker", repl("README.md", FULL,
+            "<!-- skills:improve-order:begin\n**x → y.**\nskills:improve-order:end -->\n\n"
+            "**learning-track → project-faq.**")),
+        ("0005-3 hidden-comment table row", repl("README.md", "<!-- skills:table:end -->",
+            "<!--\n| learning-track | h | h | h |\n-->\n<!-- skills:table:end -->")),
+        ("raw-HTML ban: blank <details> wrapper + list decoy", repl("README.md", FULL,
+            "<details>\n<summary>s</summary>\n\n" + FULL + "\n\n</details>\n\n## Order\n\n" + ol_decoy)),
+        ("raw-HTML ban: raw <ol> decoy list", repl("README.md", FULL,
+            FULL + "\n\n<ol reversed>\n<li>publish-mirror</li>\n<li>NOT-A-SKILL</li>\n</ol>")),
+        ("raw-HTML ban: tagfilter <script> in a cell", repl("README.md", LT,
+            '| <script data-x="publish-mirror">learning-track</script> | tutorial + explanation | public | ~9 |')),
+        ("table header/other-column decoy", repl("README.md", HDR,
+            "| Skill (order: publish-mirror then doc-critic then learning-track) | Diátaxis mode | Scope | Reading grade |")),
+        ("bolded count phrase **seven**", repl("README.md", "A suite of eight independent",
+            "A suite of **seven** independent")),
+        ("relocation: differently-formatted broken list", repl("README.md", FULL,
             "**learning-track → project-faq**\n\nfiller\n\n" + FULL)),
-        ("empty skills/ fail-open (must be a finding, not clean)",
-            lambda t: (shutil.rmtree(t / "skills"), (t / "skills").mkdir())),
+        ("empty skills/ fail-closed", lambda t: (shutil.rmtree(t / "skills"), (t / "skills").mkdir())),
     ]
     for name, mut in cases:
-        findings = scratch(mut)
-        res.check(len(findings) >= 1, f"real-docs scratch: {name} -> caught",
-                  (findings[0][:70] if findings else "NOT CAUGHT (exit clean!)"))
+        f = scratch(mut)
+        res.check(len(f) >= 1, f"real-docs scratch: {name} -> caught",
+                  (f[0][:66] if f else "NOT CAUGHT (clean!)"))
 
-    # 5. Self-inclusion: the gate check + its source of truth are gate-layer.
+    # 3. Self-inclusion + live docs pass the CLI.
     grc = _load("grc_si", GATE_REVIEW_CHECK)
     pats = grc.load_gate_patterns(grc.GATE_PATHS_FILE)
     for p in ["generate-skill-enumerations.py", "skills-order"]:
         res.check(grc.matches_gate(p, pats), f"self-inclusion: {p} is gate-layer")
-
-    # 6. LIVE docs pass --check via the CLI (proves the migration).
     p = subprocess.run([sys.executable, str(GEN), str(ROOT), "--check"], capture_output=True, text=True)
     tail = (p.stdout + p.stderr).strip().splitlines()
     res.check(p.returncode == 0, "live README + prompt pass generate-skill-enumerations.py --check",

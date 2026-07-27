@@ -156,13 +156,13 @@ this policy (that would couple the mechanism to unrelated content):
   missing ISO stamp is INFO and there is no credits gate); and the verifier-catch half (the © itself) by
   golden-bad case 1 (the missing-© page).
 - **`lint-skill-count.py` — RETIRED, superseded by `generate-skill-enumerations.py` (#7); the owed
-  `b65041f` fixture is discharged by the replacement.** The parser could not be made adversarially robust
-  (a regex cannot tell a rendered enumeration from a markup-hidden decoy), so it is replaced by the
-  generate-don't-lint gate that closes the decoy class structurally. The `b65041f` real-incident —
-  accidental enumeration drift across the five sites — is now locked by the new gate's fixtures
-  (`tests/run-golden.py`, `skill_enumerations`): a dropped skill in any marked block fails byte-identical
-  / name-ordered. And the `6f66dfa` markup-hidden decoy the parser could **not** catch now **FAILS** the
-  check (the headline regression). See `docs/adr/0001-generate-skill-enumerations.md`.
+  `b65041f` fixture is discharged by the replacement.** The new gate GENERATES each enumeration from
+  `skills-order` and verifies it against the PARSED Markdown (markdown-it-py). The `b65041f` real-incident
+  — accidental enumeration drift across the five sites — is locked by its fixtures (`tests/run-golden.py`,
+  `skill_enumerations`): a dropped/reordered skill in any marked block fails at every site. Scope is a
+  **drift-catcher + casual-decoy guard with a governed-doc raw-HTML ban**, NOT an adversarial
+  "no reader-visible decoy" proof — see "Skill-enumeration gate: scope" below and
+  `docs/adr/0001-generate-skill-enumerations.md`.
 - **`gate-review-check.py` — fixture LANDED** (`tests/run-golden.py`, the `gate-review-check` +
   `gate-review-check SEAM` sections): path classification, the verdict decision, and the
   `evaluate_verdicts -> light_admissible` seam, locking the rubber-stamp vectors the bootstrap review
@@ -170,6 +170,35 @@ this policy (that would couple the mechanism to unrelated content):
 - **Still audit-owed: `check-version.py`** — confirm its real-incident no-op-revert fixture and open a
   PR for any gap (out of scope for the fixture-backfill PR above, which covered the suite lints + the
   verifier docs gate).
+
+### Skill-enumeration gate: scope (what it guarantees, and what it does not)
+
+`generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
+scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
+prevent). Three independent gate-reviews (`gate-reviews/0005`–`0007`) drove this scope.
+
+**It guarantees (and fixtures lock, each biting on revert):**
+- **Accidental drift is caught at all five sites** — the real, recurring failure (`b65041f`). Each
+  enumeration is generated from `skills-order` and verified against the **parsed** Markdown
+  (markdown-it-py): pure sites (improve-order, pick-list, tree) match the generated run in the parse
+  tree; tables' body rows' first-cell **rendered text** equals the skills, in order. Empty/missing
+  `skills/` fails closed.
+- **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
+  spanning-comment markers, a differently-formatted competing run, a header/other-column table decoy, and
+  a bold/italic count phrase (`**seven**`).
+- **Raw HTML is banned in the governed docs** (`README.md`, `per-skill-review-prompt.md`): a raw-HTML
+  block (`<details>`, `<div>`, `<ol>`, …) or an inline HTML/image token in a marked region is rejected.
+  Raw HTML is the enabler for a reader-visible decoy that renders differently than it reads (a
+  `<details>` fold, a GFM-tagfilter tag, an image's alt text), so banning it removes that surface cheaply.
+
+**It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
+a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
+and verifying the **DOM** (visibility, ancestry) against GitHub's own engine (cmark-gfm) — deliberately
+out of scope for internal tooling whose real threat is accidental drift, not a malicious contributor.
+Known residuals: markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character or backslash
+handling in table delimiters), and anything the raw-HTML ban does not cover. If the threat model ever
+warrants it, the render-to-DOM pass is the tracked follow-up — but it is not needed to ship this gate as
+an honest drift-catcher.
 
 ### Running a gate-review
 

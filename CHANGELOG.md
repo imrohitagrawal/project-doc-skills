@@ -91,32 +91,32 @@ in-flight skill-count PR.
   `write_manifest` runs on identical content are byte-identical, and the manifest carries no
   build-commit / timestamp field. A future edit re-adding a volatile field would turn this red.
 
-### Changed — skill-enumeration gate checked against RENDERED Markdown (#7; supersedes 1.2.0's parser)
+### Changed — skill-enumeration gate: generate from skills-order, verify against parsed Markdown (#7)
 - **`generate-skill-enumerations.py`** replaces **`lint-skill-count.py`** (now deleted). Each of the five
   skill enumerations (README skill table, repo tree, improve-order list; per-skill-review-prompt
   pick-list and attachment table) is GENERATED from a new **`skills-order`** source of truth and verified
-  against the **parsed Markdown token stream** (markdown-it-py, CommonMark + GFM tables), not the raw
-  bytes.
-- **Why parsed, not bytes.** Two earlier designs — a regex parser, then a byte-stream marker check — were
-  each defeated by a markup-hidden decoy that three independent gate-reviews reproduced
-  (`gate-reviews/0002`, `0005`, `0006`): a correct enumeration hidden in an HTML comment, a spanning
-  comment, a `<details>` fold, a code fence, or behind a code-span comment delimiter, while a broken one
-  is what the reader sees. A byte check cannot tell rendered from hidden; a parser can. Now: the markers
-  must be **standalone top-level HTML-comment tokens** (a marker wrapped in a fence/`<details>`/raw HTML
-  is swallowed into one block token, so it is not standalone → fail closed); the content between them
-  must be exactly the generated enumeration in the parsed tree (a paragraph, one fenced block, or one
-  table whose body rows' first-cell **rendered text** equals the skills); and no **competing** rendered
-  enumeration of the same shape may appear elsewhere (closes relocation and the stray-second-list gap).
-  Every 0005/0006 bypass is locked as a regression in `tests/run-golden.py` `skill_enumerations`.
-- **`skills-order`** — the canonical order, validated as an exact permutation of `skills/` (fail closed
-  on missing / extra / duplicate / unknown). The tree moved to its own fenced block; the two tables are
-  wrapped whole (header + body).
+  against the **parsed Markdown** (markdown-it-py), so accidental drift and casual markup decoys are
+  caught at the location a reader reads.
+- **Scope, stated honestly.** This is a **drift-catcher + casual-decoy guard**, not a proof of "no
+  reader-visible decoy". Three gate-reviews (`gate-reviews/0005`–`0007`) each closed a vector and found a
+  new one one layer up (regex → bytes → token nesting → DOM nesting), converging on the lesson that fully
+  defeating an adversarial reader-visible decoy needs a rendered-**DOM** check against GitHub's own engine
+  — deliberately out of scope for internal tooling whose real risk is accidental drift. What ships:
+  - accidental drift caught 5/5 (pure sites match the generated run in the parse tree; tables match by
+    rendered first-cell text); empty/missing `skills/` **fails closed**;
+  - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, a
+    competing/relocated run, a table header/other-column decoy, and a bold/italic count phrase;
+  - **raw HTML banned in the governed docs** — a raw-HTML block or an inline HTML/image token in a marked
+    region is rejected, removing the main adversarial surface (`<details>` folds, GFM tagfilter, image
+    alt-text) cheaply and *by enforcement*, not by inference.
+  The accepted residual (markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover) is
+  documented in CONTRIBUTING "Skill-enumeration gate: scope". Every guard is fixture-locked in
+  `tests/run-golden.py` `skill_enumerations` so it bites on revert.
+- **`skills-order`** — validated as an exact permutation of `skills/` (fail closed). The tree moved to its
+  own fenced block; the two tables are wrapped whole (header + body).
 - **New dependency: `markdown-it-py`** (CI installs it alongside `pyyaml`). The gate is root scaffolding,
-  never bundled into a `.skill`, so no shipped package gains a dependency. If the parser is absent the
-  gate **fails closed** (it does not print "clean").
-- **Honest residual.** The gate checks against markdown-it-py, a close proxy for GitHub's cmark-gfm, not
-  GitHub itself; a construct the two parse differently is the remaining, much smaller, disclosed gap. The
-  empty-source case fails closed (a finding, not a false "clean"). See `docs/adr/0001`.
+  never bundled into a `.skill`, so no shipped package gains a dependency; the gate **fails closed** if
+  the parser is absent.
 - Wired into `build-skills.sh` (replacing the lint step) and the gate layer (`.github/gate-paths` names
   the generator + `skills-order`); `release-gate.sh` prose updated so the gate's self-description does not
   drift. Suite tooling, never bundled; no `VERSION` bump (folds into the next cut under `Unreleased`).
@@ -144,9 +144,10 @@ A new root-level suite lint, composed into the release gate. Suite tooling, neve
 - **Scope (honest):** this guards **accidental** enumeration drift — the class above, which it catches.
   It is **not** adversarially-decoy-proof: because it reads raw Markdown, a canonical run hidden in
   markup right after the introducing phrase (HTML comment, code span, reference definition), or a decoy
-  phrase that merely contains the anchor substring, can mask a broken visible list. The structural fix —
-  generating each enumeration from the source of truth and checking it byte-identical, so no parsing and
-  no decoy class — is tracked as a follow-up (`feat/skill-count-generate`).
+  phrase that merely contains the anchor substring, can mask a broken visible list. The structural
+  follow-up — generate each enumeration from the source of truth and verify it — is `feat/skill-count-generate`
+  (#7); it lands as a drift-catcher + casual-decoy guard with a governed-doc raw-HTML ban (see that
+  entry's honest scope), not an absolute "no decoy class".
 
 ## [1.1.0] — 2026-06-28 (new skill: doc-critic — the independent critic gate)
 
