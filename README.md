@@ -7,7 +7,7 @@ wiki or portal without re-authoring them:
 
 | Skill | Diátaxis mode | Scope | Reading grade |
 |---|---|---|---|
-<!-- skills:table:begin (first column generated/checked from skills-order; the other columns are authored by hand) -->
+<!-- skills:table:begin -->
 | **learning-track** | tutorial + explanation | public | ~9 |
 | **architecture-and-decisions** | explanation / reference | public | ~11 |
 | **project-faq** | reference | internal | ~8 |
@@ -39,16 +39,7 @@ project-doc-skills/
 │  ├─ publish-targets.yaml     #   the per-project manifest of publish destinations + their coordinates
 │  ├─ verify.py                #   the documentation verifier
 │  └─ ci/                      #   ready pre-commit + CI snippet
-├─ skills/                     # skills:tree:begin — bespoke files per skill; node list generated from skills-order
-│  ├─ learning-track/
-│  ├─ architecture-and-decisions/
-│  ├─ project-faq/
-│  ├─ usage-guide/
-│  ├─ operations-runbook/
-│  ├─ onboarding-companion/
-│  ├─ doc-critic/
-│  └─ publish-mirror/
-│                              # skills:tree:end (doc-critic = the review gate; publish-mirror = the publish step)
+├─ skills/                     # bespoke files per skill (the eight skills are listed below)
 ├─ build-skills.sh             # assembles dist/<name>.skill = skills/<name>/ + shared/ (deterministic)
 ├─ pkgtools.py                 # deterministic packer + SHA-256 integrity manifest writer
 ├─ lint-placeholders.py        # every {{...}} resolves to a profile key / manifest slot / runtime token
@@ -58,6 +49,22 @@ project-doc-skills/
 ├─ tests/                      # golden-good / golden-bad fixtures + run-golden.py (the gates that guard the gates)
 └─ dist/                       # the built .skill packages + MANIFEST.sha256 (generated)
 ```
+
+The skills under `skills/` (generated from `skills-order`):
+
+<!-- skills:tree:begin -->
+```
+skills/
+├─ learning-track/
+├─ architecture-and-decisions/
+├─ project-faq/
+├─ usage-guide/
+├─ operations-runbook/
+├─ onboarding-companion/
+├─ doc-critic/
+└─ publish-mirror/
+```
+<!-- skills:tree:end -->
 
 **The one rule that keeps this scalable:** never hand-edit a shared file inside a built `.skill` or
 inside `skills/<name>/`. Edit `shared/`, then run `./build-skills.sh`. The copies are generated, so

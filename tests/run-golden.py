@@ -608,74 +608,92 @@ def manifest_byte_stability(res: Results, verbose: bool) -> None:
 
 
 def skill_enumerations(res: Results, verbose: bool) -> None:
-    """Lock the generate-don't-lint enumeration gate (replaces skill_count_extractors). Each enumeration
-    is GENERATED from skills-order and checked at a FAIL-CLOSED marked location, so there is no
-    whole-document parse to fool — the structural fix tracked since the parser was bypassed four times.
-    Synthetic inputs (so this never couples to the live README), PLUS a live `--check`. The headline is
-    the REAL-INCIDENT regression: the markup-hidden decoy that beat the old parser (6f66dfa) must FAIL.
+    """Lock the generate-don't-lint enumeration gate. Each enumeration is GENERATED from skills-order and
+    checked at a FAIL-CLOSED marked location. The headline regressions are the THREE attacks a
+    different-vendor (GPT) gate-review reproduced against the first (substring-marker) implementation and
+    that the hardened marker model must now reject: (1) a marker embedded in a spanning HTML comment,
+    (2) a marker duplicated on one line, (3) a table decoy row hidden in an HTML comment; plus relocation
+    of a correct block away from its anchor. Synthetic inputs + a scratch copy of the REAL docs.
     """
-    print("skill-enumerations — generated & byte-identically checked (no parse, no decoy class):")
+    print("skill-enumerations — generated, exact-marked, anchored (no parse, no decoy class):")
+    import shutil
     g = _load("genenum", GEN)
     order = ["alpha", "beta", "gamma"]
     canon = {"alpha", "beta", "gamma"}
+    IO_ANCHOR = "in this order (producers before consumers):"   # improve-order anchor line
 
     # 1. Renderers emit the exact documented bytes (the three pure sites).
-    res.check(g.render_improve_order(order) == "**alpha → beta → gamma.**",
-              "render improve-order", repr(g.render_improve_order(order)))
-    res.check(g.render_pick_list(order) == "`alpha · beta · gamma`",
-              "render pick-list", repr(g.render_pick_list(order)))
-    res.check(g.render_tree(order) == "│  ├─ alpha/\n│  ├─ beta/\n│  └─ gamma/",
-              "render tree (last node uses └─)", repr(g.render_tree(order)))
+    res.check(g.render_improve_order(order) == "**alpha → beta → gamma.**", "render improve-order")
+    res.check(g.render_pick_list(order) == "`alpha · beta · gamma`", "render pick-list")
+    res.check(g.render_tree(order) == "```\nskills/\n├─ alpha/\n├─ beta/\n└─ gamma/\n```",
+              "render tree (own fenced block; └─ on last)", repr(g.render_tree(order)))
 
-    # 2. Marker extraction happy path.
-    doc = ("x\n<!-- skills:improve-order:begin -->\n**alpha → beta → gamma.**\n"
-           "<!-- skills:improve-order:end -->\ny\n")
+    # 2. Marker extraction happy path (anchored, exact self-closing marker).
+    doc = (f"{IO_ANCHOR}\n<!-- skills:improve-order:begin -->\n**alpha → beta → gamma.**\n"
+           "<!-- skills:improve-order:end -->\n")
     res.check(g.extract_marked_block(doc, "improve-order") == "**alpha → beta → gamma.**",
               "extract_marked_block returns the inner bytes")
-
-    # 3. Byte-identical pure check: correct matches the renderer; a drop does not.
     res.check(g.extract_marked_block(doc, "improve-order") == g.render_improve_order(order),
               "pure site: correct block is byte-identical")
     dropped = doc.replace("**alpha → beta → gamma.**", "**alpha → beta.**")
     res.check(g.extract_marked_block(dropped, "improve-order") != g.render_improve_order(order),
               "pure site: a dropped skill fails byte-identical")
 
-    # 4. REAL-INCIDENT REGRESSION (6f66dfa). A markup-hidden CANONICAL run right after the anchor masks a
-    #    BROKEN visible list. The OLD parser selected the hidden run and passed; the new check reads ONLY
-    #    the bytes between the markers, so the broken visible block != generated -> FAIL.
-    incident = ("Improve ... (producers before consumers):\n"
-                "<!-- producers before consumers: alpha → beta → gamma -->\n"   # the canonical decoy
-                "<!-- skills:improve-order:begin -->\n"
-                "**alpha → beta.**\n"                                                # broken visible list
-                "<!-- skills:improve-order:end -->\n")
-    blk = g.extract_marked_block(incident, "improve-order")
-    res.check(blk == "**alpha → beta.**" and blk != g.render_improve_order(order),
-              "REAL-INCIDENT: markup-hidden decoy no longer hides a broken improve-order list",
-              f"checked block={blk!r}; the decoy in the comment is never read")
-    pl_incident = ("replace below with one of\n`alpha · beta · gamma`\n"          # code-span decoy
-                   "<!-- skills:pick-list:begin -->\n`alpha · beta`\n<!-- skills:pick-list:end -->\n")
-    res.check(g.extract_marked_block(pl_incident, "pick-list") != g.render_pick_list(order),
-              "REAL-INCIDENT: pick-list code-span decoy no longer hides a broken list")
-
-    # 5. Marker handling FAILS CLOSED (the load-bearing property — absent/dup/malformed must error).
-    fail_closed = [
-        ("absent begin", "<!-- skills:pick-list:end -->\n"),
-        ("absent both", "no markers here\n"),
-        ("duplicated begin",
-         "<!-- skills:pick-list:begin -->\na\n<!-- skills:pick-list:begin -->\n"
-         "`x`\n<!-- skills:pick-list:end -->\n"),
-        ("end before begin",
-         "<!-- skills:pick-list:end -->\n`x`\n<!-- skills:pick-list:begin -->\n"),
-    ]
-    for label, text in fail_closed:
+    def raises_marker(text, site):
         try:
-            g.extract_marked_block(text, "pick-list")
-            ok = False
+            g.extract_marked_block(text, site)
+            return False
         except g.MarkerError:
-            ok = True
-        res.check(ok, f"fail-closed marker: {label} -> MarkerError")
+            return True
 
-    # 6. skills-order permutation validation (fail closed on missing/extra/duplicate/unknown).
+    # 3. REAL-INCIDENT REGRESSIONS — the three attacks the GPT gate-review reproduced (0005). Each MUST
+    #    now fail closed / not pass.
+    # 3a. Marker embedded in a spanning HTML comment (hides canonical, visible list broken).
+    a_span = (f"{IO_ANCHOR}\n<!-- skills:improve-order:begin\n**alpha → beta → gamma.**\n"
+              "skills:improve-order:end -->\n**alpha → beta.**\n")
+    res.check(raises_marker(a_span, "improve-order"),
+              "0005 ATTACK 1: spanning-comment marker -> MarkerError (not a hidden decoy)")
+    # 3b. Marker token duplicated on one line (line-count would say 'one'; token-count says two).
+    a_dup = (f"{IO_ANCHOR}\n<!-- skills:improve-order:begin skills:improve-order:begin\n"
+             "**alpha → beta → gamma.**\nskills:improve-order:end skills:improve-order:end -->\n")
+    res.check(raises_marker(a_dup, "improve-order"),
+              "0005 ATTACK 2: duplicate token on one line -> MarkerError")
+    # 3c. Table decoy rows hidden in an HTML comment + broken visible rows (backtick-wrapped, unmatched).
+    a_tbl = ("| Skill | Diátaxis mode | Scope | Reading grade |\n"
+             "<!-- skills:table:begin -->\n<!--\n| alpha | h |\n| beta | h |\n| gamma | h |\n-->\n"
+             "| `gamma` | wrong |\n| `bogus` | missing |\n<!-- skills:table:end -->\n")
+    names_tbl = g.extract_table_names(g.extract_marked_block(a_tbl, "table"))
+    res.check(names_tbl != order,
+              "0005 ATTACK 3: table decoy rows hidden in a comment do not pass",
+              f"rendered names={names_tbl} (hidden comment rows stripped; broken visible rows read)")
+    # 3d. Relocation — a correct marked block moved away from its anchor, broken un-marked list at anchor.
+    a_reloc = (f"{IO_ANCHOR}\n**alpha → beta.**\n\n## Appendix\n<!-- skills:improve-order:begin -->\n"
+               "**alpha → beta → gamma.**\n<!-- skills:improve-order:end -->\n")
+    res.check(raises_marker(a_reloc, "improve-order"),
+              "0005 relocation: correct block far from its anchor -> MarkerError")
+
+    # 4. Marker integrity (fail closed): absent, end-before-begin, and a duplicate proper marker pair.
+    res.check(raises_marker(f"{IO_ANCHOR}\nno markers here\n", "improve-order"),
+              "fail-closed: absent markers -> MarkerError")
+    res.check(raises_marker(f"{IO_ANCHOR}\n<!-- skills:improve-order:end -->\nx\n"
+                            "<!-- skills:improve-order:begin -->\n", "improve-order"),
+              "fail-closed: end before begin -> MarkerError")
+    res.check(raises_marker(f"{IO_ANCHOR}\n<!-- skills:improve-order:begin -->\nx\n"
+                            "<!-- skills:improve-order:end -->\n<!-- skills:improve-order:begin -->\n"
+                            "y\n<!-- skills:improve-order:end -->\n", "improve-order"),
+              "fail-closed: duplicated proper marker pair -> MarkerError")
+
+    # 5. Anchoring: the anchor must appear exactly once, and the block must sit within MARKER_GAP of it.
+    two_anchor = (f"{IO_ANCHOR}\n{IO_ANCHOR}\n<!-- skills:improve-order:begin -->\n"
+                  "**alpha → beta → gamma.**\n<!-- skills:improve-order:end -->\n")
+    res.check(raises_marker(two_anchor, "improve-order"),
+              "anchor: a duplicated section anchor -> MarkerError")
+    no_anchor = ("nothing relevant here\n<!-- skills:improve-order:begin -->\n"
+                 "**alpha → beta → gamma.**\n<!-- skills:improve-order:end -->\n")
+    res.check(raises_marker(no_anchor, "improve-order"),
+              "anchor: a missing section anchor -> MarkerError")
+
+    # 6. skills-order permutation validation (fail closed).
     res.check(g.validate_order(["alpha", "beta", "gamma"], canon) == [], "order: exact permutation ok")
     res.check(g.validate_order(["alpha", "beta"], canon) != [], "order: missing skill rejected")
     res.check(g.validate_order(["alpha", "beta", "gamma", "delta"], canon) != [],
@@ -683,66 +701,51 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(g.validate_order(["alpha", "alpha", "beta", "gamma"], canon) != [],
               "order: duplicate line rejected")
 
-    # 7. Table name-column: positional, ordered; bold and un-bold first columns; a drop/reorder fails;
-    #    a markup-hidden decoy row is never read (extraction == a visible |-leading row).
-    tbl = ("<!-- skills:table:begin -->\n| **alpha** | x | y |\n| **beta** | x | y |\n"
-           "| **gamma** | x | y |\n<!-- skills:table:end -->\n")
-    res.check(g.extract_table_names(g.extract_marked_block(tbl, "table")) == order,
-              "table: ordered name column equals the order")
-    at = ("<!-- skills:attach-table:begin -->\n| alpha | a |\n| beta | b |\n| gamma | c |\n"
-          "<!-- skills:attach-table:end -->\n")
-    res.check(g.extract_table_names(g.extract_marked_block(at, "attach-table")) == order,
-              "attach-table: un-bolded name column equals the order")
+    # 7. Table name extraction: rendered rows only, whole first cell, comment rows stripped.
+    ok_tbl = "| **alpha** | x |\n| **beta** | x |\n| **gamma** | x |\n"
+    res.check(g.extract_table_names(ok_tbl) == order, "table: bold rendered rows -> exact names")
+    res.check(g.extract_table_names("| alpha | a |\n| beta | b |\n| gamma | c |\n") == order,
+              "table: un-bolded rendered rows -> exact names")
+    res.check(g.extract_table_names("<!--\n| alpha | h |\n-->\n| **beta** | x |\n") != order,
+              "table: a commented decoy row is stripped, not read")
+    res.check(g.extract_table_names("| alpha/NOT-THE-NAME | x |\n") != order,
+              "table: a non-exact first cell is poisoned (not truncated to 'alpha')")
     res.check(g.extract_table_names("| **beta** | x |\n| **alpha** | x |\n| **gamma** | x |\n") != order,
               "table: a reorder fails the ordered check")
-    res.check(g.extract_table_names("| **alpha** | x |\n<!-- | beta | hidden | -->\n| **gamma** | x |\n")
-              == ["alpha", "gamma"],
-              "table: a commented decoy row is never read (extraction == visible row)")
 
-    # 8. Scalar count phrases (carried from the retired lint): correct passes, wrong caught word+digit.
+    # 8. Scalar count phrases (carried over): correct passes, wrong caught word+digit.
     good = g.check_count_phrases("a suite of three independent skills", g.README_COUNT_PHRASES, 3, "x")
     bw = g.check_count_phrases("a suite of two independent skills", g.README_COUNT_PHRASES, 3, "x")
     bd = g.check_count_phrases("a suite of 2 independent skills", g.README_COUNT_PHRASES, 3, "x")
     res.check(not good and len(bw) == 1 and len(bd) == 1,
-              "count phrase: correct passes, wrong caught (word + digit)",
-              f"good={good} word={len(bw)} digit={len(bd)}")
+              "count phrase: correct passes, wrong caught (word + digit)")
 
-    # 9. Idempotence on a synthetic mini-repo: write fills the pure blocks, --check is then clean, and a
-    #    hand-drop in a generated block is then caught.
-    import shutil
+    # 9. End-to-end on a SCRATCH COPY of the REAL docs: write is idempotent, --check clean, a hand-drop
+    #    in a generated block is caught.
     tmp = Path(tempfile.mkdtemp(prefix="genenum-"))
-    for s in order:
-        (tmp / "skills" / s).mkdir(parents=True)
-        (tmp / "skills" / s / "SKILL.md").write_text("x", encoding="utf-8")
-    (tmp / "skills-order").write_text("\n".join(order) + "\n", encoding="utf-8")
-    (tmp / "README.md").write_text(
-        "# r\nsuite of three independent skills; three copies of the house style; build all three\n\n"
-        "<!-- skills:improve-order:begin -->\nPLACEHOLDER\n<!-- skills:improve-order:end -->\n\n"
-        "```\n│  ├─ skills/  # skills:tree:begin\nPLACEHOLDER\n│  # skills:tree:end\n```\n\n"
-        "<!-- skills:table:begin -->\n| **alpha** | x |\n| **beta** | x |\n| **gamma** | x |\n"
-        "<!-- skills:table:end -->\n", encoding="utf-8")
-    (tmp / "per-skill-review-prompt.md").write_text(
-        "now **three** skills in a three-skill documentation suite\n\n"
-        "<!-- skills:pick-list:begin -->\nPLACEHOLDER\n<!-- skills:pick-list:end -->\n\n"
-        "<!-- skills:attach-table:begin -->\n| alpha | a |\n| beta | b |\n| gamma | c |\n"
-        "<!-- skills:attach-table:end -->\n", encoding="utf-8")
-    g.write(tmp)
-    res.check(g.check(tmp) == [], "idempotence: write then --check is clean",
-              "; ".join(g.check(tmp)) or "clean")
+    for rel in ["README.md", "per-skill-review-prompt.md", "skills-order",
+                "generate-skill-enumerations.py"]:
+        shutil.copy(ROOT / rel, tmp / rel)
+    shutil.copytree(ROOT / "skills", tmp / "skills")
+    g2 = _load("genenum2", tmp / "generate-skill-enumerations.py")
+    g2.write(tmp)
+    res.check(g2.check(tmp) == [], "real-docs scratch: write then --check is clean",
+              "; ".join(g2.check(tmp)) or "clean")
     rd = (tmp / "README.md").read_text(encoding="utf-8")
-    (tmp / "README.md").write_text(rd.replace("**alpha → beta → gamma.**", "**alpha → beta.**"),
-                                   encoding="utf-8")
-    res.check(g.check(tmp) != [], "a hand-drop in a generated block is caught by --check")
+    real_order = [ln.strip() for ln in (ROOT / "skills-order").read_text().splitlines()
+                  if ln.strip() and not ln.strip().startswith("#")]
+    (tmp / "README.md").write_text(
+        rd.replace(f"→ {real_order[-1]}.**", ".**"), encoding="utf-8")   # drop last skill from improve-order
+    res.check(g2.check(tmp) != [], "real-docs scratch: a hand-drop in a generated block is caught")
     shutil.rmtree(tmp, ignore_errors=True)
 
-    # 10. Self-inclusion: the new gate check + its source of truth are in the gate layer (locks the
-    #     .github/gate-paths addition against a silent regression).
+    # 10. Self-inclusion: the new gate check + its source of truth are gate-layer.
     grc = _load("grc_si", GATE_REVIEW_CHECK)
     pats = grc.load_gate_patterns(grc.GATE_PATHS_FILE)
     for p in ["generate-skill-enumerations.py", "skills-order"]:
         res.check(grc.matches_gate(p, pats), f"self-inclusion: {p} is gate-layer")
 
-    # 11. LIVE docs: the real README + per-skill-prompt pass --check via the CLI (proves the migration).
+    # 11. LIVE docs: the real README + prompt pass --check via the CLI (proves the migration).
     p = subprocess.run([sys.executable, str(GEN), str(ROOT), "--check"], capture_output=True, text=True)
     tail = (p.stdout + p.stderr).strip().splitlines()
     res.check(p.returncode == 0, "live README + prompt pass generate-skill-enumerations.py --check",

@@ -1,9 +1,17 @@
 # ADR 0001 — Generate skill enumerations, check byte-identical (replace the parse-based skill-count gate)
 
-- **Status:** Proposed (Phase 1 design spec for `feat/skill-count-generate`, issue #7)
+- **Status:** Accepted, hardened after review (`feat/skill-count-generate`, issue #7)
 - **Date:** 2026-06-29
 - **Gate layer:** yes — merges only through an independent gate-review (CONTRIBUTING.md "Governance").
 - **Supersedes:** the operational scope of `lint-skill-count.py` (PR #2, suite 1.2.0).
+
+> **Update (gate-review `gate-reviews/0005`).** The first implementation checked the marked block but
+> recognised markers by *substring* match, which a different-vendor cold pass showed re-opened the decoy
+> class: a marker embedded in a spanning HTML comment (or duplicated on one line) hid a canonical block
+> while the visible list was broken, and a table decoy row hidden in a comment satisfied the name check.
+> The marker model below (§2) is the **hardened** version: exactness + anchoring + rendered-only table
+> rows. The lesson — a "no decoy class" claim must be earned at the *marker* layer, not just the content
+> layer — is exactly the over-claim this whole line of work exists to end.
 
 ---
 

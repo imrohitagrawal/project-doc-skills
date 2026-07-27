@@ -102,6 +102,18 @@ in-flight skill-count PR.
   not closed)" no longer holds — the claim is now "no decoy class", true and machine-verifiable.
 - **`skills-order`** — the canonical order, validated as an exact permutation of `skills/` (fail closed
   on missing / extra / duplicate / unknown).
+- **Hardened marker model (after the independent gate-review, `gate-reviews/0005`).** A different-vendor
+  cold pass reproduced three bypasses of the first (substring-marker) implementation: a marker embedded
+  in a spanning HTML comment, a marker duplicated on one line, and a table decoy row hidden in a comment.
+  Marker handling is now fail-closed on THREE properties — **exactness** (each token occurs exactly once,
+  on a line byte-equal to the canonical self-closing `<!-- skills:<id>:begin -->`), **anchoring** (the
+  block must sit within a few lines of its unique section anchor, so a correct block can't be relocated
+  while a broken un-marked list occupies the real spot), and **rendered-only table rows** (HTML comments
+  stripped; each name is the whole first cell). The repo tree moved to its own fenced block so its
+  markers are exact HTML comments too. All three attacks + relocation are locked as regressions in
+  `tests/run-golden.py` `skill_enumerations`.
+- **`skills-order`** — the canonical order, validated as an exact permutation of `skills/` (fail closed
+  on missing / extra / duplicate / unknown).
 - Wired into `build-skills.sh` (replacing the lint step) and the gate layer (`.github/gate-paths` names
   the generator + `skills-order`); `release-gate.sh` prose updated so the gate's self-description does not
   drift. Suite tooling, never bundled; no `VERSION` bump (folds into the next cut under `Unreleased`).
