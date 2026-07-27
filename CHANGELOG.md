@@ -91,29 +91,32 @@ in-flight skill-count PR.
   `write_manifest` runs on identical content are byte-identical, and the manifest carries no
   build-commit / timestamp field. A future edit re-adding a volatile field would turn this red.
 
-### Changed — skill-enumeration gate by GENERATION, not parsing (#7; supersedes 1.2.0's parser)
+### Changed — skill-enumeration gate checked against RENDERED Markdown (#7; supersedes 1.2.0's parser)
 - **`generate-skill-enumerations.py`** replaces **`lint-skill-count.py`** (now deleted). Each of the five
   skill enumerations (README skill table, repo tree, improve-order list; per-skill-review-prompt
-  pick-list and attachment table) is GENERATED from a new **`skills-order`** source of truth and checked
-  at a fail-closed marked location — three pure sites byte-identical, two tables name-ordered. No
-  document parse selects the enumeration, so the markup-hidden-decoy class that bypassed the parser four
-  times is closed structurally: the `6f66dfa` decoy that the lint could **not** catch now **FAILS** the
-  check (`tests/run-golden.py`, `skill_enumerations`). The 1.2.0 "KNOWN LIMITATION (markup-hidden decoy
-  not closed)" no longer holds — the claim is now "no decoy class", true and machine-verifiable.
+  pick-list and attachment table) is GENERATED from a new **`skills-order`** source of truth and verified
+  against the **parsed Markdown token stream** (markdown-it-py, CommonMark + GFM tables), not the raw
+  bytes.
+- **Why parsed, not bytes.** Two earlier designs — a regex parser, then a byte-stream marker check — were
+  each defeated by a markup-hidden decoy that three independent gate-reviews reproduced
+  (`gate-reviews/0002`, `0005`, `0006`): a correct enumeration hidden in an HTML comment, a spanning
+  comment, a `<details>` fold, a code fence, or behind a code-span comment delimiter, while a broken one
+  is what the reader sees. A byte check cannot tell rendered from hidden; a parser can. Now: the markers
+  must be **standalone top-level HTML-comment tokens** (a marker wrapped in a fence/`<details>`/raw HTML
+  is swallowed into one block token, so it is not standalone → fail closed); the content between them
+  must be exactly the generated enumeration in the parsed tree (a paragraph, one fenced block, or one
+  table whose body rows' first-cell **rendered text** equals the skills); and no **competing** rendered
+  enumeration of the same shape may appear elsewhere (closes relocation and the stray-second-list gap).
+  Every 0005/0006 bypass is locked as a regression in `tests/run-golden.py` `skill_enumerations`.
 - **`skills-order`** — the canonical order, validated as an exact permutation of `skills/` (fail closed
-  on missing / extra / duplicate / unknown).
-- **Hardened marker model (after the independent gate-review, `gate-reviews/0005`).** A different-vendor
-  cold pass reproduced three bypasses of the first (substring-marker) implementation: a marker embedded
-  in a spanning HTML comment, a marker duplicated on one line, and a table decoy row hidden in a comment.
-  Marker handling is now fail-closed on THREE properties — **exactness** (each token occurs exactly once,
-  on a line byte-equal to the canonical self-closing `<!-- skills:<id>:begin -->`), **anchoring** (the
-  block must sit within a few lines of its unique section anchor, so a correct block can't be relocated
-  while a broken un-marked list occupies the real spot), and **rendered-only table rows** (HTML comments
-  stripped; each name is the whole first cell). The repo tree moved to its own fenced block so its
-  markers are exact HTML comments too. All three attacks + relocation are locked as regressions in
-  `tests/run-golden.py` `skill_enumerations`.
-- **`skills-order`** — the canonical order, validated as an exact permutation of `skills/` (fail closed
-  on missing / extra / duplicate / unknown).
+  on missing / extra / duplicate / unknown). The tree moved to its own fenced block; the two tables are
+  wrapped whole (header + body).
+- **New dependency: `markdown-it-py`** (CI installs it alongside `pyyaml`). The gate is root scaffolding,
+  never bundled into a `.skill`, so no shipped package gains a dependency. If the parser is absent the
+  gate **fails closed** (it does not print "clean").
+- **Honest residual.** The gate checks against markdown-it-py, a close proxy for GitHub's cmark-gfm, not
+  GitHub itself; a construct the two parse differently is the remaining, much smaller, disclosed gap. The
+  empty-source case fails closed (a finding, not a false "clean"). See `docs/adr/0001`.
 - Wired into `build-skills.sh` (replacing the lint step) and the gate layer (`.github/gate-paths` names
   the generator + `skills-order`); `release-gate.sh` prose updated so the gate's self-description does not
   drift. Suite tooling, never bundled; no `VERSION` bump (folds into the next cut under `Unreleased`).

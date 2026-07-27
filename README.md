@@ -5,9 +5,9 @@ distinct Diátaxis mode; **doc-critic** is the independent review gate that crit
 they publish; and **publish-mirror** is a separate publish step that mirrors the finished pages to a
 wiki or portal without re-authoring them:
 
+<!-- skills:table:begin -->
 | Skill | Diátaxis mode | Scope | Reading grade |
 |---|---|---|---|
-<!-- skills:table:begin -->
 | **learning-track** | tutorial + explanation | public | ~9 |
 | **architecture-and-decisions** | explanation / reference | public | ~11 |
 | **project-faq** | reference | internal | ~8 |

@@ -199,9 +199,9 @@ The licensing & credits standard and the render contract are already in the work
 (`shared/licensing-and-credits.md`, `shared/render-contract.md`) — no separate attachment is needed
 for them.
 
+<!-- skills:attach-table:begin -->
 | `{SKILL_NAME}` | Attach these (besides the workspace zip) |
 |---|---|
-<!-- skills:attach-table:begin -->
 | learning-track | `CONTENT-BUILD-BRIEF.md`, the learning-companion + build-template handoffs, `M0/M1/M2`, the ai-deep-dive and building-with-ai-and-practice handoffs |
 | architecture-and-decisions | ADR files `0001`–`0019`, `aegis-diagram-set-handoff.md`, `failure-mode-analysis-and-recovery.md`, `0015-scalability-design.md`, backbone `m2`/`m4` |
 | project-faq | `aegis-faq-generation-handoff.md`, `glossary.md`, `M0/M1/M2` |

@@ -5,13 +5,20 @@
 - **Gate layer:** yes — merges only through an independent gate-review (CONTRIBUTING.md "Governance").
 - **Supersedes:** the operational scope of `lint-skill-count.py` (PR #2, suite 1.2.0).
 
-> **Update (gate-review `gate-reviews/0005`).** The first implementation checked the marked block but
-> recognised markers by *substring* match, which a different-vendor cold pass showed re-opened the decoy
-> class: a marker embedded in a spanning HTML comment (or duplicated on one line) hid a canonical block
-> while the visible list was broken, and a table decoy row hidden in a comment satisfied the name check.
-> The marker model below (§2) is the **hardened** version: exactness + anchoring + rendered-only table
-> rows. The lesson — a "no decoy class" claim must be earned at the *marker* layer, not just the content
-> layer — is exactly the over-claim this whole line of work exists to end.
+> **Update (gate-reviews `0005` then `0006`) — the design pivoted from byte-stream to RENDER-based.**
+> Two byte-stream designs were each defeated by a markup-hidden decoy that independent cold passes
+> reproduced: (0005) substring marker matching let a marker be embedded in a spanning comment; (0006) even
+> exact byte-level markers could not see that a *correct* marked block wrapped in `<details>` / a code
+> fence renders hidden while a broken un-marked list is what the reader sees, and a code-span comment
+> delimiter hid a visible table row from the checker. The root cause both reviews converged on: **a check
+> on the bytes cannot tell the enumeration a reader sees from one hidden in markup.** The shipped design
+> therefore checks against the **parsed Markdown token stream** (markdown-it-py): markers must be
+> standalone top-level HTML-comment tokens (a wrapper swallows them → fail closed), the content between
+> them must match the generated enumeration *in the parse tree*, and no competing rendered enumeration may
+> appear elsewhere. This adds a dependency (`markdown-it-py`) and moves the residual to renderer parity
+> (markdown-it-py vs GitHub's cmark-gfm) — a much smaller, disclosed gap. The §2 prose below predates the
+> pivot and describes the byte-stream markers; read `generate-skill-enumerations.py` for the shipped
+> token-based model.
 
 ---
 

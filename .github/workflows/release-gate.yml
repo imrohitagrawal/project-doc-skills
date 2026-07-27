@@ -18,8 +18,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install PyYAML (verify.py / lint-placeholders.py read the profile as YAML)
-        run: pip install pyyaml
+      - name: Install deps (PyYAML for the profile YAML; markdown-it-py for the skill-enumeration gate)
+        run: pip install pyyaml "markdown-it-py>=3,<5"
       - name: Run the composed release gate
         run: ./release-gate.sh
       - name: Upload built skills + integrity manifest
