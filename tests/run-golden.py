@@ -631,6 +631,24 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(g.validate_order(["alpha", "alpha", "beta", "gamma"], canon) != [], "order: dup rejected")
     # check_count_phrases operates on RENDERED VISIBLE text (produced by _visible_text); the render step
     # is what makes a bold / code-span / hard-break count checkable. Test both halves.
+    # 0011: unit-lock the two _marker_token_span branches that an END-TO-END case cannot isolate (with
+    # either relaxed, other guards still catch the doc, so the suite stayed green while the branch was
+    # unlocked — found only by a revert battery that actually ran).
+    def _tok(src):
+        return g._md().parse(src)
+    A = "in this order (producers before consumers):"
+    B, E = "<!-- skills:improve-order:begin -->", "<!-- skills:improve-order:end -->"
+    def _raises(src):
+        try:
+            g._marker_token_span(_tok(src), "improve-order")
+            return False
+        except g.MarkerError:
+            return True
+    res.check(_raises(f"{A}\n\n{B}\n\n**x**\n\n{E}\n\n{B}\n\n**y**\n\n{E}\n"),
+              "_marker_token_span raises on a DUPLICATE marker pair (locks the != 1 branch)")
+    res.check(_raises(f"{A}\n\n{E}\n\n**x**\n\n{B}\n"),
+              "_marker_token_span raises when end precedes begin (locks the order branch)")
+
     # CONTRACT (0010): presence-required + value-exact, so a phrase that is absent / unparseable /
     # multi-token is a FINDING rather than a silent skip (the fail-open shape that let a dead pattern
     # ship green). One phrase per call, so "missing" means what it says.
@@ -641,6 +659,8 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
               "count phrase: wrong value caught")
     res.check(any("not found" in f for f in g.check_count_phrases("no such phrase here", one, 3, "x")),
               "count phrase: ABSENT phrase is a finding (fail closed, not a silent skip)")
+    res.check(g.check_count_phrases("anything", [], 3, "x") != [],
+              "count phrase: an EMPTY phrase set is a finding (no vacuous success)")
     res.check(len(g.check_count_phrases("a suite of twenty-one independent", one, 3, "x")) == 1,
               "count phrase: hyphenated multi-token value caught")
     md = g._md()
@@ -724,12 +744,21 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                  "<!-- skills:table:end -->\n\n| Skill | Note |\n|---|---|\n"
                  "| learning-track | a |\n| doc-critic | b |\n")),
         ("duplicate marker pair (improve-order)", repl("README.md", FULL, FULL + "\n\nagain:\n\n" + FULL)),
-        # 0010 MAJOR: an EMPTY second marker pair — the ONLY guard that catches it is the duplicate
-        # branch of _marker_token_span (_competing cannot fire on an empty region), so this is what
-        # makes that branch bite on revert.
-        ("duplicate EMPTY marker pair (isolates the duplicate branch)",
+        # An EMPTY second marker pair. NOTE (corrected in 0011): this does NOT isolate the duplicate
+        # branch — with duplicates admitted, the empty first region fails the pure-source comparison and
+        # the displaced real block trips _competing, so the doc is still caught. The duplicate branch is
+        # locked by the unit assertion above; this case remains as end-to-end coverage.
+        ("duplicate EMPTY marker pair (end-to-end)",
             repl("README.md", FULL,
                  "<!-- skills:improve-order:begin -->\n<!-- skills:improve-order:end -->\n\n" + FULL)),
+        # 0011: the WEAPONIZED duplicate — a second, non-empty pair after the real one carrying a decoy
+        # with a non-canonical separator. With the duplicate branch relaxed this renders a second wrong
+        # enumeration under the site's own markers and the check goes CLEAN.
+        ("duplicate NON-EMPTY marker pair carrying a decoy (0011 weaponized)",
+            repl("README.md", FULL, FULL +
+                 "\n\n<!-- skills:improve-order:begin -->\n"
+                 "**publish-mirror ⇒ doc-critic ⇒ learning-track.**\n"
+                 "<!-- skills:improve-order:end -->")),
         # 0010 BLOCKER (a regression I shipped): the PROMPT count phrase had no fixture, so a pattern
         # that could never match rendered text passed CI green. Both halves are now locked.
         ("prompt count phrase wrong value (0010 BLOCKER)",
@@ -740,6 +769,20 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             repl("README.md", "A suite of eight independent", "A collection of eight independent")),
         ("hyphenated count value (0010 GPT-MAJOR)",
             repl("README.md", "A suite of eight independent", "A suite of twenty-one independent")),
+        # 0011 GPT-BLOCKER-2: a suffix rewording must not satisfy the phrase (locks the _R boundary —
+        # without it, "independently" matches the "independent" prefix and the stale phrase passes).
+        ("suffix-reworded count phrase (locks the whole-template boundary)",
+            repl("README.md", "A suite of eight independent",
+                 "A suite of eight independently maintained")),
+        # …and a PREFIX evasion: "know eight skills" contains "now eight skills". Without the left
+        # boundary that substring satisfies the phrase while the canonical sentence is gone.
+        ("prefix-substring count evasion (locks the left boundary)",
+            repl("per-skill-review-prompt.md", "now **eight** skills", "know eight skills")),
+        # 0011 MINOR-1: a competing enumeration inside a FENCED block renders visibly, so the competing
+        # scan must read fence content, not only inline tokens.
+        ("competing arrow run inside a fenced block",
+            repl("README.md", "## Build",
+                 "```\nlearning-track → project-faq → doc-critic\n```\n\n## Build")),
         # 0010 GPT-BLOCKER: the HTML allowlist is marker-IDENTITY, not comment-syntax.
         ("arbitrary (non-marker) HTML comment in a governed doc",
             repl("README.md", "## Build", "<!-- a maintainer note -->\n\n## Build")),
@@ -748,6 +791,23 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         f = scratch(mut)
         res.check(len(f) >= 1, f"real-docs scratch: {name} -> caught",
                   (f[0][:66] if f else "NOT CAUGHT (clean!)"))
+
+    # 0011 GPT-BLOCKER-1 (a NEGATIVE case — must stay CLEAN): ordinary prose that merely resembles a
+    # count phrase must not be read as a count. An open "any word" slot captured "review"/"make" and
+    # reported a wrong count; the number-only slot is what prevents that, so this locks it.
+    benign = scratch(repl("README.md", "## Build",
+                          "We can now review skills before publishing, and should not make copies of "
+                          "the house style.\n\n## Build"))
+    res.check(benign == [], "benign prose is NOT misread as a count phrase (locks the number-only slot)",
+              "; ".join(benign)[:70] or "clean")
+
+    # 0011 MINOR-2: a missing governed doc must fail the COUNT loop locally (its own message), not merely
+    # be caught as a side effect of the site loop — otherwise the fail-closed property is emergent, and a
+    # future refactor could decouple the loops and reopen a silent skip.
+    missing = scratch(lambda t: (t / "per-skill-review-prompt.md").unlink())
+    res.check(any("count phrases cannot be verified" in f for f in missing),
+              "missing governed doc -> the count loop fails closed with its own message",
+              (missing[0][:60] if missing else "clean!"))
 
     # empty source fails closed via check()'s OWN guard (0008 F5: isolate — assert the specific message,
     # not just "a finding", since validate_order would also reject an empty set).

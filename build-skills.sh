@@ -107,9 +107,9 @@ fi
 # (never bundled), invisible to validate_skill.py, the two lints above, and check-version.py — the blind
 # spot that let the skill table/tree/pick-list drift. Each of the five enumerations is generated from
 # skills-order and verified against the PARSED Markdown (markdown-it-py), so accidental drift and casual
-# markup decoys are caught at the location a reader reads; governed docs ban raw HTML except the exact
-# comment markers. Scope is a
-# drift-catcher, NOT an adversarial "no reader-visible decoy" proof (CONTRIBUTING "Skill-enumeration
+# markup decoys are caught at the location a reader reads; governed docs ban raw HTML (and images) except
+# the exact comment markers. Scope is a drift-catcher, NOT an adversarial "no reader-visible decoy" proof
+# (CONTRIBUTING "Skill-enumeration
 # gate: scope"). A drift FAILS the build (counted into $failed) and names the remedy:
 # `python3 generate-skill-enumerations.py`. (Replaces lint-skill-count.py; see docs/adr/0001.)
 if ! python3 "$ROOT/generate-skill-enumerations.py" "$ROOT" --check; then

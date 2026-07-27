@@ -127,14 +127,24 @@ any **new or changed gate correctness-check** must arrive with a regression fixt
 gate-review *finds* something, ask "could this have been a fixture rather than a human catch?" — if yes,
 the fix is to add the fixture, not only to note the bug.
 
-**Run the revert battery before requesting a review — do not make the reviewer find this.** "Ships with a
-fixture" is not the same as "the fixture bites". Stub each guard you touched to a constant (`return
-None` / `return []` / `return False`, or relax the comparison) on a scratch copy and re-run
-`tests/run-golden.py`: every guard must turn it **red**. Two review rounds were spent on guards that
-worked but were unfixtured, and one on a check that had silently become a no-op — all three were
-mechanically detectable in minutes. Related discipline, same root cause: when you change what a check is
-*fed* (raw source → rendered text, say), audit every pattern and caller that consumes it; a gate that
-stops matching is a gate that stops guarding, and it does so **green**.
+**Run the revert battery before requesting a review — do not make the reviewer find this.**
+
+```bash
+python3 tests/revert-battery.py      # exit 0 only if every guard bites
+```
+
+"Ships with a fixture" is not the same as "the fixture bites", and the gap is not theoretical: two review
+rounds went to guards that worked but were unfixtured, and one to a check that had silently become a
+no-op. Worse, an ad-hoc hand-rolled battery once reported "11/11 biting" while its scratch copy was
+incomplete — `tests/run-golden.py` aborted with *"required path missing"* before running a single
+assertion, so **every stub looked like it bit**. That is why the battery is now a committed script that
+**checks its own harness first** and refuses to report if the unpatched suite did not actually run green.
+A verification harness that cannot fail is worse than none.
+
+When you add a guard, add its stub to `GUARDS` in that script; a guard with no stub is a guard nobody is
+proving. Related discipline, same root cause: when you change what a check is *fed* (raw source →
+rendered text, say), audit every pattern and caller that consumes it — a gate that stops matching is a
+gate that stops guarding, and it does so **green**.
 
 This binds the enforcement layer to itself. `gate-review-check.py` is a new gate check, so by the rule
 above it ships **with** its fixture: the `gate-review-check` section of
@@ -184,33 +194,48 @@ this policy (that would couple the mechanism to unrelated content):
 
 `generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
 scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
-prevent). Three independent gate-reviews (`gate-reviews/0005`–`0007`) drove this scope.
+prevent). Seven independent gate-reviews (`gate-reviews/0005`–`0011`) drove this scope.
 
-**It guarantees (and fixtures lock, each biting on revert):**
+**It guarantees (and fixtures lock, each biting on revert — proven by `tests/revert-battery.py`, not
+asserted):**
 - **Accidental drift is caught at all five sites** — the real, recurring failure (`b65041f`). Each
   enumeration is generated from `skills-order` and verified against the **parsed** Markdown
   (markdown-it-py): pure sites (improve-order, pick-list, tree) match the generated run in the parse
   tree; tables' body rows' first-cell **rendered text** equals the skills, in order. Empty/missing
   `skills/` fails closed.
 - **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
-  spanning-comment markers, a differently-formatted competing run, a header/other-column table decoy, and
+  spanning-comment markers, a competing run elsewhere **in the same file** (inline prose or a code block;
+  a *cross-file* competing run is a known gap — see the residual), a header/other-column table decoy, and
   a bold/italic count phrase (`**seven**`).
 - **Raw HTML is banned document-wide in the governed docs** (`README.md`, `per-skill-review-prompt.md`),
-  with **one permitted exception: the HTML-comment markers themselves**. A non-comment raw-HTML block
-  (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / Markdown image token anywhere, is
-  rejected — not just inside a marked region. Raw HTML is the enabler for a reader-visible decoy that
-  renders differently than it reads (a `<details>` fold, a GFM-tagfilter tag, an image's alt text), so
-  banning it removes that surface cheaply and by enforcement. (The markers are HTML comments, which are
-  invisible and cannot nest following content, so they are the sole allowed HTML.)
+  with **one permitted exception: this suite's exact begin/end marker comments** — enforced as an
+  identity allowlist, so an *arbitrary* HTML comment is rejected too. A non-comment raw-HTML block
+  (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML token anywhere, is rejected — not just
+  inside a marked region. Raw HTML is the enabler for a reader-visible decoy that renders differently
+  than it reads (a `<details>` fold, a GFM-tagfilter tag), so banning it removes that surface cheaply and
+  by enforcement.
+- **Markdown images are also banned in the governed docs** — a deliberate content-policy restriction, not
+  an accident of the HTML ban. An image's rendered content is not text the checker can read, so its alt
+  text and the pixels it displays can disagree with each other and with the enumeration. If a governed
+  doc ever genuinely needs an image, that is a scope change: permit it explicitly and define how its
+  content participates in this policy.
+- **Scalar count phrases are checked fail-closed** over the rendered visible text: each canonical phrase
+  must be present, bounded as a whole template, and read exactly the canonical count — a phrase that is
+  reworded, suffixed, or absent is a finding, never a silent skip.
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
 and verifying the **DOM** (visibility, ancestry) against GitHub's own engine (cmark-gfm) — deliberately
 out of scope for internal tooling whose real threat is accidental drift, not a malicious contributor.
-Known residuals: markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character or backslash
-handling in table delimiters), and anything the raw-HTML ban does not cover. If the threat model ever
-warrants it, the render-to-DOM pass is the tracked follow-up — but it is not needed to ship this gate as
-an honest drift-catcher.
+Known residuals, named rather than hand-waved:
+- markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character or backslash handling in
+  table delimiters);
+- **cross-file competing enumerations** — each site's competing scan runs over its own file, so an
+  arrow-joined run planted in `per-skill-review-prompt.md` (which hosts no arrow site) is not scanned;
+- anything the raw-HTML ban does not cover.
+
+If the threat model ever warrants it, the render-to-DOM pass is the tracked follow-up — but it is not
+needed to ship this gate as an honest drift-catcher.
 
 ### Running a gate-review
 

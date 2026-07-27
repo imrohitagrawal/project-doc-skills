@@ -56,24 +56,34 @@ NUM_WORDS = {
 }
 WORD_TO_NUM = {word: n for n, word in NUM_WORDS.items()}
 
-# The count slot: a bounded run that may span a HYPHEN ("twenty-one") so a hyphenated count is captured
-# and compared. Spaces are deliberately excluded — a space-spanning slot swallowed surrounding prose
-# ("ONE skill in an eight"). A space-separated count ("twenty one") therefore does not match at all, which
-# trips the PRESENCE half of the check below — still a loud finding, never a silent skip.
-_COUNT = r"(?P<count>[A-Za-z0-9][A-Za-z0-9-]{0,20}?)"
+# The count slot matches ONLY a number token — a digit run, a number word, or a hyphenated compound
+# ("twenty-one"). It is deliberately NOT "any word": an open slot captured ordinary prose ("now review
+# skills" → "review") and reported it as a wrong count, and it also swallowed surrounding text
+# ("ONE skill in an eight"). Anything that is not a number makes the phrase not match at all, which trips
+# the PRESENCE half below — reported as "reworded / stale", which is what it actually is.
+_NUM_ALT = "|".join(sorted(NUM_WORDS.values(), key=len, reverse=True))
+_COUNT = rf"(?P<count>\d{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"
+# Whole-template boundaries. `\b` is not enough: it let "rebuild all eight" satisfy "build all <N>",
+# "know eight skills" satisfy "now <N> skills", and suffixed rewordings ("skillsets", "independently",
+# "stylesheet", "suites") pass while the canonical phrase was gone.
+_L = r"(?<![A-Za-z0-9_-])"
+_R = r"(?![A-Za-z0-9_-])"
 
 # Canonical count phrases, matched against the doc's RENDERED VISIBLE text (never raw source — a pattern
 # carrying markup like `\*\*` would silently die the moment the input became rendered text; that exact
 # regression shipped once, see gate-reviews/0010). The check is PRESENCE-REQUIRED and VALUE-EXACT: see
 # check_count_phrases.
 README_COUNT_PHRASES = [
-    (re.compile(rf"suite of {_COUNT} independent", re.IGNORECASE), "a suite of <N> independent ... skills"),
-    (re.compile(rf"{_COUNT} copies of the house style", re.IGNORECASE), "<N> copies of the house style"),
-    (re.compile(rf"build all {_COUNT}\b", re.IGNORECASE), "build all <N>"),
+    (re.compile(rf"{_L}suite of {_COUNT} independent{_R}", re.IGNORECASE),
+     "a suite of <N> independent ... skills"),
+    (re.compile(rf"{_L}{_COUNT} copies of the house style{_R}", re.IGNORECASE),
+     "<N> copies of the house style"),
+    (re.compile(rf"{_L}build all {_COUNT}{_R}", re.IGNORECASE), "build all <N>"),
 ]
 PROMPT_COUNT_PHRASES = [
-    (re.compile(rf"{_COUNT}-skill documentation suite", re.IGNORECASE), "<N>-skill documentation suite"),
-    (re.compile(rf"now {_COUNT} skills", re.IGNORECASE), "now <N> skills"),
+    (re.compile(rf"{_L}{_COUNT}-skill documentation suite{_R}", re.IGNORECASE),
+     "<N>-skill documentation suite"),
+    (re.compile(rf"{_L}now {_COUNT} skills{_R}", re.IGNORECASE), "now <N> skills"),
 ]
 
 README = "README.md"
@@ -268,16 +278,21 @@ def _competing(tokens, b: int, e: int, kind: str, order: list[str]) -> bool:
     """True if a competing rendered enumeration appears OUTSIDE the marked block [b, e] — closing
     relocation (a correct block moved away while a broken un-marked list holds the reader-facing spot)
     and the stray-second-list gap. Keyed on ACTUAL skill names + the site's separator, so a differently
-    FORMATTED broken list (no trailing period, etc.) is still caught: to be mistakable for this
-    enumeration a reader-facing run must use the skill names and the separator."""
+    formatted broken run (no trailing period, etc.) is still caught, in inline prose AND in code blocks.
+
+    Scope, honestly: this scans the site's OWN file. A competing run planted in the other governed doc is
+    a disclosed residual (CONTRIBUTING "Skill-enumeration gate: scope"), not a claim made here."""
     names = set(order)
     sep = {"arrow": " → ", "dot": " · "}.get(kind)
     for i, t in enumerate(tokens):
         if b <= i <= e:
             continue
-        if sep is not None and t.type == "inline":
-            txt = _inline_text(t)
-            if sep in txt and sum(1 for nm in names if nm in txt) >= 2:
+        if sep is not None:
+            # inline prose AND code blocks: a fenced/indented run renders visibly too, so scanning only
+            # inline tokens left a reader-visible competing enumeration unseen.
+            txt = _inline_text(t) if t.type == "inline" else (
+                t.content if t.type in ("fence", "code_block") else "")
+            if txt and sep in txt and sum(1 for nm in names if nm in txt) >= 2:
                 return True
         if kind == "tree" and t.type == "fence" and t.content.lstrip().startswith("skills/") \
                 and "─" in t.content:
@@ -364,6 +379,8 @@ def _marker_only_html_block(content: str) -> bool:
     (`<!-- ok --><div>`) is likewise rejected, since the remainder is not an allowed marker."""
     allowed = _allowed_marker_comments()
     rest = content.strip()
+    if not rest or not allowed:
+        return False        # "one or more exact markers", literally: empty is not an allowed block
     while rest:
         if not rest.startswith("<!--"):
             return False
@@ -482,8 +499,11 @@ def check(root: Path) -> list[str]:
                             f"block (relocation / stray table) — there must be exactly one")
 
     for fname, phrases in COUNT_PHRASES.items():
-        if fname in tokens:
-            findings += check_count_phrases(_visible_text(tokens[fname]), phrases, n, fname)
+        if fname not in tokens:
+            # locally fail closed rather than relying on the site loop to have already reported it
+            findings.append(f"{fname}: governed doc not found — its count phrases cannot be verified")
+            continue
+        findings += check_count_phrases(_visible_text(tokens[fname]), phrases, n, fname)
 
     return findings
 
@@ -499,6 +519,12 @@ def check_count_phrases(text: str, phrases, n: int, file_label: str) -> list[str
     "count phrases consistent" — the archetype failure this repo exists to catch, and it shipped once
     (gate-reviews/0010). Now: every canonical phrase MUST occur at least once, and EVERY occurrence must
     read exactly the canonical count (word or digit). Anything else is a finding, including absence."""
+    phrases = tuple(phrases or ())
+    if not phrases:
+        # vacuous success is the failure mode this whole check exists to avoid: an emptied constant or a
+        # consumed iterator would otherwise disable the count guard and still report clean.
+        return [f"{file_label}: no canonical count-phrase checks are configured — the count guard cannot "
+                f"verify anything (fail closed, not clean)"]
     accepted = {str(n), NUM_WORDS.get(n, "").lower()} - {""}
     out = []
     for pat, label in phrases:

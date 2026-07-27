@@ -117,9 +117,15 @@ in-flight skill-count PR.
     ("twenty-one"), or a pattern gone stale after the input became rendered text all silently skipped —
     and one did ship that way (a pattern carrying literal `**` could never match rendered text; caught by
     `gate-reviews/0010`). Absence is now a finding, so a count phrase can never go unchecked.
-  The accepted residual (markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover) is
-  documented in CONTRIBUTING "Skill-enumeration gate: scope". Every claimed guard is fixture-locked in
-  `tests/run-golden.py` `skill_enumerations` so it bites on revert.
+  The accepted residuals (markdown-it-py vs cmark-gfm parse edge cases; cross-file competing runs;
+  anything the ban does not cover) are named in CONTRIBUTING "Skill-enumeration gate: scope". Governed
+  docs also ban Markdown images — a deliberate content restriction, disclosed there.
+- **`tests/revert-battery.py`** — every claimed guard is now *proven* to bite on revert rather than
+  asserted: the script stubs each guard on a full-repo copy and requires `tests/run-golden.py` to go red,
+  and it **verifies its own harness first** (an earlier hand-rolled battery reported "11/11 biting" while
+  its incomplete scratch copy made the suite abort before asserting anything — so every stub looked like
+  it bit). CONTRIBUTING requirement (ii) now mandates running it before requesting a review. Current
+  state: 19/19 guards bite.
 - **`skills-order`** — validated as an exact permutation of `skills/` (fail closed). The tree moved to its
   own fenced block; the two tables are wrapped whole (header + body).
 - **New dependency: `markdown-it-py`** (CI installs it alongside `pyyaml`). The gate is root scaffolding,
