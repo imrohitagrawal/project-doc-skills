@@ -106,10 +106,17 @@ in-flight skill-count PR.
     rendered first-cell text); empty/missing `skills/` **fails closed**;
   - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, a
     competing/relocated run, a table header/other-column decoy, and a bold/italic count phrase;
-  - **raw HTML banned document-wide in the governed docs** (the HTML-comment markers are the sole
-    exception) — a non-comment raw-HTML block anywhere, or an inline HTML/Markdown-image token anywhere,
-    is rejected, removing the main adversarial surface (`<details>` folds, GFM tagfilter, image alt-text)
-    cheaply and *by enforcement*, not by inference.
+  - **raw HTML banned document-wide in the governed docs**, with this suite's exact begin/end marker
+    comments as the sole exception — enforced as an **identity allowlist** (`_marker_only_html_block`),
+    not "any HTML comment", so the claim is literally true. A non-comment raw-HTML block anywhere, or an
+    inline HTML/Markdown-image token anywhere, is rejected, removing the main adversarial surface
+    (`<details>` folds, GFM tagfilter, image alt-text) cheaply and *by enforcement*, not by inference.
+  - **count phrases are checked FAIL-CLOSED** (presence-required + value-exact) over the rendered visible
+    text: every canonical phrase must be present and read exactly the canonical count. The earlier form
+    only reported when a pattern matched *and* parsed a number, so a reworded phrase, a multi-token count
+    ("twenty-one"), or a pattern gone stale after the input became rendered text all silently skipped —
+    and one did ship that way (a pattern carrying literal `**` could never match rendered text; caught by
+    `gate-reviews/0010`). Absence is now a finding, so a count phrase can never go unchecked.
   The accepted residual (markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover) is
   documented in CONTRIBUTING "Skill-enumeration gate: scope". Every claimed guard is fixture-locked in
   `tests/run-golden.py` `skill_enumerations` so it bites on revert.

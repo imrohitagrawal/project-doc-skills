@@ -56,14 +56,24 @@ NUM_WORDS = {
 }
 WORD_TO_NUM = {word: n for n, word in NUM_WORDS.items()}
 
+# The count slot: a bounded run that may span a HYPHEN ("twenty-one") so a hyphenated count is captured
+# and compared. Spaces are deliberately excluded — a space-spanning slot swallowed surrounding prose
+# ("ONE skill in an eight"). A space-separated count ("twenty one") therefore does not match at all, which
+# trips the PRESENCE half of the check below — still a loud finding, never a silent skip.
+_COUNT = r"(?P<count>[A-Za-z0-9][A-Za-z0-9-]{0,20}?)"
+
+# Canonical count phrases, matched against the doc's RENDERED VISIBLE text (never raw source — a pattern
+# carrying markup like `\*\*` would silently die the moment the input became rendered text; that exact
+# regression shipped once, see gate-reviews/0010). The check is PRESENCE-REQUIRED and VALUE-EXACT: see
+# check_count_phrases.
 README_COUNT_PHRASES = [
-    (re.compile(r"suite of (\w+) independent", re.IGNORECASE), "a suite of <N> independent ... skills"),
-    (re.compile(r"(\w+) copies of the house style", re.IGNORECASE), "<N> copies of the house style"),
-    (re.compile(r"build all (\w+)", re.IGNORECASE), "build all <N>"),
+    (re.compile(rf"suite of {_COUNT} independent", re.IGNORECASE), "a suite of <N> independent ... skills"),
+    (re.compile(rf"{_COUNT} copies of the house style", re.IGNORECASE), "<N> copies of the house style"),
+    (re.compile(rf"build all {_COUNT}\b", re.IGNORECASE), "build all <N>"),
 ]
 PROMPT_COUNT_PHRASES = [
-    (re.compile(r"(\w+)-skill documentation suite", re.IGNORECASE), "<N>-skill documentation suite"),
-    (re.compile(r"now \*\*(\w+)\*\* skills", re.IGNORECASE), "now **<N>** skills"),
+    (re.compile(rf"{_COUNT}-skill documentation suite", re.IGNORECASE), "<N>-skill documentation suite"),
+    (re.compile(rf"now {_COUNT} skills", re.IGNORECASE), "now <N> skills"),
 ]
 
 README = "README.md"
@@ -337,9 +347,22 @@ def _extra_skill_table(tokens, b: int, e: int, order: list[str]) -> bool:
     return hits >= 1
 
 
-def _comment_only_html_block(content: str) -> bool:
-    """True iff the html_block is nothing but one or more COMPLETE HTML comments and whitespace. A block
-    whose comment is followed by a real tag on the same line (`<!-- ok --><div>`) is NOT comment-only."""
+def _allowed_marker_comments() -> set[str]:
+    """The ONLY raw HTML permitted in a governed doc: this suite's exact begin/end marker comments."""
+    out: set[str] = set()
+    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES]:
+        out.update(_canon_markers(site_id))
+    return out
+
+
+def _marker_only_html_block(content: str) -> bool:
+    """True iff the html_block is nothing but this suite's EXACT marker comments and whitespace.
+
+    Deliberately an identity allowlist, not "any complete HTML comment": the claim is "the comment
+    MARKERS are the sole exception", and a comment-syntax allowlist would make that claim false (an
+    arbitrary comment would pass) — gate-reviews/0010. A block whose comment is followed by a real tag
+    (`<!-- ok --><div>`) is likewise rejected, since the remainder is not an allowed marker."""
+    allowed = _allowed_marker_comments()
     rest = content.strip()
     while rest:
         if not rest.startswith("<!--"):
@@ -347,17 +370,19 @@ def _comment_only_html_block(content: str) -> bool:
         end = rest.find("-->", 4)
         if end < 0:
             return False
+        if rest[:end + 3] not in allowed:
+            return False
         rest = rest[end + 3:].strip()
     return True
 
 
 def _stray_html_block(tokens) -> str | None:
-    """The first RAW-HTML BLOCK token that is not comment-only. Governed docs ban raw HTML elements
-    (`<details>`, `<div>`, `<ol>`, …) because raw HTML is the enabler for reader-visible decoys a token
-    check cannot see (a `<details>` fold nests the marked block in the DOM without moving the token
-    level). HTML comments are allowed — invisible, and cannot nest following content."""
+    """The first RAW-HTML BLOCK token that is not one of this suite's exact marker comments. Governed docs
+    ban raw HTML (`<details>`, `<div>`, `<ol>`, …) because it is the enabler for reader-visible decoys a
+    token check cannot see (a `<details>` fold nests the marked block in the DOM without moving the token
+    level). The markers are HTML comments — invisible, and they cannot nest following content."""
     for t in tokens:
-        if t.type == "html_block" and not _comment_only_html_block(t.content or ""):
+        if t.type == "html_block" and not _marker_only_html_block(t.content or ""):
             s = (t.content or "").strip()
             return s.splitlines()[0][:50] if s else "(empty)"
     return None
@@ -464,22 +489,30 @@ def check(root: Path) -> list[str]:
 
 
 def check_count_phrases(text: str, phrases, n: int, file_label: str) -> list[str]:
-    """Flag EVERY occurrence (finditer) of each canonical phrase whose count — word OR digit — != n.
-    `text` is the doc's RENDERED VISIBLE text (see _visible_text), so a count that is bold/italic/code or
-    split by a soft/hard line break is checked as the reader sees it, not as raw source."""
+    """PRESENCE-REQUIRED + VALUE-EXACT check of the scalar suite-count phrases, over the doc's RENDERED
+    VISIBLE text (see _visible_text), so a count that is bold/italic/code or split by a soft/hard line
+    break is checked as the reader sees it.
+
+    FAIL CLOSED, deliberately: the older form only reported when a pattern matched AND parsed a number,
+    so a phrase reworded away, a multi-token count ("twenty-one"), a non-numeric word, or a pattern gone
+    stale after a change to the input representation all SILENTLY SKIPPED while the banner still said
+    "count phrases consistent" — the archetype failure this repo exists to catch, and it shipped once
+    (gate-reviews/0010). Now: every canonical phrase MUST occur at least once, and EVERY occurrence must
+    read exactly the canonical count (word or digit). Anything else is a finding, including absence."""
+    accepted = {str(n), NUM_WORDS.get(n, "").lower()} - {""}
     out = []
     for pat, label in phrases:
+        found = 0
         for m in pat.finditer(text):
-            tok = m.group(1).lower()
-            if tok.isdigit():
-                val = int(tok)
-            elif tok in WORD_TO_NUM:
-                val = WORD_TO_NUM[tok]
-            else:
-                continue
-            if val != n:
-                out.append(f"{file_label}: \"{label}\" says \"{tok}\" ({val}) "
-                           f"but there are {n} skills in skills/")
+            found += 1
+            tok = re.sub(r"\s+", " ", m.group("count")).strip().lower()
+            if tok not in accepted:
+                out.append(f"{file_label}: \"{label}\" reads \"{tok}\" but there are {n} skills in "
+                           f"skills/ (expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")")
+        if not found:
+            out.append(f"{file_label}: the canonical count phrase \"{label}\" was not found in the "
+                       f"rendered text — it was reworded, or this pattern is stale. Fix the doc or "
+                       f"update the pattern; a count phrase must never go unchecked.")
     return out
 
 

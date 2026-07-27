@@ -127,6 +127,15 @@ any **new or changed gate correctness-check** must arrive with a regression fixt
 gate-review *finds* something, ask "could this have been a fixture rather than a human catch?" — if yes,
 the fix is to add the fixture, not only to note the bug.
 
+**Run the revert battery before requesting a review — do not make the reviewer find this.** "Ships with a
+fixture" is not the same as "the fixture bites". Stub each guard you touched to a constant (`return
+None` / `return []` / `return False`, or relax the comparison) on a scratch copy and re-run
+`tests/run-golden.py`: every guard must turn it **red**. Two review rounds were spent on guards that
+worked but were unfixtured, and one on a check that had silently become a no-op — all three were
+mechanically detectable in minutes. Related discipline, same root cause: when you change what a check is
+*fed* (raw source → rendered text, say), audit every pattern and caller that consumes it; a gate that
+stops matching is a gate that stops guarding, and it does so **green**.
+
 This binds the enforcement layer to itself. `gate-review-check.py` is a new gate check, so by the rule
 above it ships **with** its fixture: the `gate-review-check` section of
 [`tests/run-golden.py`](tests/run-golden.py) locks its path classifier and its verdict decision —

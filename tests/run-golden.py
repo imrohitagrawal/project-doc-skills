@@ -631,9 +631,18 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(g.validate_order(["alpha", "alpha", "beta", "gamma"], canon) != [], "order: dup rejected")
     # check_count_phrases operates on RENDERED VISIBLE text (produced by _visible_text); the render step
     # is what makes a bold / code-span / hard-break count checkable. Test both halves.
-    res.check(g.check_count_phrases("a suite of three independent skills", g.README_COUNT_PHRASES, 3, "x") == []
-              and len(g.check_count_phrases("a suite of two independent", g.README_COUNT_PHRASES, 3, "x")) == 1,
-              "count phrase: on visible text, correct passes / wrong caught")
+    # CONTRACT (0010): presence-required + value-exact, so a phrase that is absent / unparseable /
+    # multi-token is a FINDING rather than a silent skip (the fail-open shape that let a dead pattern
+    # ship green). One phrase per call, so "missing" means what it says.
+    one = [g.README_COUNT_PHRASES[0]]
+    res.check(g.check_count_phrases("a suite of three independent skills", one, 3, "x") == [],
+              "count phrase: correct value passes")
+    res.check(len(g.check_count_phrases("a suite of two independent", one, 3, "x")) == 1,
+              "count phrase: wrong value caught")
+    res.check(any("not found" in f for f in g.check_count_phrases("no such phrase here", one, 3, "x")),
+              "count phrase: ABSENT phrase is a finding (fail closed, not a silent skip)")
+    res.check(len(g.check_count_phrases("a suite of twenty-one independent", one, 3, "x")) == 1,
+              "count phrase: hyphenated multi-token value caught")
     md = g._md()
     res.check(all("suite of seven independent" in g._visible_text(md.parse(s)) for s in
                   ["suite of **seven** independent", "suite of `seven` independent",
@@ -715,6 +724,25 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                  "<!-- skills:table:end -->\n\n| Skill | Note |\n|---|---|\n"
                  "| learning-track | a |\n| doc-critic | b |\n")),
         ("duplicate marker pair (improve-order)", repl("README.md", FULL, FULL + "\n\nagain:\n\n" + FULL)),
+        # 0010 MAJOR: an EMPTY second marker pair — the ONLY guard that catches it is the duplicate
+        # branch of _marker_token_span (_competing cannot fire on an empty region), so this is what
+        # makes that branch bite on revert.
+        ("duplicate EMPTY marker pair (isolates the duplicate branch)",
+            repl("README.md", FULL,
+                 "<!-- skills:improve-order:begin -->\n<!-- skills:improve-order:end -->\n\n" + FULL)),
+        # 0010 BLOCKER (a regression I shipped): the PROMPT count phrase had no fixture, so a pattern
+        # that could never match rendered text passed CI green. Both halves are now locked.
+        ("prompt count phrase wrong value (0010 BLOCKER)",
+            repl("per-skill-review-prompt.md", "now **eight** skills", "now **seven** skills")),
+        ("prompt count phrase reworded away (presence-required)",
+            repl("per-skill-review-prompt.md", "now **eight** skills", "reworded away entirely")),
+        ("README count phrase reworded away (presence-required)",
+            repl("README.md", "A suite of eight independent", "A collection of eight independent")),
+        ("hyphenated count value (0010 GPT-MAJOR)",
+            repl("README.md", "A suite of eight independent", "A suite of twenty-one independent")),
+        # 0010 GPT-BLOCKER: the HTML allowlist is marker-IDENTITY, not comment-syntax.
+        ("arbitrary (non-marker) HTML comment in a governed doc",
+            repl("README.md", "## Build", "<!-- a maintainer note -->\n\n## Build")),
     ]
     for name, mut in cases:
         f = scratch(mut)

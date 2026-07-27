@@ -8,7 +8,8 @@
 > **FINAL DESIGN & HONEST SCOPE (read this; the numbered sections below are the historical design record
 > and are SUPERSEDED where they conflict).** The gate GENERATES each of the five enumerations from
 > `skills-order` and verifies it against the **parsed Markdown** (markdown-it-py), and it BANS raw HTML in
-> the governed docs. Its scope is a **drift-catcher + casual-decoy guard**, *not* a proof of "no
+> the governed docs except this suite's exact comment markers. Its scope is a **drift-catcher +
+> casual-decoy guard**, *not* a proof of "no
 > reader-visible decoy" — see CONTRIBUTING "Skill-enumeration gate: scope" for the authoritative
 > statement, and `generate-skill-enumerations.py` for the shipped code.
 >
