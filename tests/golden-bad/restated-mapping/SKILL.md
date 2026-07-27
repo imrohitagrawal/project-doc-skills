@@ -11,7 +11,9 @@ render-contract.md. The suite lint must flag the mapping construction below.
 
 ## Publish
 
-When you publish this to the wiki, each section becomes a panel and the
+When you publish this to the wiki, each tab or section becomes a heading and
+callouts become panels — the verbatim restatement CROSS-SKILL-FINDINGS.md F1
+flagged in project-faq's SKILL.md Step 6. Each section becomes a panel and the
 collapsible blocks turn into an expand macro. The status notes become lozenges
 in the portal theme.
 

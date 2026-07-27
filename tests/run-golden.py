@@ -12,14 +12,17 @@ What it locks
     - an FAQ HTML page produced by the LIVE faq_generator        -> verify.py 0 FAIL  (internal scope)
     - a usage-guide HTML page produced by the LIVE generator     -> verify.py 0 FAIL  (public scope)
     - a hand-written learning-track Markdown module              -> verify.py 0 FAIL  (public scope)
-    The two HTML goldens are GENERATED here from the committed generators (not stored), so if a
-    generator regresses and stops emitting its © footer / credits / ISO stamp, this test fails — the
-    exact original-sin failure.
-  golden-bad (each must be CAUGHT by the right gate):
-    - a public page with no © footer            -> verify.py FAIL (licensing gate)
+    The two HTML goldens are GENERATED here from the committed generators (not stored). Their ©/credits/
+    ISO-stamp defaults are asserted DIRECTLY on the regenerated HTML, so a generator that stops emitting
+    any one fails this test — the exact original-sin failure (CROSS-SKILL-FINDINGS.md F4). (verify.py's
+    0-FAIL catches only the ©; credits is un-gated and a missing ISO stamp is INFO, so the direct marker
+    assertions, not the verify pass, are what lock credits + ISO.)
+  golden-bad (each must be CAUGHT by the right gate; the lint cases replay the REAL motivating incident):
+    - a public page with no © footer            -> verify.py FAIL (licensing gate; F4 verifier-catch half)
     - a real-shaped AWS access key on a page     -> verify.py FAIL (secret/PII scan)
     - a years-old ISO last-reviewed stamp        -> verify.py WARN (staleness; WARN-only by design)
-    - a SKILL.md publish step restating the map  -> render-restatement lint CAUGHT
+    - a SKILL.md restating the map (F1, verbatim) -> render-restatement lint CAUGHT
+    - an unresolved {{...}} placeholder (F5)      -> placeholder lint CAUGHT ({{today}}/key still resolve)
   Deterministic pins (today-pinned / non-default threshold, so a silent fallback cannot pass green):
     - staleness boundary at --max-age-months 3 and a pinned today (old->WARN, recent->INFO,
       future->WARN, and BOTH bold-label forms still read — the regression lock for the bold-label fix)
@@ -60,6 +63,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SHARED_VERIFY = ROOT / "shared" / "verify.py"
 PROFILE = ROOT / "shared" / "project-profile.md"
 LRR = ROOT / "lint-render-restatement.py"
+LINT_PLACEHOLDERS = ROOT / "lint-placeholders.py"
 FAQ_GEN = ROOT / "skills" / "project-faq" / "assets" / "faq_generator.py"
 UG_GEN = ROOT / "skills" / "usage-guide" / "assets" / "usage_guide_generator.py"
 GOLDEN_GOOD = ROOT / "tests" / "golden-good"
@@ -155,6 +159,14 @@ def golden_good(res: Results, verbose: bool) -> None:
     print("golden-good — produced docs must pass with 0 FAIL:")
     tmp = Path(tempfile.mkdtemp(prefix="golden-good-"))
 
+    # These two HTML goldens are the GENERATOR-REGRESSION half of CROSS-SKILL-FINDINGS.md F4 (root
+    # CHANGELOG 1.0.0): they are regenerated from the LIVE generators, so a generator that stops emitting
+    # its ©-footer / credits / ISO-stamp defaults is caught — the original-sin "a page shipped failing
+    # its own gate". IMPORTANT: verify.py's 0-FAIL check catches ONLY the © (a missing © footer FAILs on
+    # a public page); a missing last-reviewed stamp is INFO and there is no credits gate, so 0-FAIL alone
+    # would NOT catch a dropped credits block or ISO stamp. So the ©/credits/ISO defaults are locked by
+    # DIRECT marker assertions on the regenerated HTML (below), not by the verify pass. The verifier-catch
+    # half (the © specifically) is golden_bad case 1 (missing-© page).
     # 1+2. Generate the two HTML goldens from the LIVE generators (pinned review date), then verify.
     faq = _load("faqgen", FAQ_GEN)
     ug = _load("uggen", UG_GEN)
@@ -182,14 +194,37 @@ def golden_good(res: Results, verbose: bool) -> None:
         detail = f"{_resolved_line(out)}" if verbose else f"exit {rc}, {fails} FAIL"
         res.check(ok, name, detail)
 
+    # F4 generator-regression lock (DIRECT): each regenerated page must CONTAIN all three defaults, so a
+    # generator that stops emitting any one is caught here — including credits and the ISO stamp, which
+    # verify.py treats as no-gate / INFO (so the 0-FAIL cases above catch only the © by themselves).
+    for gname, gout in (("FAQ", faq_out), ("usage-guide", ug_out)):
+        html = gout.read_text(encoding="utf-8")
+        res.check("©" in html, f"F4 generator emits the © footer ({gname})",
+                  "©" if "©" in html else "MISSING ©")
+        # Marker is the rendered credits-block div ATTRIBUTE, not a bare "credit" substring nor the CSS
+        # class name: "credit" appears ~15x incidentally (the licensing-and-credits footer link) and the
+        # bare "box-credits" is in the <style> block too — both survived the block being dropped in a
+        # break-test. Only the emitted `class="box box-credits"` attribute vanishes when the block does
+        # (verified in both generators), so it is the marker that genuinely locks the block's presence.
+        has_credits = 'class="box box-credits"' in html
+        res.check(has_credits, f"F4 generator emits the credits block ({gname})",
+                  "credits block present" if has_credits else "MISSING credits block")
+        iso_ok = 'name="last-reviewed"' in html and PINNED_REVIEW_DATE in html
+        res.check(iso_ok, f"F4 generator emits the ISO last-reviewed stamp ({gname})",
+                  f"stamp {PINNED_REVIEW_DATE}" if iso_ok else "MISSING ISO last-reviewed stamp")
+
 
 def golden_bad(res: Results, verbose: bool) -> None:
     print("golden-bad — each broken doc must be caught by the right gate:")
 
     # 1. Missing © on a public page -> licensing gate FAIL (exit 1).
+    # Real incident: CROSS-SKILL-FINDINGS.md F4 (root CHANGELOG 1.0.0) — usage-guide's hand-written HTML
+    # shipped without the ©-footer/credits/ISO-stamp defaults, and "only the © was caught, by the
+    # verifier, after the fact." This replays that verifier catch (the generator-regression direction is
+    # locked separately by golden_good, which regenerates from the live generators).
     rc, out = run_verify(GOLDEN_BAD / "missing-copyright.html", "html", "project-faq", "public", "8")
     ok = (rc == 1 and "licence footer" in out.lower())
-    res.check(ok, "missing-© public page -> licensing FAIL",
+    res.check(ok, "F4 missing-© public page -> licensing FAIL",
               _resolved_line(out) if verbose else f"exit {rc}")
 
     # 2. Real-shaped AWS access key -> secret/PII scan FAIL (exit 1).
@@ -208,11 +243,38 @@ def golden_bad(res: Results, verbose: bool) -> None:
               _resolved_line(out) if verbose else f"exit {rc}, {_fail_count(out)} FAIL")
 
     # 4. Restated render mapping in a SKILL.md -> render-restatement lint CAUGHT.
+    # Real incident: CROSS-SKILL-FINDINGS.md F1 (root CHANGELOG 1.0.0) — project-faq's SKILL.md Step 6
+    # restated the per-element HTML->wiki mapping ("each tab or section becomes a heading, callouts
+    # become panels"), a second copy of render-contract.md 1a. The fixture carries that verbatim
+    # construction, so this replays the actual leak the lint exists to catch (not a synthetic shape).
     lrr = _load("lrr", LRR)
+    f1_src = (GOLDEN_BAD / "restated-mapping" / "SKILL.md").read_text(encoding="utf-8")
     findings = lrr.scan_skill(GOLDEN_BAD / "restated-mapping" / "SKILL.md")
-    ok = len(findings) >= 1
+    matched = " ".join(txt.lower() for _, txt in findings)
+    # The lint matches the connective+idiom span, so F1's "callouts become panels" surfaces as the
+    # "become panels" mapping. Assert (a) that exact span is caught AND (b) the fixture still carries F1's
+    # verbatim construction — so the case cannot be satisfied by a generic mapping, and the fixture cannot
+    # be quietly weakened back to a synthetic shape while staying green. (Ties to the incident, not to a
+    # brittle line number — which would just move the anchor-churn problem into the test.)
+    ok = (len(findings) >= 1 and "become panels" in matched
+          and "callouts become panels" in f1_src.lower())
     detail = (", ".join(f"L{ln}:{txt!r}" for ln, txt in findings)) if verbose else f"{len(findings)} finding(s)"
-    res.check(ok, "restated render mapping -> render-restatement CAUGHT", detail)
+    res.check(ok, "F1 restated render mapping (verbatim 'callouts become panels') -> CAUGHT", detail)
+
+    # 5. Unresolved {{...}} placeholder -> placeholder lint CAUGHT (the real gap this PR backfills).
+    # Real incident: CROSS-SKILL-FINDINGS.md F5 (root CHANGELOG 1.0.0) — project-faq's faq-method
+    # reference carried `"{{today}}"`, which backed to no profile key / manifest slot / runtime token.
+    # The fix documented a Runtime tokens set and added lint-placeholders.py. The fixture locks BOTH
+    # directions: the still-unresolvable `{{todays_date}}` is caught, while the now-documented `{{today}}`
+    # and a real profile key resolve cleanly (a regression dropping {{today}} from the runtime set would
+    # add it to `flagged` and turn this red). Driven through scan_text — the seam its docstring names.
+    lp = _load("lintplaceholders", LINT_PLACEHOLDERS)
+    known = lp.known_keys(ROOT)
+    p_findings = lp.scan_text((GOLDEN_BAD / "unresolved-placeholder.md").read_text(encoding="utf-8"), known)
+    flagged = {tok for _, tok in p_findings}
+    ok = bool(p_findings) and flagged == {"todays_date"}
+    detail = (f"flagged={sorted(flagged)}" if verbose else f"{len(p_findings)} finding(s)")
+    res.check(ok, "F5 unresolved {{todays_date}} -> placeholder lint CAUGHT ({{today}}/key resolve)", detail)
 
 
 def deterministic_pins(res: Results, verbose: bool) -> None:
@@ -654,7 +716,7 @@ def main() -> int:
     args = ap.parse_args()
 
     for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
-                   LINT_SKILL_COUNT, PKGTOOLS):
+                   LINT_SKILL_COUNT, PKGTOOLS, LINT_PLACEHOLDERS):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
