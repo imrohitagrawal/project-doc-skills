@@ -666,7 +666,17 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         ["publish-mirror", "doc-critic", "onboarding-companion", "operations-runbook",
          "usage-guide", "project-faq", "architecture-and-decisions", "NOT-A-SKILL"], 1))
     cases = [
-        ("accidental drift: drop last skill", repl("README.md", "→ publish-mirror.**", ".**")),
+        # accidental drift at EACH of the 5 sites — locks every site comparison AND the site registry
+        # (0008 F1: reverting a site's check, or deleting it from the registry, must redden the suite).
+        ("drift improve-order", repl("README.md", "→ publish-mirror.**", ".**")),
+        ("drift tree (rename last node)", repl("README.md", "└─ publish-mirror/", "└─ NOT-A-SKILL/")),
+        ("drift table (rename a body row)", repl("README.md", PUB,
+            "| **NOT-A-SKILL** | publish step (no Diátaxis mode) | mirrors the source | — |")),
+        ("drift pick-list (rename last)", repl("per-skill-review-prompt.md", "· publish-mirror`",
+            "· NOT-A-SKILL`")),
+        ("drift attach-table (rename a row)", repl("per-skill-review-prompt.md", "| publish-mirror |",
+            "| NOT-A-SKILL |")),
+        # marker + decoy regressions
         ("0005-1 spanning-comment marker", repl("README.md", FULL,
             "<!-- skills:improve-order:begin\n**x → y.**\nskills:improve-order:end -->\n\n"
             "**learning-track → project-faq.**")),
@@ -676,20 +686,32 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             "<details>\n<summary>s</summary>\n\n" + FULL + "\n\n</details>\n\n## Order\n\n" + ol_decoy)),
         ("raw-HTML ban: raw <ol> decoy list", repl("README.md", FULL,
             FULL + "\n\n<ol reversed>\n<li>publish-mirror</li>\n<li>NOT-A-SKILL</li>\n</ol>")),
+        ("raw-HTML ban: comment-prefixed <div> block (0008 GPT-B1)", repl("README.md", FULL,
+            FULL + "\n\n<!-- ok --><div>raw survives</div>")),
+        ("raw-HTML ban: inline HTML in prose outside markers (0008 F2)", repl("README.md",
+            "A suite of eight independent", "A suite of <span>eight</span> independent")),
         ("raw-HTML ban: tagfilter <script> in a cell", repl("README.md", LT,
             '| <script data-x="publish-mirror">learning-track</script> | tutorial + explanation | public | ~9 |')),
         ("table header/other-column decoy", repl("README.md", HDR,
             "| Skill (order: publish-mirror then doc-critic then learning-track) | Diátaxis mode | Scope | Reading grade |")),
         ("bolded count phrase **seven**", repl("README.md", "A suite of eight independent",
             "A suite of **seven** independent")),
+        ("code-span count `seven` (0008 GPT-3)", repl("README.md", "A suite of eight independent",
+            "A suite of `seven` independent")),
         ("relocation: differently-formatted broken list", repl("README.md", FULL,
             "**learning-track → project-faq**\n\nfiller\n\n" + FULL)),
-        ("empty skills/ fail-closed", lambda t: (shutil.rmtree(t / "skills"), (t / "skills").mkdir())),
     ]
     for name, mut in cases:
         f = scratch(mut)
         res.check(len(f) >= 1, f"real-docs scratch: {name} -> caught",
                   (f[0][:66] if f else "NOT CAUGHT (clean!)"))
+
+    # empty source fails closed via check()'s OWN guard (0008 F5: isolate — assert the specific message,
+    # not just "a finding", since validate_order would also reject an empty set).
+    empty = scratch(lambda t: (shutil.rmtree(t / "skills"), (t / "skills").mkdir()))
+    res.check(any("no skills found" in x for x in empty),
+              "empty skills/ -> check() fails closed with its own message (isolated)",
+              (empty[0][:60] if empty else "clean!"))
 
     # 3. Self-inclusion + live docs pass the CLI.
     grc = _load("grc_si", GATE_REVIEW_CHECK)

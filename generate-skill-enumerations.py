@@ -17,9 +17,10 @@ WHAT THIS GATE GUARANTEES (its real job):
   - **Casual decoys are caught.** A hidden-comment row, a code-span comment delimiter, a spanning-comment
     marker, a stray second list, or a differently-formatted competing run is caught by the parse-tree
     checks and the competing-enumeration scan.
-  - **Raw HTML is banned in the governed docs** (README.md, per-skill-review-prompt.md): a raw-HTML block
-    (`<details>`, `<div>`, `<ol>`, …) or an inline HTML/image token in a marked region is rejected,
-    because raw HTML is the enabler for a reader-visible decoy that renders differently than it reads.
+  - **Raw HTML is banned document-wide in the governed docs** (README.md, per-skill-review-prompt.md): a
+    non-comment raw-HTML block (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / image
+    token anywhere, is rejected — raw HTML is the enabler for a reader-visible decoy that renders
+    differently than it reads. Only HTML comments (the markers) are allowed.
 
 WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration gate: scope"):
   This is a drift-catcher and casual-decoy guard, NOT a proof of "no reader-visible decoy" against a
@@ -199,7 +200,9 @@ def _table_names(tokens, b: int, e: int) -> list[str] | None:
     inner = tokens[b + 1:e]
     if sum(1 for t in inner if t.type == "table_open") != 1:
         return None
-    # positive-ish grammar: the marked region is one top-level table and nothing else smuggled alongside
+    # positive grammar: the marked region is exactly one top-level table and no additional parsed block
+    # tokens (link-reference definitions produce no token, so they are not excluded — but they are
+    # invisible, not a reader-facing decoy)
     if inner[0].type != "table_open" or inner[-1].type != "table_close" or inner[0].level != 0:
         return None
     if any(t.type in ("paragraph_open", "fence", "code_block", "html_block", "heading_open",
@@ -320,22 +323,37 @@ def _extra_skill_table(tokens, b: int, e: int, order: list[str]) -> bool:
     return hits >= 1
 
 
+def _comment_only_html_block(content: str) -> bool:
+    """True iff the html_block is nothing but one or more COMPLETE HTML comments and whitespace. A block
+    whose comment is followed by a real tag on the same line (`<!-- ok --><div>`) is NOT comment-only."""
+    rest = content.strip()
+    while rest:
+        if not rest.startswith("<!--"):
+            return False
+        end = rest.find("-->", 4)
+        if end < 0:
+            return False
+        rest = rest[end + 3:].strip()
+    return True
+
+
 def _stray_html_block(tokens) -> str | None:
-    """The first RAW-HTML BLOCK token that is not an HTML comment. Governed docs ban raw HTML elements
-    (`<details>`, `<div>`, `<ol>`, …) because raw HTML is the enabler for the reader-visible decoys a
-    byte/token check cannot see (a `<details>` fold nests the marked block in the DOM without moving the
-    token level). HTML COMMENTS are allowed — they are invisible and cannot nest following content."""
+    """The first RAW-HTML BLOCK token that is not comment-only. Governed docs ban raw HTML elements
+    (`<details>`, `<div>`, `<ol>`, …) because raw HTML is the enabler for reader-visible decoys a token
+    check cannot see (a `<details>` fold nests the marked block in the DOM without moving the token
+    level). HTML comments are allowed — invisible, and cannot nest following content."""
     for t in tokens:
-        s = (t.content or "").strip()
-        if t.type == "html_block" and not s.startswith("<!--"):
+        if t.type == "html_block" and not _comment_only_html_block(t.content or ""):
+            s = (t.content or "").strip()
             return s.splitlines()[0][:50] if s else "(empty)"
     return None
 
 
-def _region_raw_inline(tokens, b: int, e: int) -> str | None:
-    """The first raw inline-HTML or image token inside the marked region — banned, since a name hidden in
-    `<span hidden>`/`<script data-…>`/an image's alt text renders differently than `_inline_text` reads."""
-    for t in tokens[b + 1:e]:
+def _doc_raw_inline(tokens) -> str | None:
+    """The first raw inline-HTML or image token ANYWHERE in the doc — governed docs ban these document-wide
+    (a name hidden in `<span hidden>`/`<script data-…>`/an image's alt text renders differently than it
+    reads). Document-wide so the "no raw HTML in governed docs" claim is literally true, not region-only."""
+    for t in tokens:
         if t.type == "inline":
             for c in (t.children or []):
                 if c.type in ("html_inline", "image"):
@@ -374,6 +392,10 @@ def check(root: Path) -> list[str]:
             if stray:
                 findings.append(f"{fname}: raw HTML block {stray!r} is not allowed in a governed doc — "
                                 f"use Markdown (only the skill markers may be HTML comments)")
+            raw_inline = _doc_raw_inline(tokens[fname])
+            if raw_inline:
+                findings.append(f"{fname}: raw inline {raw_inline} is not allowed in a governed doc — it "
+                                f"can render differently than it reads")
 
     for site_id, fname, renderer, kind in PURE_SITES:
         if texts.get(fname) is None:
@@ -395,10 +417,6 @@ def check(root: Path) -> list[str]:
             if src != renderer(order):
                 findings.append(f"{fname}: '{site_id}' block is not the generated enumeration "
                                 f"(run generate-skill-enumerations.py)")
-        raw = _region_raw_inline(tks, b, e)
-        if raw:
-            findings.append(f"{fname}: '{site_id}' block contains raw inline {raw} — not allowed in a "
-                            f"governed enumeration (it can render differently than it reads)")
         if _competing(tks, b, e, kind, order):
             findings.append(f"{fname}: a competing '{site_id}' enumeration renders OUTSIDE the "
                             f"marked block (relocation / stray list) — there must be exactly one")
@@ -413,10 +431,6 @@ def check(root: Path) -> list[str]:
         except MarkerError as ex:
             findings.append(f"{fname}: {ex}")
             continue
-        raw = _region_raw_inline(tks, b, e)
-        if raw:
-            findings.append(f"{fname}: '{site_id}' table contains raw inline {raw} — not allowed in a "
-                            f"governed enumeration (it can render differently than it reads)")
         names = _table_names(tks, b, e)
         if names != order:
             findings.append(f"{fname}: '{site_id}' rendered table first column {names} does not equal "
@@ -437,9 +451,10 @@ def check(root: Path) -> list[str]:
 
 def check_count_phrases(text: str, phrases, n: int, file_label: str) -> list[str]:
     """Flag EVERY occurrence (finditer) of each canonical phrase whose count — word OR digit — != n.
-    Emphasis markers are stripped first, so a *rendered* count that is bold/italic/code (`**seven**`,
-    which `\\w+` cannot cross) is still checked against what the reader sees."""
-    norm = re.sub(r"[*_`]", "", text)
+    Emphasis/code markers are stripped and whitespace collapsed first, so a *rendered* count that is
+    bold/italic/code (`**seven**`, `` `seven` ``, which `\\w+` cannot cross) or split by a line wrap is
+    still checked against what the reader sees."""
+    norm = re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text))
     out = []
     for pat, label in phrases:
         for m in pat.finditer(norm):

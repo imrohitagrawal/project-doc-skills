@@ -24,7 +24,20 @@
 > adversarial surface cheaply and *by enforcement*, and the residual (render-DOM completeness;
 > markdown-it-py vs cmark-gfm parse edge cases) is disclosed and tracked, not claimed away. The
 > earlier over-claims ("no decoy class", "byte-identical", "the 6f66dfa decoy now FAILS") were the exact
-> mistake this repo exists to prevent and have been removed from the code and docs.
+> mistake this repo exists to prevent and have been removed from the code and the **governing** docs
+> (README, CONTRIBUTING, CHANGELOG, build/CI). The numbered design record below is kept verbatim as the
+> historical design journey and **still contains that retired wording** — do not read any claim below as
+> current; CONTRIBUTING "Skill-enumeration gate: scope" is authoritative.
+
+---
+
+> ## ⚠ SUPERSEDED — historical byte-stream design record (NOT shipped)
+> Everything from `## Context` to the end of this file describes the earlier byte-stream / token designs
+> and their over-claims ("no decoy class", "the entire decoy class disappears", "true and verifiable",
+> "the 6f66dfa decoy now FAILS", "byte-identical" enumerations). They are **retained verbatim** as the
+> design journey behind the three gate-reviews. **None of it is the shipped design or a current claim.**
+> The shipped design and its honest scope are the note above and CONTRIBUTING "Skill-enumeration gate:
+> scope".
 
 ---
 
