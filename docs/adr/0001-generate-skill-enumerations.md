@@ -67,7 +67,7 @@ This redesign reuses a discipline the repo already trusts: `build-skills.sh --ch
 committed artifact (`pkgtools.py`, deterministic packaging). We apply the same "regenerate and compare
 bytes" stance to the doc enumerations.
 
-### The five enumeration sites (current state)
+### The five enumeration sites (state at the time of this ADR)
 
 | # | File | Site | Shape today | Editorial columns? |
 |---|---|---|---|---|

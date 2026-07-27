@@ -156,6 +156,20 @@ def _inline_text(tok) -> str:
     return "".join(out)
 
 
+def _visible_text(tokens) -> str:
+    """The reader-visible text of the whole doc: inline text (emphasis/code unwrapped, soft/hard breaks →
+    space) plus fenced/indented code-block content, whitespace-collapsed. HTML comments (the markers) are
+    invisible and excluded. The count-phrase check runs over THIS, so a count that is bold, in a code
+    span, or split by a line wrap or a backslash hard-break is checked as the reader sees it."""
+    parts = []
+    for t in tokens:
+        if t.type == "inline":
+            parts.append(_inline_text(t))
+        elif t.type in ("fence", "code_block"):
+            parts.append(t.content)
+    return re.sub(r"\s+", " ", " ".join(parts))
+
+
 def _marker_token_span(tokens, site_id: str) -> tuple[int, int]:
     """Indices of the site's begin/end markers as STANDALONE top-level html_block tokens. Fail closed if
     a marker is absent, duplicated, embedded in a wrapper (a code fence / <details> / raw-HTML block
@@ -443,21 +457,19 @@ def check(root: Path) -> list[str]:
                             f"block (relocation / stray table) — there must be exactly one")
 
     for fname, phrases in COUNT_PHRASES.items():
-        if texts.get(fname) is not None:
-            findings += check_count_phrases(texts[fname], phrases, n, fname)
+        if fname in tokens:
+            findings += check_count_phrases(_visible_text(tokens[fname]), phrases, n, fname)
 
     return findings
 
 
 def check_count_phrases(text: str, phrases, n: int, file_label: str) -> list[str]:
     """Flag EVERY occurrence (finditer) of each canonical phrase whose count — word OR digit — != n.
-    Emphasis/code markers are stripped and whitespace collapsed first, so a *rendered* count that is
-    bold/italic/code (`**seven**`, `` `seven` ``, which `\\w+` cannot cross) or split by a line wrap is
-    still checked against what the reader sees."""
-    norm = re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text))
+    `text` is the doc's RENDERED VISIBLE text (see _visible_text), so a count that is bold/italic/code or
+    split by a soft/hard line break is checked as the reader sees it, not as raw source."""
     out = []
     for pat, label in phrases:
-        for m in pat.finditer(norm):
+        for m in pat.finditer(text):
             tok = m.group(1).lower()
             if tok.isdigit():
                 val = int(tok)
@@ -529,8 +541,8 @@ def main() -> int:
         return 1
     n = len(canonical_skills(root))
     print(f"--- skill-enumerations: clean ({n} skills; every marked enumeration matches skills-order in "
-          f"the parsed Markdown, no raw HTML in governed docs, count phrases consistent — drift-catcher, "
-          f"see CONTRIBUTING for scope) ---")
+          f"the parsed Markdown; governed docs contain no raw HTML except the comment markers; count "
+          f"phrases consistent — drift-catcher, see CONTRIBUTING for scope) ---")
     return 0
 
 

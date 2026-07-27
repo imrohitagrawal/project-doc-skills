@@ -629,10 +629,16 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(g.validate_order(["alpha", "beta", "gamma"], canon) == [], "order: permutation ok")
     res.check(g.validate_order(["alpha", "beta"], canon) != [], "order: missing rejected")
     res.check(g.validate_order(["alpha", "alpha", "beta", "gamma"], canon) != [], "order: dup rejected")
+    # check_count_phrases operates on RENDERED VISIBLE text (produced by _visible_text); the render step
+    # is what makes a bold / code-span / hard-break count checkable. Test both halves.
     res.check(g.check_count_phrases("a suite of three independent skills", g.README_COUNT_PHRASES, 3, "x") == []
-              and len(g.check_count_phrases("a suite of two independent", g.README_COUNT_PHRASES, 3, "x")) == 1
-              and len(g.check_count_phrases("a suite of **two** independent", g.README_COUNT_PHRASES, 3, "x")) == 1,
-              "count phrase: correct passes; wrong caught incl. bolded **two** (render-aware)")
+              and len(g.check_count_phrases("a suite of two independent", g.README_COUNT_PHRASES, 3, "x")) == 1,
+              "count phrase: on visible text, correct passes / wrong caught")
+    md = g._md()
+    res.check(all("suite of seven independent" in g._visible_text(md.parse(s)) for s in
+                  ["suite of **seven** independent", "suite of `seven` independent",
+                   "suite of ` seven ` independent", "suite of **seven**\\\nindependent"]),
+              "_visible_text renders bold / code-span (padded) / backslash-hard-break count to visible")
 
     # 2. End-to-end on scratch copies of the REAL docs. Baseline clean; every CLAIMED guard bites.
     FULL = ("<!-- skills:improve-order:begin -->\n"
@@ -698,8 +704,17 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             "A suite of **seven** independent")),
         ("code-span count `seven` (0008 GPT-3)", repl("README.md", "A suite of eight independent",
             "A suite of `seven` independent")),
+        ("backslash hard-break count (0009 GPT-F2)", repl("README.md", "A suite of eight independent",
+            "A suite of **seven**\\\nindependent")),
         ("relocation: differently-formatted broken list", repl("README.md", FULL,
             "**learning-track → project-faq**\n\nfiller\n\n" + FULL)),
+        # 0009 MINOR 2: lock the two guards that previously had no fixture (they worked, but a no-op
+        # revert would have passed CI). Now reverting either reddens the suite.
+        ("_extra_skill_table: a second skill table after the marked block",
+            repl("README.md", "<!-- skills:table:end -->",
+                 "<!-- skills:table:end -->\n\n| Skill | Note |\n|---|---|\n"
+                 "| learning-track | a |\n| doc-critic | b |\n")),
+        ("duplicate marker pair (improve-order)", repl("README.md", FULL, FULL + "\n\nagain:\n\n" + FULL)),
     ]
     for name, mut in cases:
         f = scratch(mut)

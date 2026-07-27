@@ -186,10 +186,13 @@ prevent). Three independent gate-reviews (`gate-reviews/0005`–`0007`) drove th
 - **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
   spanning-comment markers, a differently-formatted competing run, a header/other-column table decoy, and
   a bold/italic count phrase (`**seven**`).
-- **Raw HTML is banned in the governed docs** (`README.md`, `per-skill-review-prompt.md`): a raw-HTML
-  block (`<details>`, `<div>`, `<ol>`, …) or an inline HTML/image token in a marked region is rejected.
-  Raw HTML is the enabler for a reader-visible decoy that renders differently than it reads (a
-  `<details>` fold, a GFM-tagfilter tag, an image's alt text), so banning it removes that surface cheaply.
+- **Raw HTML is banned document-wide in the governed docs** (`README.md`, `per-skill-review-prompt.md`),
+  with **one permitted exception: the HTML-comment markers themselves**. A non-comment raw-HTML block
+  (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / Markdown image token anywhere, is
+  rejected — not just inside a marked region. Raw HTML is the enabler for a reader-visible decoy that
+  renders differently than it reads (a `<details>` fold, a GFM-tagfilter tag, an image's alt text), so
+  banning it removes that surface cheaply and by enforcement. (The markers are HTML comments, which are
+  invisible and cannot nest following content, so they are the sole allowed HTML.)
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML

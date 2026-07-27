@@ -106,11 +106,12 @@ in-flight skill-count PR.
     rendered first-cell text); empty/missing `skills/` **fails closed**;
   - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, a
     competing/relocated run, a table header/other-column decoy, and a bold/italic count phrase;
-  - **raw HTML banned in the governed docs** — a raw-HTML block or an inline HTML/image token in a marked
-    region is rejected, removing the main adversarial surface (`<details>` folds, GFM tagfilter, image
-    alt-text) cheaply and *by enforcement*, not by inference.
+  - **raw HTML banned document-wide in the governed docs** (the HTML-comment markers are the sole
+    exception) — a non-comment raw-HTML block anywhere, or an inline HTML/Markdown-image token anywhere,
+    is rejected, removing the main adversarial surface (`<details>` folds, GFM tagfilter, image alt-text)
+    cheaply and *by enforcement*, not by inference.
   The accepted residual (markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover) is
-  documented in CONTRIBUTING "Skill-enumeration gate: scope". Every guard is fixture-locked in
+  documented in CONTRIBUTING "Skill-enumeration gate: scope". Every claimed guard is fixture-locked in
   `tests/run-golden.py` `skill_enumerations` so it bites on revert.
 - **`skills-order`** — validated as an exact permutation of `skills/` (fail closed). The tree moved to its
   own fenced block; the two tables are wrapped whole (header + body).
