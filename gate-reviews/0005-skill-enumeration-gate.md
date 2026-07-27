@@ -88,8 +88,11 @@ requesting a review, and requires a new guard to arrive with its stub.
 
 ## Findings
 
-Open findings from the author's side: **none** — every finding from rounds 1–7 is resolved, with each
-resolution locked by a fixture that is proven to bite.
+- none — every finding from rounds 1–7 is resolved, each resolution locked by a fixture proven to bite
+  (`tests/revert-battery.py`, 19/19). Anchors for the last round's fixes:
+  `generate-skill-enumerations.py:59` (number-only count slot), `generate-skill-enumerations.py:66`
+  (whole-template boundaries), `generate-skill-enumerations.py:186` (marker identity allowlist),
+  `tests/run-golden.py:634` (marker-branch unit locks), `tests/revert-battery.py:60` (harness sanity).
 
 **Why this record is nevertheless BLOCK:** the most recent independent review (round 7) returned BLOCK,
 and the fixes answering it have **not yet been reviewed by anyone independent**. Under the rule this
