@@ -234,14 +234,13 @@ def _table_names(tokens, b: int, e: int) -> list[str] | None:
     inner = tokens[b + 1:e]
     if sum(1 for t in inner if t.type == "table_open") != 1:
         return None
-    # positive grammar: the marked region is exactly one top-level table and no additional parsed block
-    # tokens (link-reference definitions produce no token, so they are not excluded — but they are
-    # invisible, not a reader-facing decoy)
+    # POSITIVE grammar, single guard: the region must BEGIN with the table and END with it, at top level.
+    # Anything smuggled before or after the table (a paragraph, fence, list, hr, raw HTML …) moves the
+    # first or last token and is rejected here. A blacklist of forbidden token types used to sit
+    # alongside this and made it redundant — so neither branch could be proven by a revert, which is
+    # exactly how an unproven load-bearing guard hides (gate-review round 8). One guard, one proof.
+    # (Link-reference definitions produce no token at all; they are invisible, not a reader-facing decoy.)
     if inner[0].type != "table_open" or inner[-1].type != "table_close" or inner[0].level != 0:
-        return None
-    if any(t.type in ("paragraph_open", "fence", "code_block", "html_block", "heading_open",
-                      "bullet_list_open", "ordered_list_open", "list_item_open", "blockquote_open",
-                      "hr") for t in inner):
         return None
     names: list[str] = []
     in_tbody = False

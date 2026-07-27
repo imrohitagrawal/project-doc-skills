@@ -783,6 +783,24 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         ("competing arrow run inside a fenced block",
             repl("README.md", "## Build",
                  "```\nlearning-track → project-faq → doc-critic\n```\n\n## Build")),
+        # 0012 BLOCKER: IN-REGION smuggling. `_competing` deliberately skips [b, e], so the ONLY thing
+        # stopping a reader-visible decoy *between the real block and the end marker* is the region's
+        # exactly-one-node grammar (_pure_source len==3 / _fence_body len==1). Both were unproven: a
+        # one-character loosening (== -> >=) left the suite green while admitting these two decoys.
+        ("in-region smuggle: decoy fence inside the improve-order region",
+            repl("README.md", "<!-- skills:improve-order:end -->",
+                 "\n```\npublish-mirror → doc-critic → learning-track\n```\n\n"
+                 "<!-- skills:improve-order:end -->")),
+        ("in-region smuggle: decoy paragraph inside the tree region",
+            repl("README.md", "<!-- skills:tree:end -->",
+                 "\nActually the order is publish-mirror, then doc-critic.\n\n"
+                 "<!-- skills:tree:end -->")),
+        # deliberately name-free: a decoy naming skills would be caught by _table_stray_names instead,
+        # leaving the region grammar unproven (which is how it hid for eight rounds).
+        ("in-region smuggle: stray paragraph inside the table region",
+            repl("README.md", "<!-- skills:table:end -->",
+                 "\nNote: an unrelated sentence smuggled inside the marked region.\n\n"
+                 "<!-- skills:table:end -->")),
         # 0010 GPT-BLOCKER: the HTML allowlist is marker-IDENTITY, not comment-syntax.
         ("arbitrary (non-marker) HTML comment in a governed doc",
             repl("README.md", "## Build", "<!-- a maintainer note -->\n\n## Build")),
