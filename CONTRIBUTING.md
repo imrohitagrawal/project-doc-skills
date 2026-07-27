@@ -194,7 +194,7 @@ this policy (that would couple the mechanism to unrelated content):
 
 `generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
 scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
-prevent). Seven independent gate-reviews (`gate-reviews/0005`–`0011`) drove this scope.
+prevent). Nine independent gate-reviews (`gate-reviews/0005`–`0013`) drove this scope.
 
 **It guarantees (and fixtures lock, each biting on revert — proven by `tests/revert-battery.py`, not
 asserted):**
@@ -203,10 +203,18 @@ asserted):**
   (markdown-it-py): pure sites (improve-order, pick-list, tree) match the generated run in the parse
   tree; tables' body rows' first-cell **rendered text** equals the skills, in order. Empty/missing
   `skills/` fails closed.
+- **Each site is pinned to its lead-in** — the markers are HTML comments that travel with the block, so
+  identity alone cannot bind a block to a place; a correct block relocated to an appendix or a fold (its
+  site now empty) would still be "found". Each site is anchored to a stable phrase in the paragraph that
+  introduces it, so moving a block **away from its lead-in** trips the anchor and requires an explicit
+  gate update. (Moving the lead-in and block together is a legitimate reorganization, not drift.)
 - **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
-  spanning-comment markers, a competing run elsewhere **in the same file** (inline prose or a code block;
-  a *cross-file* competing run is a known gap — see the residual), a header/other-column table decoy, and
-  a bold/italic count phrase (`**seven**`).
+  spanning-comment markers, a *competing enumeration* elsewhere **in the same file** (inline prose or a
+  code block; a *cross-file* competing run is a known gap — see the residual), a header/other-column
+  table decoy, and a bold/italic count phrase (`**seven**`). A "competing enumeration" is a **near-complete
+  run** of the skill names (all-but-one or more), matched at name boundaries; an incidental one- or
+  two-name cross-reference is legitimate prose and is deliberately not flagged (banning it was an
+  undisclosed over-reach corrected in review).
 - **Raw HTML is banned document-wide in the governed docs** (`README.md`, `per-skill-review-prompt.md`),
   with **one permitted exception: this suite's exact begin/end marker comments** — enforced as an
   identity allowlist, so an *arbitrary* HTML comment is rejected too. A non-comment raw-HTML block
@@ -220,8 +228,11 @@ asserted):**
   doc ever genuinely needs an image, that is a scope change: permit it explicitly and define how its
   content participates in this policy.
 - **Scalar count phrases are checked fail-closed** over the rendered visible text: each canonical phrase
-  must be present, bounded as a whole template, and read exactly the canonical count — a phrase that is
-  reworded, suffixed, or absent is a finding, never a silent skip.
+  must be present, bounded as the **complete template — the count slot AND its distinguishing noun/site
+  context** (e.g. `a suite of <N> independent … skills`, `build all <N> + emit`), and read exactly the
+  canonical count. A phrase reworded so its noun is gone, suffixed, or absent trips presence-required
+  rather than a truncated prefix matching silently; and a count check does not fire on unrelated prose
+  that merely shares a fragment (`do not build all three sample containers`).
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML

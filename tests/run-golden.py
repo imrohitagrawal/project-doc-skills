@@ -677,6 +677,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     PUB = "| **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |"
     HDR = "| Skill | Diátaxis mode | Scope | Reading grade |"
     LT = "| **learning-track** | tutorial + explanation | public | ~9 |"
+    # A NEAR-COMPLETE differently-formatted run (all 8 names, no bold, no trailing period) — a competing
+    # ENUMERATION, as opposed to an incidental one/two-name mention. The competing/stray-name guards fire
+    # only on a run this complete (gate-reviews/0013), so the decoy fixtures below use it.
+    BROKEN_RUN = ("learning-track → architecture-and-decisions → project-faq → usage-guide → "
+                  "operations-runbook → onboarding-companion → doc-critic → publish-mirror")
 
     def scratch(mutate):
         tmp = Path(tempfile.mkdtemp(prefix="genenum-"))
@@ -727,16 +732,20 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             "A suite of eight independent", "A suite of <span>eight</span> independent")),
         ("raw-HTML ban: tagfilter <script> in a cell", repl("README.md", LT,
             '| <script data-x="publish-mirror">learning-track</script> | tutorial + explanation | public | ~9 |')),
-        ("table header/other-column decoy", repl("README.md", HDR,
-            "| Skill (order: publish-mirror then doc-critic then learning-track) | Diátaxis mode | Scope | Reading grade |")),
+        ("table header/other-column decoy (near-complete run in the header cell)", repl("README.md", HDR,
+            "| Skill (canonical order: learning-track architecture-and-decisions project-faq usage-guide "
+            "operations-runbook onboarding-companion doc-critic publish-mirror) | Diátaxis mode | Scope "
+            "| Reading grade |")),
         ("bolded count phrase **seven**", repl("README.md", "A suite of eight independent",
             "A suite of **seven** independent")),
         ("code-span count `seven` (0008 GPT-3)", repl("README.md", "A suite of eight independent",
             "A suite of `seven` independent")),
         ("backslash hard-break count (0009 GPT-F2)", repl("README.md", "A suite of eight independent",
             "A suite of **seven**\\\nindependent")),
-        ("relocation: differently-formatted broken list", repl("README.md", FULL,
-            "**learning-track → project-faq**\n\nfiller\n\n" + FULL)),
+        # a NEAR-COMPLETE broken run rendered OUTSIDE the block (the real block stays at its lead-in, so
+        # this isolates _competing rather than the anchor guard): a relocated/duplicated enumeration.
+        ("relocation: near-complete differently-formatted run outside the block", repl("README.md", FULL,
+            FULL + "\n\nAlternatively, the same order: " + BROKEN_RUN + ".")),
         # 0009 MINOR 2: lock the two guards that previously had no fixture (they worked, but a no-op
         # revert would have passed CI). Now reverting either reddens the suite.
         ("_extra_skill_table: a second skill table after the marked block",
@@ -769,20 +778,27 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             repl("README.md", "A suite of eight independent", "A collection of eight independent")),
         ("hyphenated count value (0010 GPT-MAJOR)",
             repl("README.md", "A suite of eight independent", "A suite of twenty-one independent")),
-        # 0011 GPT-BLOCKER-2: a suffix rewording must not satisfy the phrase (locks the _R boundary —
-        # without it, "independently" matches the "independent" prefix and the stale phrase passes).
-        ("suffix-reworded count phrase (locks the whole-template boundary)",
+        # 0011 GPT-BLOCKER-2: a suffix rewording must not satisfy the phrase. Now caught by the noun
+        # requirement (0013): "independently maintained ..." has no " skills" clause after "independent",
+        # so PRESENCE-REQUIRED fires — the canonical "... skills" phrase is genuinely gone.
+        ("suffix-reworded count phrase (whole-template, noun required)",
             repl("README.md", "A suite of eight independent",
                  "A suite of eight independently maintained")),
+        # 0013: the NOUN of a count phrase must itself be whole-word bounded — a suffixed noun
+        # ("... skillsets") must not satisfy "... skills". This isolates the _R right boundary (with it
+        # relaxed, "skills" matches inside "skillsets" and the stale phrase passes value-exact).
+        ("noun-suffixed count phrase (locks the _R right boundary on the noun)",
+            repl("README.md", "A suite of eight independent Claude skills.",
+                 "A suite of eight independent Claude skillsets.")),
         # …and a PREFIX evasion: "know eight skills" contains "now eight skills". Without the left
         # boundary that substring satisfies the phrase while the canonical sentence is gone.
         ("prefix-substring count evasion (locks the left boundary)",
             repl("per-skill-review-prompt.md", "now **eight** skills", "know eight skills")),
         # 0011 MINOR-1: a competing enumeration inside a FENCED block renders visibly, so the competing
         # scan must read fence content, not only inline tokens.
-        ("competing arrow run inside a fenced block",
+        ("competing near-complete run inside a fenced block",
             repl("README.md", "## Build",
-                 "```\nlearning-track → project-faq → doc-critic\n```\n\n## Build")),
+                 "```\n" + BROKEN_RUN + "\n```\n\n## Build")),
         # 0012 BLOCKER: IN-REGION smuggling. `_competing` deliberately skips [b, e], so the ONLY thing
         # stopping a reader-visible decoy *between the real block and the end marker* is the region's
         # exactly-one-node grammar (_pure_source len==3 / _fence_body len==1). Both were unproven: a
@@ -804,6 +820,25 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         # 0010 GPT-BLOCKER: the HTML allowlist is marker-IDENTITY, not comment-syntax.
         ("arbitrary (non-marker) HTML comment in a governed doc",
             repl("README.md", "## Build", "<!-- a maintainer note -->\n\n## Build")),
+        # 0013 BLOCKER-2: SITE RELOCATION. The markers travel WITH the block, so moving a correct block to
+        # an appendix leaves its site empty while the check still finds the markers and (pre-fix) passed.
+        # _anchor_missing pins each site to its lead-in; the moved block lands after "## Appendix ...",
+        # its anchor no longer precedes it, and the move is caught. Isolates the anchor guard (the moved
+        # block itself still matches its renderer, and _competing skips the in-region run).
+        ("relocation: improve-order block moved to an appendix (anchor lost)",
+            lambda t: (t / "README.md").write_text(
+                (t / "README.md").read_text(encoding="utf-8")
+                .replace(FULL, "(the sequence now lives in the appendix)")
+                .rstrip() + "\n\n## Appendix: generated sequence\n\n" + FULL + "\n", encoding="utf-8")),
+        # 0013 BLOCKER-1 (FALSE NEGATIVE): the count template stopped at "independent", so rewording the
+        # sentence's NOUN away ("... independent reviewers.") kept the right number in a truncated match
+        # and reported clean. Requiring the noun makes this trip presence-required.
+        ("count phrase reworded, noun dropped (FN closed)",
+            repl("README.md", "A suite of eight independent Claude skills.",
+                 "A suite of eight independent reviewers.")),
+        # the build-all phrase, now bound to its "+ emit" site, still value-checks its own occurrence.
+        ("build-all count wrong value (bound to its + emit site)",
+            repl("README.md", "build all eight + emit", "build all seven + emit")),
     ]
     for name, mut in cases:
         f = scratch(mut)
@@ -818,6 +853,30 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                           "the house style.\n\n## Build"))
     res.check(benign == [], "benign prose is NOT misread as a count phrase (locks the number-only slot)",
               "; ".join(benign)[:70] or "clean")
+
+    # 0013 NEGATIVE cases — the false positives the round-9 review reproduced must now stay CLEAN. Each is
+    # ordinary, legitimate content that the pre-fix over-broad guards flagged; the assertion is that the
+    # doc is clean, so a future re-broadening of any of these guards turns it red.
+    #  (a) FINDING #1 FP: an unrelated "build all <N>" in prose is not the quickstart build command.
+    fp_build = scratch(lambda t: (t / "README.md").write_text(
+        (t / "README.md").read_text(encoding="utf-8").rstrip()
+        + "\n\nFor the quickstart, do not build all three sample containers.\n", encoding="utf-8"))
+    res.check(fp_build == [], "ordinary 'build all three' prose is NOT read as the build-count phrase",
+              "; ".join(fp_build)[:70] or "clean")
+    #  (b) FINDING #3 FP: a two-skill handoff in prose is a legitimate cross-reference, not a competing
+    #      enumeration (only a near-complete run is).
+    fp_handoff = scratch(lambda t: (t / "README.md").write_text(
+        (t / "README.md").read_text(encoding="utf-8").rstrip()
+        + "\n\nFor this workflow, architecture-and-decisions → project-faq is the normal handoff.\n",
+        encoding="utf-8"))
+    res.check(fp_handoff == [], "two-skill handoff prose is NOT flagged as a competing enumeration",
+              "; ".join(fp_handoff)[:70] or "clean")
+    #  (c) FINDING #4 FP: a singleton skill reference in a non-first table column is a legitimate
+    #      cross-reference, not a header/other-column decoy (only a near-complete run is).
+    fp_cell = scratch(repl("README.md", LT,
+        "| **learning-track** | tutorial + explanation; reviewed by doc-critic | public | ~9 |"))
+    res.check(fp_cell == [], "singleton skill reference in a description cell is NOT flagged as a decoy",
+              "; ".join(fp_cell)[:70] or "clean")
 
     # 0011 MINOR-2: a missing governed doc must fail the COUNT loop locally (its own message), not merely
     # be caught as a side effect of the site loop — otherwise the fail-closed property is emergent, and a

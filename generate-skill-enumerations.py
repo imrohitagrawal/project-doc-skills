@@ -14,9 +14,20 @@ WHAT THIS GATE GUARANTEES (its real job):
     byte-for-byte in the parse tree; tables must have body rows whose first-cell RENDERED TEXT is the
     skills in order. `skills-order` is validated as an exact permutation of `skills/`; an empty/missing
     source fails closed (never a false "clean").
+  - **Each site is pinned to its lead-in.** The markers are HTML comments that travel WITH the block, so
+    identity alone cannot bind a block to a location — a correct block relocated to an appendix or a fold
+    (its site now empty) would still be "found". Every site is anchored to a stable phrase in the paragraph
+    that introduces it (see _anchor_missing), so moving a block AWAY from its lead-in trips the anchor and
+    requires a gate update. (Moving the lead-in and block together is a legitimate reorganization, not a
+    drift, and is not the target here.)
   - **Casual decoys are caught.** A hidden-comment row, a code-span comment delimiter, a spanning-comment
     marker, a stray second list, or a differently-formatted competing run is caught by the parse-tree
-    checks and the competing-enumeration scan.
+    checks and the competing-enumeration scan. A *competing enumeration* is a near-complete run of the
+    skill names (>= all-but-one), matched at name boundaries; an incidental one/two-name cross-reference
+    ("reviewed by doc-critic", "architecture-and-decisions → project-faq is the handoff") is legitimate
+    prose and is deliberately NOT flagged. Count phrases match the COMPLETE canonical template — number
+    slot AND its noun/site context — so a reworded phrase trips presence-required instead of a truncated
+    prefix matching silently, and a count check does not fire on unrelated prose that shares a fragment.
   - **Raw HTML is banned document-wide in the governed docs** (README.md, per-skill-review-prompt.md): a
     non-comment raw-HTML block (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / image
     token anywhere, is rejected — raw HTML is the enabler for a reader-visible decoy that renders
@@ -73,12 +84,22 @@ _R = r"(?![A-Za-z0-9_-])"
 # carrying markup like `\*\*` would silently die the moment the input became rendered text; that exact
 # regression shipped once, see gate-reviews/0010). The check is PRESENCE-REQUIRED and VALUE-EXACT: see
 # check_count_phrases.
+# Each phrase is the COMPLETE canonical template — count slot AND its distinguishing noun/context — not a
+# generic prefix. Two failure modes this closes (gate-reviews/0013):
+#   FALSE NEGATIVE: `suite of <N> independent` (no noun) still matched after the sentence was reworded to
+#     "... independent reviewers." — the canonical "... skills" phrase was gone, yet the truncated prefix
+#     matched with the right number and the check reported clean. The noun `skills` is now required, so a
+#     reworded phrase trips PRESENCE-REQUIRED ("reworded / stale") instead of passing.
+#   FALSE POSITIVE: `build all <N>`, scanned over the whole flattened doc, fired on ordinary prose
+#     ("do not build all three sample containers"). Bound to its `+ emit` site context, it matches only
+#     the quickstart build command it is meant to check.
+# (` [A-Za-z]+){0,3} allows a few editorial words between "independent" and "skills" — today "Claude".)
 README_COUNT_PHRASES = [
-    (re.compile(rf"{_L}suite of {_COUNT} independent{_R}", re.IGNORECASE),
+    (re.compile(rf"{_L}suite of {_COUNT} independent(?: [A-Za-z]+){{0,3}} skills{_R}", re.IGNORECASE),
      "a suite of <N> independent ... skills"),
     (re.compile(rf"{_L}{_COUNT} copies of the house style{_R}", re.IGNORECASE),
      "<N> copies of the house style"),
-    (re.compile(rf"{_L}build all {_COUNT}{_R}", re.IGNORECASE), "build all <N>"),
+    (re.compile(rf"{_L}build all {_COUNT} \+ emit{_R}", re.IGNORECASE), "build all <N> + emit"),
 ]
 PROMPT_COUNT_PHRASES = [
     (re.compile(rf"{_L}{_COUNT}-skill documentation suite{_R}", re.IGNORECASE),
@@ -208,6 +229,31 @@ def _marker_token_span(tokens, site_id: str) -> tuple[int, int]:
     return begins[0], ends[0]
 
 
+def _preceding_visible(tokens, begin_idx: int) -> str:
+    """Collapsed visible text of the paragraph/heading block IMMEDIATELY before the begin marker at
+    `begin_idx` — the marked block's lead-in — or '' when the marker is not directly preceded by one
+    (another html_block, a fence, a table/list close, an hr, or the top of the document)."""
+    if begin_idx >= 2 and tokens[begin_idx - 1].type in ("paragraph_close", "heading_close") \
+            and tokens[begin_idx - 2].type == "inline":
+        return re.sub(r"\s+", " ", _inline_text(tokens[begin_idx - 2])).strip()
+    return ""
+
+
+def _anchor_missing(tokens, begin_idx: int, site_id: str) -> bool:
+    """True if the site's begin marker is NOT directly preceded by its expected lead-in context (the
+    ANCHOR). The marker comments travel WITH the block, so identity alone cannot pin a block to a place:
+    relocating a correct block to another section (an appendix, a fold) leaves the real site empty while
+    the check still finds the markers and passes. Anchoring each site to a stable phrase in its lead-in
+    means a relocation changes the preceding block and trips this — a move now requires an explicit gate
+    update (the anchor). Fail closed if the site has no anchor registered."""
+    anchor = ANCHORS.get(site_id)
+    if not anchor:
+        return True
+    if anchor in _preceding_visible(tokens, begin_idx):
+        return False
+    return True
+
+
 def _pure_source(tokens, b: int, e: int) -> str | None:
     """The source of the single top-level paragraph between the markers, or None if the marked content
     is not exactly one paragraph."""
@@ -273,15 +319,41 @@ PURE_SITES = [
 TABLE_SITES = [("table", README), ("attach-table", PROMPT)]
 COUNT_PHRASES = {README: README_COUNT_PHRASES, PROMPT: PROMPT_COUNT_PHRASES}
 
+# Each site is PINNED to a stable phrase in the lead-in block that introduces it (see _anchor_missing).
+# A relocated block (markers and all) lands after a different lead-in, so its anchor no longer precedes
+# it and the move is caught. The anchors are the semantic "here is the block" clause of each lead-in,
+# chosen to survive incidental copyediting; editing a lead-in away is a deliberate act that updates the
+# anchor here too. Every site_id in PURE_SITES + TABLE_SITES must appear (fail closed otherwise).
+ANCHORS = {
+    "improve-order": "in this order (producers before consumers)",
+    "tree": "generated from skills-order",
+    "table": "without re-authoring them",
+    "pick-list": "with exactly one of these",
+    "attach-table": "no separate attachment is needed",
+}
+
+def _competing_run(text: str, order: list[str]) -> bool:
+    """True if `text` holds a NEAR-COMPLETE run of DISTINCT skill names — at least len(order)-1 of them
+    (minimum 2) — each matched at name boundaries (so 'project-faq' does not count 'project-faq-notes').
+
+    The bar is 'near-complete run', not 'two names', deliberately (gate-reviews/0013). A competing
+    ENUMERATION is a second copy of the ordering; an ordinary one- or two-name cross-reference
+    ('architecture-and-decisions → project-faq is the normal handoff', 'reviewed by doc-critic') is
+    legitimate prose and must not be read as one. The old '>= 2 substring' bar flagged both of those."""
+    threshold = max(2, len(order) - 1)
+    hits = sum(1 for nm in order if re.search(_L + re.escape(nm) + _R, text))
+    return hits >= threshold
+
+
 def _competing(tokens, b: int, e: int, kind: str, order: list[str]) -> bool:
     """True if a competing rendered enumeration appears OUTSIDE the marked block [b, e] — closing
     relocation (a correct block moved away while a broken un-marked list holds the reader-facing spot)
-    and the stray-second-list gap. Keyed on ACTUAL skill names + the site's separator, so a differently
-    formatted broken run (no trailing period, etc.) is still caught, in inline prose AND in code blocks.
+    and the stray-second-list gap. Keyed on the site's separator PLUS a near-complete run of the actual
+    skill names (see _competing_run), so a differently formatted broken run (no trailing period, etc.) is
+    still caught, in inline prose AND in code blocks, while an incidental two-name mention is not.
 
     Scope, honestly: this scans the site's OWN file. A competing run planted in the other governed doc is
     a disclosed residual (CONTRIBUTING "Skill-enumeration gate: scope"), not a claim made here."""
-    names = set(order)
     sep = {"arrow": " → ", "dot": " · "}.get(kind)
     for i, t in enumerate(tokens):
         if b <= i <= e:
@@ -291,7 +363,7 @@ def _competing(tokens, b: int, e: int, kind: str, order: list[str]) -> bool:
             # inline tokens left a reader-visible competing enumeration unseen.
             txt = _inline_text(t) if t.type == "inline" else (
                 t.content if t.type in ("fence", "code_block") else "")
-            if txt and sep in txt and sum(1 for nm in names if nm in txt) >= 2:
+            if txt and sep in txt and _competing_run(txt, order):
                 return True
         if kind == "tree" and t.type == "fence" and t.content.lstrip().startswith("skills/") \
                 and "─" in t.content:
@@ -300,9 +372,10 @@ def _competing(tokens, b: int, e: int, kind: str, order: list[str]) -> bool:
 
 
 def _table_stray_names(tokens, b: int, e: int, order: list[str]) -> bool:
-    """True if a canonical skill name appears in the marked table OUTSIDE its first body column (a header
-    or other-column decoy — e.g. a reversed enumeration in the header while column one stays correct)."""
-    names = set(order)
+    """True if a NEAR-COMPLETE run of skill names (a reversed/competing enumeration — see _competing_run)
+    appears in a single cell of the marked table OUTSIDE its first body column (a header or other-column
+    decoy). A singleton cross-reference (one skill named in a description cell) is legitimate and allowed;
+    banning it was an undisclosed over-reach (gate-reviews/0013)."""
     inner = tokens[b + 1:e]
     first_col: set[int] = set()
     in_tbody = False
@@ -322,7 +395,7 @@ def _table_stray_names(tokens, b: int, e: int, order: list[str]) -> bool:
                 j += 1
         i += 1
     for idx, t in enumerate(inner):
-        if t.type == "inline" and idx not in first_col and any(nm in _inline_text(t) for nm in names):
+        if t.type == "inline" and idx not in first_col and _competing_run(_inline_text(t), order):
             return True
     return False
 
@@ -462,6 +535,10 @@ def check(root: Path) -> list[str]:
         except MarkerError as ex:
             findings.append(f"{fname}: {ex}")
             continue
+        if _anchor_missing(tks, b, site_id):
+            findings.append(f"{fname}: the '{site_id}' marked block is not in its expected location — "
+                            f"its lead-in context is missing (a relocated block requires a gate update)")
+            continue
         if kind == "tree":
             body = _fence_body(tks, b, e)
             if body != _tree_body(order):
@@ -485,6 +562,10 @@ def check(root: Path) -> list[str]:
             b, e = _marker_token_span(tks, site_id)
         except MarkerError as ex:
             findings.append(f"{fname}: {ex}")
+            continue
+        if _anchor_missing(tks, b, site_id):
+            findings.append(f"{fname}: the '{site_id}' marked block is not in its expected location — "
+                            f"its lead-in context is missing (a relocated block requires a gate update)")
             continue
         names = _table_names(tks, b, e)
         if names != order:
