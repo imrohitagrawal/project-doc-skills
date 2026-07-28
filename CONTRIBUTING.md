@@ -192,9 +192,11 @@ this policy (that would couple the mechanism to unrelated content):
 
 ### Skill-enumeration gate: scope (what it guarantees, and what it does not)
 
-`generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
-scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
-prevent). Eleven independent gate-reviews (`gate-reviews/0005`–`0015`) drove this scope.
+`generate-skill-enumerations.py` keeps the five skill enumerations (and two headline skill-count
+sentences) consistent with `skills-order`. Its scope is stated honestly here so the gate cannot over-claim
+(the failure mode this whole repo exists to prevent). Twelve independent gate-reviews
+(`gate-reviews/0005`–`0016`) drove this scope. This section, the module docstring, the fixtures, and the
+clean banner state ONE contract — if they ever disagree, that is itself a bug.
 
 **It guarantees (and fixtures lock, each biting on revert — proven by `tests/revert-battery.py`, not
 asserted):**
@@ -210,16 +212,18 @@ asserted):**
   cells, AND fenced/indented code blocks**: moving a block **away from its lead-in**, or **cloning the
   lead-in phrase** (even hidden in a fence) next to a relocated block, trips the anchor. (Moving the sole
   lead-in and its block together is a legitimate reorganization, not drift.)
+- **All text matching is normalized** — NFKC + Unicode-dash → ASCII `-` + whitespace-collapse + casefold,
+  on both the rendered text and every needle (anchor, skill name, count phrase). A variant that differs
+  only by case, a Unicode non-breaking hyphen, or a compatibility form is matched as the canonical form.
 - **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
-  spanning-comment markers, a *competing enumeration* elsewhere **in the same file** (a *cross-file*
-  competing run is a known gap — see the residual), a table decoy, and a bold/italic count phrase. A
-  "competing enumeration" is a **near-complete run** of the skill names (all-but-one or more) matched at
-  name boundaries, detected in **any rendered unit outside all five marked blocks — no separator required**
-  — and **aggregated across structure** so it cannot hide by distribution: a comma-separated paragraph, a
-  separator-free fence, a bullet/ordered list (one name per item, even split across two lists), a second
-  table with the run down a column, and a marked table with the run scattered across the header or
-  diagonally across non-first columns. An incidental one- or two-name cross-reference (including a two-row
-  reference table) is legitimate prose and is deliberately not flagged.
+  spanning-comment markers, and a *competing enumeration* (in either governed file). A "competing
+  enumeration" is a **near-complete run** of the skill names (all-but-one or more) matched at name
+  boundaries over normalized text, detected in **any rendered unit outside the marked blocks — no separator
+  required** — and **aggregated per top-level container** so it cannot hide by distribution WITHIN one
+  structure: a comma-separated paragraph, a separator-free fence, a bullet/ordered list (one name per item,
+  even a fenced name per item), a blockquote (one name per quoted paragraph, incl. a nested list), and a
+  second table (all cells). An incidental one- or two-name cross-reference (including a two-row reference
+  table, and a legitimate cross-reference column of a marked table) is deliberately not flagged.
 - **Raw HTML is banned document-wide in the governed docs** (`README.md`, `per-skill-review-prompt.md`),
   with **one permitted exception: this suite's exact begin/end marker comments** — enforced as an
   identity allowlist, so an *arbitrary* HTML comment is rejected too. A non-comment raw-HTML block
@@ -232,26 +236,30 @@ asserted):**
   text and the pixels it displays can disagree with each other and with the enumeration. If a governed
   doc ever genuinely needs an image, that is a scope change: permit it explicitly and define how its
   content participates in this policy.
-- **Scalar count phrases are checked fail-closed AND anchor-bound**: each canonical count (e.g. `a suite
-  of <N> independent Claude skills … software project into documentation`, `./build-skills.sh # build all
-  <N> + emit dist/MANIFEST.sha256`) is a **closed combined pattern** that binds the count slot to a
-  distinctive **adjacent anchor**, and must match **exactly once** across the rendered units, value-exact.
-  So rewording the site's sentence drops the match to zero (a finding) — it cannot be masked by a bare
-  count fragment placed **anywhere, including elsewhere in the same unit** — and an unrelated sentence
-  sharing the fragment but not next to the anchor is neither required nor flagged (no false positive).
+- **Scalar counts are first-class MARKED SITES** — each headline count sentence sits in its own marker
+  pair (`<!-- skills:count-suite:… -->`, `<!-- skills:count-nskill:… -->`), and the number is verified
+  **only inside that designated region**, value-exact over normalized text. Because it is site-bound, not
+  document-wide, it **cannot** be masked by a correct restatement elsewhere, false-positive on unrelated
+  prose, or leak through a gap window — the classes a regex-over-prose count check kept reproducing. Two
+  headline counts are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill documentation
+  suite"); the lower-value prose numbers are NOT gated (a disclosed scope choice — see the residuals).
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
-and verifying the **DOM** (visibility, ancestry) against GitHub's own engine (cmark-gfm) — deliberately
-out of scope for internal tooling whose real threat is accidental drift, not a malicious contributor.
-Known residuals, named rather than hand-waved:
-- markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character or backslash handling in
-  table delimiters);
+and verifying the **DOM** against GitHub's own engine (cmark-gfm) — out of scope for internal tooling whose
+real threat is accidental drift. Known residuals, named rather than hand-waved (each left because closing
+it would false-positive on ordinary content or needs the render-DOM pass):
 - a **competing run split across SEPARATE top-level containers** — e.g. four names in a paragraph and four
-  in a list — so that no single container reaches the near-complete threshold. Aggregating across
-  unrelated containers would false-positive on ordinary prose that legitimately names several skills, so
-  this is left as an accepted limit. (Both governed files are now scanned in full, so the former
-  *cross-file* gap — a run planted in the file that hosts no matching site — is closed.)
+  in a list — so no single container reaches the near-complete threshold. Both governed files are scanned
+  in full, so the former *cross-file* gap is closed; only the multi-container split remains.
+- a **decoy enumeration in a NON-FIRST column of a marked table**. `_table_names` verifies column one is
+  the order; another column naming several skills is an ordinary cross-reference (a "Handoff" / "Reviewed
+  by" column), so it is not flagged — flagging it false-positived on good-faith tables.
+- **relocating a block by removing its lead-in ENTIRELY** and re-homing it with a fresh unique lead-in
+  (legitimate reorganization), leaving a below-threshold partial list at the old site.
+- the **three ungated prose counts** (the "eight copies" line, the build-command comment, the "now eight
+  skills" note) — only the two headline counts are marked sites.
+- markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character handling in table delimiters).
 - anything the raw-HTML ban does not cover.
 
 If the threat model ever warrants it, the render-to-DOM pass is the tracked follow-up — but it is not

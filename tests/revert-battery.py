@@ -163,48 +163,56 @@ GUARDS: list[tuple] = [
      ("_marker_token_span",), "RED"),
     ("marker: identity allowlist", _stub("_marker_only_html_block", "True"),
      ("_marker_only_html_block",), "RED"),
+    ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED"),
+    ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED"),
+    # --- COUNT sites (marked regions; the number is checked only inside its marker pair) ---
+    ("count: whole site check", _stub("check_count_site", "[]"), ("check_count_site",), "RED"),
+    ("count: exactly-one in the marked region",
+     _sub("if len(matches) != 1:", "if len(matches) < 1:"), ("check_count_site",), "RED"),
+    ("count: value-exact in the region",
+     _sub("if tok not in accepted:", "if False and tok not in accepted:"), ("check_count_site",), "RED"),
+    ("count: region is a single paragraph", _stub("_count_region_text", "None"),
+     ("_count_region_text",), "RED"),
+    ("count: empty registry guard (no vacuous success)",
+     _sub("    if not COUNT_SITES:\n", "    if False:\n"), ("check",), "RED"),
+    ("count: missing-doc finding",
+     _sub("            findings.append(f\"{fname}: governed doc not found — count site '{site_id}' "
+          "cannot be verified\")", "            pass"), ("check",), "RED"),
+    ("count/name: left boundary", _sub('_L = r"(?<![a-z0-9_-])"', '_L = r""'), ("_L",), "RED"),
+    ("count/name: right boundary", _sub('_R = r"(?![a-z0-9_-])"', '_R = r""'), ("_R",), "RED"),
+    # --- NORMALIZATION (kills case / Unicode-dash / compatibility variants) at every match point ---
+    ("normalize: casefold + dash fold", _stub("_norm", "s"), ("_norm",), "RED"),
+    # --- ANCHOR uniqueness + adjacency helpers ---
     ("anchor: begin marker must follow its lead-in", _stub("_anchor_missing", "False"),
      ("_anchor_missing",), "RED"),
     ("anchor: lead-in anchor must be UNIQUE (rejects a cloned anchor)",
      _sub("if _anchor_occurrences(tokens, anchor) != 1:",
           "if False and _anchor_occurrences(tokens, anchor) != 1:"), ("_anchor_missing",), "RED"),
-    ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED"),
-    ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED"),
-    ("count: whole check", _stub("check_count_phrases", "[]"), ("check_count_phrases",), "RED"),
-    ("count: exactly-one match required (rejects duplicate/relocated)",
-     _sub("if len(matches) != 1:", "if len(matches) < 1:"), ("check_count_phrases",), "RED"),
-    ("count: pattern is anchor-bound (rejects a bare fragment / same-unit mask)",
-     _sub(r'.{{0,60}}?software project into documentation{_R}', ""),
-     ("README_COUNT_PHRASES",), "RED"),
-    ("count: empty-phrase-set guard", _sub("    if not phrases:\n", "    if False:\n"),
-     ("check_count_phrases",), "RED"),
-    ("count: left boundary", _sub('_L = r"(?<![A-Za-z0-9_-])"', '_L = r""'), ("_L",), "RED"),
-    ("count: right boundary", _sub('_R = r"(?![A-Za-z0-9_-])"', '_R = r""'), ("_R",), "RED"),
-    ("count: missing-doc finding",
-     _sub('            findings.append(f"{fname}: governed doc not found — its count phrases cannot '
-          'be verified")', "            pass"),
-     ("check",), "RED"),
-    ("count: rendered-visible-unit input",
-     _sub('            units.append(re.sub(r"\\s+", " ", _inline_text(t)).strip())',
-          '            units.append(re.sub(r"\\s+", " ", t.content).strip())'),
-     ("_visible_units",), "RED"),
+    ("anchor: occurrence count (over joined text incl. fences)", _stub("_anchor_occurrences", "1"),
+     ("_anchor_occurrences",), "RED"),
+    ("anchor: preceding-unit adjacency", _stub("_preceding_visible", '""'),
+     ("_preceding_visible",), "RED"),
+    ("anchor: visible-units feed", _stub("_visible_units", "[]"), ("_visible_units",), "RED"),
+    # --- COMPETING scan + its aggregation/boundary helpers ---
     ("competing: whole scan", _stub("_competing_findings", "[]"), ("_competing_findings",), "RED"),
     ("competing: near-complete run required (not any two names)",
-     _sub("threshold = max(2, len(order) - 1)", "threshold = 2"), ("_competing_run",), "RED"),
+     _sub("_run_hits(text, order) >= max(2, len(order) - 1)", "_run_hits(text, order) >= 2"),
+     ("_competing_run",), "RED"),
     ("competing: scans code blocks too (separator-free fence)",
      _sub('t.content if t.type in ("fence", "code_block") else ""', '""'),
      ("_competing_findings",), "RED"),
-    ("competing: aggregate within each list container (fenced items / one-per-item)",
+    ("competing: aggregate within each container (list / blockquote)",
      _sub("if _competing_run(agg, order):", "if False and _competing_run(agg, order):"),
      ("_competing_findings",), "RED"),
     ("competing: aggregate outside-table cells",
      _sub("if _competing_run(allcells, order):", "if False and _competing_run(allcells, order):"),
      ("_competing_findings",), "RED"),
-    ("table: stray names outside column one", _stub("_table_stray_names", "False"),
-     ("_table_stray_names",), "RED"),
-    ("table: all-non-first-cells blob aggregation (header / column / diagonal)",
-     _sub('    blob = " ".join(header + [c for r in rows for c in r[1:]])', '    blob = ""'),
-     ("_table_stray_names",), "RED"),
+    ("competing: name-boundary hit count", _stub("_run_hits", "0"), ("_run_hits",), "RED"),
+    ("competing: outside-block exclusion", _stub("_in_any_span", "False"), ("_in_any_span",), "RED"),
+    ("competing: container span", _stub("_container_close", "start"), ("_container_close",), "RED"),
+    ("competing: table span", _stub("_table_span_close", "start"), ("_table_span_close",), "RED"),
+    ("competing: table cell reconstruction", _stub("_table_cells", "([], [])"), ("_table_cells",), "RED"),
+    # --- TABLE first-column + PURE/FENCE region grammar ---
     ("table: region is exactly one table",
      _sub("    if inner[0].type != \"table_open\" or inner[-1].type != \"table_close\" "
           "or inner[0].level != 0:", "    if False:"), ("_table_names",), "RED"),
@@ -217,6 +225,7 @@ GUARDS: list[tuple] = [
     ("site: tree comparison",
      _sub("if body != _tree_body(order):", "if False and body != _tree_body(order):"),
      ("check",), "RED"),
+    # --- SOURCE of truth + renderers ---
     ("source: empty skills/ fails closed", _sub("    if not canonical:\n", "    if False:\n"),
      ("check",), "RED"),
     ("source: skills-order permutation", _stub("validate_order", "[]"), ("validate_order",), "RED"),
@@ -226,24 +235,32 @@ GUARDS: list[tuple] = [
      ("render_improve_order",), "RED"),
     ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED"),
     ("renderer: tree body bytes", _stub("_tree_body", '"decoy"'), ("_tree_body",), "RED"),
-    # Two guards whose revert is genuinely covered by another guard, so a revert cannot be PROVEN by this
-    # method; declared REDUNDANT with the covering guard, reported separately, NOT counted as proven.
-    ("parser-absent fail-closed", _stub("_md", "None"), ("_md",), "REDUNDANT"),
-    # number-only count slot: under the COMBINED anchor-bound pattern the count slot is read only where the
-    # full canonical sentence (anchor + count) sits, so a broad slot can only capture the token AT that
-    # position — a non-number there fails presence (no match) or value-exact (wrong value); either way a
-    # finding. Verified GREEN under a benign-prose-inside-the-anchored-blockquote golden fixture, so its
-    # revert is genuinely covered (not a hidden guard). Kept in the source as belt-and-suspenders.
-    ("count: number-only slot (redundant under anchor-bound patterns)",
+    # REDUNDANT (VALIDATED, round-12 F9): the mutant must leave the golden suite GREEN, confirming its
+    # revert is genuinely covered by another guard. If it reddens, the "redundant" claim is FALSE and the
+    # battery fails (make it a real RED guard). number-only-slot: under marked count sites, a non-number in
+    # the count position fails value-exact (wrong value) or presence (no match) — value-exact covers it.
+    ("count: number-only slot (redundant; value-exact covers a non-number)",
      _sub('_COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"',
-          '_COUNT = r"(?P<count>[A-Za-z0-9][A-Za-z0-9-]{0,20}?)"'),
+          '_COUNT = r"(?P<count>[a-z0-9][a-z0-9-]{0,20}?)"'),
      ("_COUNT",), "REDUNDANT"),
 ]
 
-# Functions the AST rule flags that are NOT verdict guards. Listed explicitly, with the reason, so the
-# exemption is reviewable — narrowing the rule instead would hide the same judgement in a regex.
+# Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is
+# EXPLICITLY exempted here with a reason, so the exemption is reviewable rather than hidden (round-12 F8:
+# every function on the verdict path must be a stub target OR a reasoned exemption).
 NON_GUARD = {
-    "_inline_text": "accumulates rendered text; its `out` is data, not findings",
+    "_inline_text": "accumulates rendered text; a revert is proven transitively by every check that reads "
+                    "it (e.g. stubbing it empties all text, reddening the baseline) — data, not a verdict",
+    "_read": "reads a governed doc; a missing/unreadable doc is caught by check()'s per-site 'not found' "
+             "guard (its own stubs), not here",
+    "_canon_markers": "constructs a site's (begin,end) marker strings from its id — pure formatting",
+    "_allowed_marker_comments": "returns the marker allowlist derived from the site registries; its "
+                                "content is exercised by the marker-identity stub on _marker_only_html_block",
+    "canonical_skills": "derives the skill SET from skills/; an empty result is caught by check()'s "
+                        "fail-closed guard and a wrong set by validate_order — both separately stubbed",
+    "_md": "fail-closed on a MISSING parser is proven by a golden fixture (MarkdownIt=None), NOT by a "
+           "source mutation — stubbing _md=None crashes downstream, which the battery correctly refuses "
+           "to count as a bite (a crash is not an assertion catch)",
     "main": "CLI exit-code plumbing; the verdict comes from check()",
 }
 
@@ -276,6 +293,11 @@ def _finding_producers(src: str) -> set[str]:
                     out.add(name)
                 elif isinstance(v, (ast.Compare, ast.BoolOp, ast.UnaryOp)):
                     out.add(name)
+                elif isinstance(v, ast.Call) and isinstance(v.func, ast.Name) \
+                        and v.func.id in ("any", "all", "bool"):   # a boolean verdict through a builtin
+                    out.add(name)
+                elif isinstance(v, ast.List) and any(isinstance(el, ast.JoinedStr) for el in v.elts):
+                    out.add(name)                                  # returns a finding-list literal
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                     and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
                     and node.func.value.id in ("findings", "out", "errs"):
@@ -294,6 +316,30 @@ def _finding_producers(src: str) -> set[str]:
                     changed = True
                     break
     return {n for n in out if not n.startswith("__")}
+
+
+def _reachable_from(src: str, roots: set[str]) -> set[str]:
+    """Every LOCAL function transitively CALLED starting from `roots`, via the static call graph. The
+    coverage requirement (gate-reviews/0016 answering round-12 F8): every function on the verdict path from
+    check() must be CLAIMED by a stub or EXPLICITLY exempted in NON_GUARD — so a load-bearing helper whose
+    behavior changed (e.g. `_anchor_occurrences`, `_in_any_span`, `_norm`) cannot sit outside the measured
+    set. Deriving reachability from the source means the inventory is not a hand-kept list."""
+    tree = ast.parse(src)
+    fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    calls: dict[str, set[str]] = {name: set() for name in fns}
+    for name, fn in fns.items():
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in fns:
+                calls[name].add(node.func.id)
+    seen: set[str] = set()
+    stack = [r for r in roots if r in fns]
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        stack.extend(calls[cur])
+    return {n for n in seen if not n.startswith("__")}
 
 
 def _changed_lines(orig: str, patched: str) -> set[int]:
@@ -354,18 +400,26 @@ def main() -> int:
         return 2
     print(f"   ok — {detail}")
 
-    print("\n2. coverage — every finding-producing function must be claimed by a stub (derived by ast)")
-    producers = _finding_producers((ROOT / GEN).read_text(encoding="utf-8"))
-    for fn, why in sorted(NON_GUARD.items()):
-        print(f"   [exempt]  {fn} — {why}")
-    producers -= set(NON_GUARD)
+    print("\n2. coverage — every function ON THE VERDICT PATH FROM check() must be a stub target or an")
+    print("   explicitly-reasoned exemption (call graph derived by ast, not a hand-kept list)")
+    gen_src = (ROOT / GEN).read_text(encoding="utf-8")
+    producers = _finding_producers(gen_src)
+    load_bearing = _reachable_from(gen_src, {"check"})   # every function check() can reach transitively
     claimed = {fn for _, _, covers, _ in GUARDS for fn in covers}
-    owed = sorted(producers - claimed)
-    for fn in sorted(producers):
+    owed = sorted(load_bearing - claimed - set(NON_GUARD))
+    for fn, why in sorted(NON_GUARD.items()):
+        if fn in load_bearing:
+            print(f"   [exempt]  {fn} — {why}")
+    for fn in sorted(load_bearing):
+        if fn in NON_GUARD:
+            continue
         mark = "claimed" if fn in claimed else "UNCLAIMED"
+        prod = " (finding-producer)" if fn in producers else ""
         if args.verbose or fn in owed:
-            print(f"   [{mark}] {fn}")
-    print(f"   {len(producers) - len(owed)}/{len(producers)} finding-producing functions claimed")
+            print(f"   [{mark}] {fn}{prod}")
+    covered = len(load_bearing) - len(owed)
+    print(f"   {covered}/{len(load_bearing)} verdict-path functions covered "
+          f"({len(producers & load_bearing)} are finding-producers)")
 
     print("\n2b. provenance — each stub's `covers` must EQUAL the units it actually mutates")
     orig = (ROOT / GEN).read_text(encoding="utf-8")
@@ -377,7 +431,7 @@ def main() -> int:
     if _units_touched(orig, _stub("render_pick_list", '"x"')(orig)) != {"render_pick_list"}:
         print("   PROVENANCE ORACLE BROKEN: a function stub did not attribute to that function alone")
         return 2
-    if _units_touched(orig, _sub('_R = r"(?![A-Za-z0-9_-])"', '_R = r""')(orig)) != {"_R"}:
+    if _units_touched(orig, _sub('_R = r"(?![a-z0-9_-])"', '_R = r""')(orig)) != {"_R"}:
         print("   PROVENANCE ORACLE BROKEN: a module-constant stub did not attribute to that constant")
         return 2
     two_hunk = _stub("_tree_body", '"x"')(_stub("render_improve_order", '"y"')(orig))
@@ -412,8 +466,16 @@ def main() -> int:
         if fp:
             seen[fp] = name
         if expect == "REDUNDANT":
-            redundant.append(name)
-            print(f"   [REDUNDANT] {name} — {detail if args.verbose else 'declared, not counted as proven'}")
+            # VALIDATED (round-12 F9): a REDUNDANT mutant must leave the suite GREEN — that is the proof
+            # its revert is covered by another guard. If it BITES (RED) or crashes, the "redundant" claim
+            # is false and this is a failure, not a free pass.
+            if verdict == "GREEN":
+                redundant.append(name)
+                print(f"   [REDUNDANT] {name} — revert confirmed covered (suite stayed green)")
+            else:
+                failures.append((name, f"declared REDUNDANT but its revert produced {verdict} (not GREEN) "
+                                       f"— it is load-bearing; make it a RED guard"))
+                print(f"   [NOT-REDUNDANT] {name} — {verdict}: {detail}")
             continue
         if verdict == "RED":
             print(f"   [BITES] {name}" + (f" — {detail}" if args.verbose else ""))
@@ -423,10 +485,10 @@ def main() -> int:
 
     proven = len(GUARDS) - len(failures) - len(redundant)
     print(f"\n--- revert battery: {proven}/{len(GUARDS) - len(redundant)} stubs bite; "
-          f"{len(producers) - len(owed)}/{len(producers)} guard functions claimed; "
+          f"{covered}/{len(load_bearing)} verdict-path functions covered; "
           f"{len(GUARDS) - len(prov_fail)}/{len(GUARDS)} provenance-clean ---")
     for fn in owed:
-        print(f"    OWED STUB: {fn}() can produce a finding but no stub claims it")
+        print(f"    OWED: {fn}() is on the verdict path but is neither stubbed nor exempted")
     for name, why in prov_fail:
         print(f"    MIS-CLAIM: {name} — {why}")
     for name, why in failures:

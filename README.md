@@ -1,6 +1,10 @@
 # Project documentation skills — source
 
-A suite of eight independent Claude skills. Six turn a software project into documentation, each in a
+<!-- skills:count-suite:begin -->
+A suite of eight independent Claude skills.
+<!-- skills:count-suite:end -->
+
+Six turn a software project into documentation, each in a
 distinct Diátaxis mode; **doc-critic** is the independent review gate that critiques those docs before
 they publish; and **publish-mirror** is a separate publish step that mirrors the finished pages to a
 wiki or portal without re-authoring them:

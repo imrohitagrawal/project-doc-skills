@@ -25,22 +25,29 @@ WHAT THIS GATE GUARANTEES (its real job):
     the block a fresh unique lead-in elsewhere is treated as legitimate reorganization (the block and its
     lead-in moved together); a below-threshold partial list left at the abandoned site is then the
     disclosed competing residual (below all-but-one), not a caught decoy.
+  - **All text matching is NORMALIZED** (see _norm): NFKC + Unicode-dash → ASCII '-' + whitespace-collapse
+    + casefold, applied to both the rendered text and every needle (anchor, skill name, count phrase). A
+    reader-visible variant that differs only by case, a Unicode non-breaking hyphen, or a compatibility
+    form is matched the same as the canonical ASCII form (an UPPERCASE skill run, a `mini‑suite` dash).
   - **Casual decoys are caught.** A hidden-comment row, a code-span comment delimiter, a spanning-comment
     marker, or a competing enumeration is caught by the parse-tree checks and the competing scan
     (_competing_findings). A *competing enumeration* is a near-complete run of the skill names (>=
-    all-but-one) matched at name boundaries, detected in ANY rendered unit OUTSIDE all five marked blocks —
-    NO separator required — and AGGREGATED across structure so it cannot hide by distribution: a
-    comma-separated paragraph, a separator-free fence, a bullet/ordered list (one name per item, even split
-    across two lists or one fenced name per item), a second table with the run down any column, and a
-    marked table with the run scattered across the header or diagonally across non-first columns. Every
-    legitimate enumeration lives inside a marked block (excluded); an incidental one/two-name
-    cross-reference ("reviewed by doc-critic") is legitimate prose and is deliberately NOT flagged.
-  - **Count phrases are anchor-bound, exactly once.** Each scalar count ("a suite of <N> ... skills",
-    "build all <N> + emit dist/MANIFEST.sha256", …) is a CLOSED combined pattern that binds the count slot
-    to a distinctive ADJACENT anchor, and must match EXACTLY ONCE across the rendered units, value-exact
-    (see check_count_phrases). So rewording the site's sentence drops the match to zero (a finding) — it
-    cannot be masked by a bare count fragment placed elsewhere in the same unit — and an unrelated sentence
-    sharing the fragment, not next to the anchor, is neither required nor flagged (no false positive).
+    all-but-one) matched at name boundaries over normalized text, detected in ANY rendered unit OUTSIDE all
+    marked blocks — NO separator required — and AGGREGATED per TOP-LEVEL CONTAINER so it cannot hide by
+    distribution WITHIN one structure: a comma-separated paragraph, a separator-free fence, a bullet/ordered
+    list (one name per item, even a fenced name per item), a blockquote (one name per quoted paragraph,
+    incl. a nested list), and a second table (all cells). Every legitimate enumeration lives inside a
+    marked block (excluded); an incidental one/two-name cross-reference ("reviewed by doc-critic") is
+    legitimate prose and is deliberately NOT flagged. LIMIT: a run deliberately split across SEPARATE
+    top-level containers, and a decoy in a non-first column of a MARKED table, are disclosed residuals (see
+    below) — aggregating either further would false-positive on ordinary cross-referencing content.
+  - **Scalar counts are FIRST-CLASS MARKED SITES** (not document-wide regex). Each count sentence sits in
+    its own marker pair; the number is verified ONLY inside that designated region (see check_count_site),
+    so it cannot be masked by a restatement elsewhere, false-positive on unrelated prose, or leak through a
+    gap window — the failure classes a regex-over-prose count check kept reproducing. Two HEADLINE counts
+    are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill documentation suite"); the
+    lower-value prose numbers (the "eight copies" line, the build-command comment, the "now eight skills"
+    note) are deliberately NOT gated — a disclosed scope choice.
   - **Raw HTML is banned document-wide in the governed docs** (README.md, per-skill-review-prompt.md): a
     non-comment raw-HTML block (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / image
     token anywhere, is rejected — raw HTML is the enabler for a reader-visible decoy that renders
@@ -48,16 +55,16 @@ WHAT THIS GATE GUARANTEES (its real job):
 
 WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration gate: scope"):
   This is a drift-catcher and casual-decoy guard, NOT a proof of "no reader-visible decoy" against a
-  determined adversary. Three gate-reviews (`gate-reviews/0005`-`0007`) showed that fully closing an
-  adversarial reader-visible decoy over arbitrary Markdown would require rendering to HTML and verifying
-  the DOM (visibility, ancestry) against GitHub's own engine (cmark-gfm) — deliberately out of scope for
-  this internal tooling. The raw-HTML ban removes the main adversarial surface cheaply; residuals
-  (markdown-it-py vs cmark-gfm parse edge cases; a competing run split across SEPARATE top-level containers
-  — e.g. four names in a paragraph and four in a list — so that no single container is near-complete, which
-  cannot be aggregated further without false-positiving on the ordinary prose that legitimately names
-  several skills; anything the ban does not cover) are the disclosed, accepted limit, tracked for a future
-  render-DOM pass if the threat model ever warrants it. (Both governed files are now scanned in full, so a
-  competing run in either file is caught — the former cross-file gap is closed.)
+  determined adversary. Closing an adversarial decoy over arbitrary Markdown would require rendering to HTML
+  and verifying the DOM against GitHub's own engine (cmark-gfm) — out of scope for this internal tooling.
+  The disclosed, accepted residuals (each left because closing it would false-positive on ordinary content
+  or needs the render-DOM pass): (1) a competing run split across SEPARATE top-level containers so no one
+  container is near-complete; (2) a decoy enumeration in a NON-FIRST column of a marked table (`_table_names`
+  verifies column one; another column naming several skills is an ordinary cross-reference); (3) relocating
+  a block by removing its lead-in ENTIRELY and re-homing it with a fresh unique lead-in (legitimate
+  reorganization), leaving a below-threshold partial list at the old site; (4) markdown-it-py vs cmark-gfm
+  parse edge cases; (5) the three ungated prose counts above. Both governed files are scanned in full, so a
+  competing run in either file is caught.
 
 Source of truth: SET = skills/<name>/ with a SKILL.md; ORDER = the root `skills-order` file, validated
 as an exact permutation of the set (fail closed).
@@ -70,7 +77,21 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from pathlib import Path
+
+# ONE normalization applied at EVERY text-match point (anchors, count sites, competing names), so a
+# reader-visible variant that differs only by case, Unicode dash, compatibility form, or whitespace is
+# matched the same as the canonical ASCII form (gate-reviews/0016). Without this, `rebuild`-style
+# prefixes, a U+2011 non-breaking hyphen, or an UPPERCASE skill name slipped past ASCII-only checks.
+_DASH_MAP = {ord(c): "-" for c in "‐‑‒–—―−﹘﹣－"}
+
+
+def _norm(s: str) -> str:
+    """NFKC + Unicode-dash → ASCII '-' + whitespace-collapse + casefold. Idempotent; used on both the
+    rendered text and every needle (anchor, skill name, count phrase) so matching is variant-insensitive."""
+    s = unicodedata.normalize("NFKC", s).translate(_DASH_MAP)
+    return re.sub(r"\s+", " ", s).strip().casefold()
 
 try:
     from markdown_it import MarkdownIt
@@ -85,63 +106,31 @@ NUM_WORDS = {
 WORD_TO_NUM = {word: n for n, word in NUM_WORDS.items()}
 
 # The count slot matches ONLY a number token — a digit run, a number word, or a hyphenated compound
-# ("twenty-one"). It is deliberately NOT "any word": an open slot captured ordinary prose ("now review
-# skills" → "review") and reported it as a wrong count, and it also swallowed surrounding text
-# ("ONE skill in an eight"). Anything that is not a number makes the phrase not match at all, which trips
-# the PRESENCE half below — reported as "reworded / stale", which is what it actually is.
+# ("twenty-one"). Applied over normalized (casefolded) text, so lowercase alternatives suffice.
 _NUM_ALT = "|".join(sorted(NUM_WORDS.values(), key=len, reverse=True))
-# ASCII digits only ([0-9], not \d): the canonical phrases use ASCII, and \d would also match a fullwidth
-# "８" a reader reads as 8, reporting a spurious "reads ８ but there are 8 skills" (gate-reviews/0015).
 _COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"
-# Whole-template boundaries. `\b` is not enough: it let "rebuild all eight" satisfy "build all <N>",
-# "know eight skills" satisfy "now <N> skills", and suffixed rewordings ("skillsets", "independently",
-# "stylesheet", "suites") pass while the canonical phrase was gone.
-_L = r"(?<![A-Za-z0-9_-])"
-_R = r"(?![A-Za-z0-9_-])"
-
-# Count phrases are checked with a CLOSED COMBINED pattern that binds the count slot to a distinctive
-# adjacent anchor phrase, matched over the rendered visible units; each canonical count must occur EXACTLY
-# ONCE across the document, read the canonical value (gate-reviews/0015). Each is (combined_pattern, label).
-#
-# Why combined-and-exactly-one, not "locate the anchor unit then scan it for a bare template" (the round-11
-# design, which was maskable): the older form ran the bare template over the WHOLE anchored paragraph/fence,
-# so rewording the real sentence and dropping the correct template ANYWHERE ELSE IN THE SAME UNIT still
-# passed, and an unrelated wrong count in that unit falsely fired. Binding the count to its adjacent anchor
-# (`build-skills.sh # build all <N> …`, `suite of <N> independent Claude skills … software project into
-# documentation`) within a small bounded gap means:
-#   - MASKING is closed: a decoy count not sitting next to its anchor does not match, so rewording the real
-#     sentence drops the match to zero -> a finding; you cannot satisfy it with a fragment placed elsewhere.
-#   - FALSE POSITIVES are closed: an unrelated sentence that merely shares the count fragment is not next to
-#     the anchor, so it neither satisfies nor trips the check.
-#   - RELOCATION/DUPLICATION is caught: two matches (a real one plus a restated canonical sentence) trip the
-#     exactly-one rule. `.{0,N}?` is a bounded, non-greedy gap over the collapsed single-line unit text.
-# `_COUNT` is number-only so the captured slot is a number (value-exact reports a wrong count precisely);
-# the anchor+gap binding is what makes the location guarantee, not the slot.
-# `.{0,N}?` is a bounded non-greedy gap between the count and its adjacent anchor. `{_R}` guards every
-# literal that abuts the gap (or ends the pattern) so the gap cannot absorb a SUFFIX — e.g. "skillsets"
-# must not satisfy "skills" (gate-reviews/0015). `{_L}`/`{_R}` also bound the count-template so a prefix
-# ("resuite") / suffix likewise cannot sneak in.
-README_COUNT_PHRASES = [
-    (re.compile(rf"{_L}suite of {_COUNT} independent Claude skills{_R}"
-                rf".{{0,60}}?software project into documentation{_R}", re.IGNORECASE),
-     "a suite of <N> independent Claude skills … software project into documentation"),
-    (re.compile(rf"self-contained packages{_R}.{{0,60}}?{_L}{_COUNT} copies of the house style{_R}",
-                re.IGNORECASE),
-     "self-contained packages … <N> copies of the house style"),
-    (re.compile(rf"{_L}build-skills\.sh{_R}.{{0,60}}?build all {_COUNT} \+ emit dist/MANIFEST\.sha256{_R}",
-                re.IGNORECASE),
-     "./build-skills.sh # build all <N> + emit dist/MANIFEST.sha256"),
-]
-PROMPT_COUNT_PHRASES = [
-    (re.compile(rf"You are improving ONE skill in an {_COUNT}-skill documentation suite{_R}", re.IGNORECASE),
-     "You are improving ONE skill in an <N>-skill documentation suite"),
-    (re.compile(rf"What changed in the suite{_R}.{{0,60}}?The suite is now {_COUNT} skills{_R}",
-                re.IGNORECASE),
-     "What changed in the suite … The suite is now <N> skills"),
-]
+# Identifier boundaries (over normalized text, where Unicode dashes are already ASCII '-'): `\b` is not
+# enough — it let "rebuild all eight" satisfy "build all", and suffixes ("skillsets") pass.
+_L = r"(?<![a-z0-9_-])"
+_R = r"(?![a-z0-9_-])"
 
 README = "README.md"
 PROMPT = "per-skill-review-prompt.md"
+
+# Scalar counts are FIRST-CLASS MARKED SITES (gate-reviews/0016), not document-wide regex. Each count
+# sentence sits in its own marker pair; the check verifies the number ONLY inside that designated region,
+# so it cannot be masked by a restatement elsewhere, false-positive on unrelated prose, or leak through a
+# gap window (the failure classes that a regex-over-prose count check kept reproducing). The pattern below
+# is applied to the NORMALIZED region text; `{_L}`/`{_R}` bound the count so a prefix/suffix cannot sneak
+# in. Two headline counts are gated; the lower-value prose numbers (the "eight copies" line, the build
+# command comment, the "now eight skills" note) are deliberately NOT gated — see CONTRIBUTING scope.
+# site_id -> (filename, in-region count pattern over normalized text, human label)
+COUNT_SITES = {
+    "count-suite": (README, re.compile(rf"{_L}suite of {_COUNT} independent claude skills{_R}"),
+                    "a suite of <N> independent Claude skills"),
+    "count-nskill": (PROMPT, re.compile(rf"{_L}an {_COUNT}-skill documentation suite{_R}"),
+                     "an <N>-skill documentation suite"),
+}
 
 
 class MarkerError(Exception):
@@ -277,21 +266,19 @@ def _preceding_visible(tokens, begin_idx: int) -> str:
     (another html_block, a fence, a table/list close, an hr, or the top of the document)."""
     if begin_idx >= 2 and tokens[begin_idx - 1].type in ("paragraph_close", "heading_close") \
             and tokens[begin_idx - 2].type == "inline":
-        return re.sub(r"\s+", " ", _inline_text(tokens[begin_idx - 2])).strip()
+        return _norm(_inline_text(tokens[begin_idx - 2]))
     return ""
 
 
 def _anchor_occurrences(tokens, anchor: str) -> int:
-    """How many TEXTUAL occurrences of `anchor` there are in the doc's reader-visible text — the
-    concatenation of ALL rendered units (paragraphs, headings, cells, AND fenced/indented code blocks;
-    see _visible_units), joined so a phrase is counted even if a paragraph break SPLITS it. Used to require
-    the anchor be UNIQUE (_anchor_missing).
-
-    Both properties are load-bearing (gate-reviews/0015): counting fences (not just inline tokens) closes a
-    relocation that hid the abandoned-site lead-in in a code block; counting over the JOINED text — not
-    per-unit — closes a relocation that SPLIT the abandoned-site lead-in across a paragraph break (which a
-    per-unit count would miss) while a clean copy beside the relocated block became the sole counted one."""
-    return " ".join(_visible_units(tokens)).count(anchor)
+    """How many NORMALIZED textual occurrences of `anchor` there are in the doc's reader-visible text — the
+    concatenation of ALL rendered units (paragraphs, headings, cells, AND fenced/indented code blocks),
+    joined so a phrase is counted even if a paragraph break SPLITS it, and normalized so a
+    case/Unicode-dash variant of the anchor still counts (gate-reviews/0016). Used to require the anchor be
+    UNIQUE (_anchor_missing): counting fences closes a relocation that hid the lead-in in a code block;
+    counting over the JOINED text closes one that split the lead-in across a paragraph break; normalizing
+    closes one that changed only the case or a hyphen of the abandoned-site lead-in."""
+    return _norm(" ".join(_visible_units(tokens))).count(_norm(anchor))
 
 
 def _anchor_missing(tokens, begin_idx: int, site_id: str) -> bool:
@@ -311,7 +298,7 @@ def _anchor_missing(tokens, begin_idx: int, site_id: str) -> bool:
         return True
     if _anchor_occurrences(tokens, anchor) != 1:
         return True
-    return anchor not in _preceding_visible(tokens, begin_idx)
+    return _norm(anchor) not in _preceding_visible(tokens, begin_idx)
 
 
 def _pure_source(tokens, b: int, e: int) -> str | None:
@@ -377,8 +364,6 @@ PURE_SITES = [
     ("tree", README, None, "tree"),
 ]
 TABLE_SITES = [("table", README), ("attach-table", PROMPT)]
-COUNT_PHRASES = {README: README_COUNT_PHRASES, PROMPT: PROMPT_COUNT_PHRASES}
-
 # Each site is PINNED to a stable phrase in the lead-in block that introduces it (see _anchor_missing).
 # A relocated block (markers and all) lands after a different lead-in, so its anchor no longer precedes
 # it and the move is caught. The anchors are the semantic "here is the block" clause of each lead-in,
@@ -392,26 +377,34 @@ ANCHORS = {
     "attach-table": "no separate attachment is needed",
 }
 
+def _run_hits(text: str, order: list[str]) -> int:
+    """How many DISTINCT skill names occur in `text`, matched at name boundaries over NORMALIZED text (so
+    an UPPERCASE or Unicode-dash variant still counts, and 'project-faq' does not count 'project-faq-notes'
+    — gate-reviews/0016)."""
+    t = _norm(text)
+    return sum(1 for nm in order if re.search(_L + re.escape(_norm(nm)) + _R, t))
+
+
 def _competing_run(text: str, order: list[str]) -> bool:
-    """True if `text` holds a NEAR-COMPLETE run of DISTINCT skill names — at least len(order)-1 of them
-    (minimum 2) — each matched at name boundaries (so 'project-faq' does not count 'project-faq-notes').
-
-    The bar is 'near-complete run', not 'two names', deliberately (gate-reviews/0013). A competing
-    ENUMERATION is a second copy of the ordering; an ordinary one- or two-name cross-reference
-    ('architecture-and-decisions → project-faq is the normal handoff', 'reviewed by doc-critic') is
-    legitimate prose and must not be read as one. The old '>= 2 substring' bar flagged both of those."""
-    threshold = max(2, len(order) - 1)
-    hits = sum(1 for nm in order if re.search(_L + re.escape(nm) + _R, text))
-    return hits >= threshold
+    """True if `text` holds a NEAR-COMPLETE run of the skill names — at least len(order)-1 (minimum 2).
+    A competing ENUMERATION is a second copy of the ordering; an ordinary one- or two-name cross-reference
+    ('reviewed by doc-critic') is legitimate prose and is deliberately NOT read as one (gate-reviews/0013)."""
+    return _run_hits(text, order) >= max(2, len(order) - 1)
 
 
-def _list_close(tokens, start: int) -> int:
-    """Index of the matching close for the bullet/ordered list opening at `start` (handles nesting)."""
+_CONTAINER_OPEN = ("bullet_list_open", "ordered_list_open", "blockquote_open")
+_CONTAINER_CLOSE = ("bullet_list_close", "ordered_list_close", "blockquote_close")
+
+
+def _container_close(tokens, start: int) -> int:
+    """Index of the matching close for the block CONTAINER (bullet/ordered list OR blockquote) opening at
+    `start`, tracking depth across all container types so a nested list-in-blockquote is contained within
+    the outer container's span."""
     depth = 0
     for j in range(start, len(tokens)):
-        if tokens[j].type in ("bullet_list_open", "ordered_list_open"):
+        if tokens[j].type in _CONTAINER_OPEN:
             depth += 1
-        elif tokens[j].type in ("bullet_list_close", "ordered_list_close"):
+        elif tokens[j].type in _CONTAINER_CLOSE:
             depth -= 1
             if depth == 0:
                 return j
@@ -420,10 +413,6 @@ def _list_close(tokens, start: int) -> int:
 
 def _in_any_span(idx: int, spans: list[tuple[int, int]]) -> bool:
     return any(b <= idx <= e for b, e in spans)
-
-
-def _run_hits(text: str, order: list[str]) -> int:
-    return sum(1 for nm in order if re.search(_L + re.escape(nm) + _R, text))
 
 
 def _table_span_close(tokens, start: int) -> int:
@@ -460,18 +449,22 @@ def _competing_findings(tokens, spans: list[tuple[int, int]], order: list[str], 
                        f"names) renders in a unit outside every marked block — there must be exactly one "
                        f"enumeration per site")
             return out
-    # (2) each list container outside the marked spans, aggregated over its own items.
+    # (2) each top-level CONTAINER (bullet/ordered list OR blockquote) outside the marked spans, aggregated
+    #     over ITS OWN reader-visible descendants — a run written one name per list item, or one name per
+    #     quoted paragraph in a blockquote, or across a nested list-in-blockquote, is caught within that
+    #     container (gate-reviews/0016 closed the blockquote gap). The outermost container is processed and
+    #     its span skipped, so nested containers are folded into it, not double-scanned.
     i = 0
     while i < len(tokens):
-        if tokens[i].type in ("bullet_list_open", "ordered_list_open"):
-            j = _list_close(tokens, i)
+        if tokens[i].type in _CONTAINER_OPEN:
+            j = _container_close(tokens, i)
             if not _in_any_span(i, spans) and not _in_any_span(j, spans):
                 agg = " ".join((_inline_text(x) if x.type == "inline" else x.content)
                                for x in tokens[i:j + 1] if x.type in ("inline", "fence", "code_block"))
                 if _competing_run(agg, order):
                     out.append(f"{fname}: a competing enumeration ({_run_hits(agg, order)} of {len(order)} "
-                               f"skill names) is distributed across a list outside the marked blocks — "
-                               f"there must be exactly one enumeration per site")
+                               f"skill names) is distributed across a container (list/blockquote) outside "
+                               f"the marked blocks — there must be exactly one enumeration per site")
                     return out
             i = j + 1
         else:
@@ -524,23 +517,17 @@ def _table_cells(inner) -> tuple[list[str], list[list[str]]]:
     return header, rows
 
 
-def _table_stray_names(tokens, b: int, e: int, order: list[str]) -> bool:
-    """True if a NEAR-COMPLETE run of skill names (a reversed/competing enumeration) hides in the marked
-    table OUTSIDE its first body column. ALL header cells and ALL non-first body cells are aggregated into
-    ONE blob and tested with _competing_run, so no DISTRIBUTION escapes — a run written across the header,
-    down any single column, or scattered DIAGONALLY across different columns/rows (each cell below the
-    threshold) is caught alike (gate-reviews/0015). The first body column is excluded: _table_names
-    verifies it equals the order exactly. A singleton cross-reference (one skill named in a description
-    cell) stays below the near-complete threshold and is allowed."""
-    header, rows = _table_cells(tokens[b + 1:e])
-    blob = " ".join(header + [c for r in rows for c in r[1:]])
-    return _competing_run(blob, order)
+# NOTE: there is deliberately NO check for a decoy enumeration hidden in a NON-FIRST column of a MARKED
+# table (a "stray names" guard). Any such check flags a legitimate cross-reference column — a "Handoff"
+# or "Reviewed by" column naming several skills is ordinary content, not a competing enumeration — so it
+# false-positives on good-faith tables (gate-reviews/0016). `_table_names` verifies the first column IS
+# the order; a reader-visible decoy in another column is a disclosed residual (see CONTRIBUTING scope).
 
 
 def _allowed_marker_comments() -> set[str]:
     """The ONLY raw HTML permitted in a governed doc: this suite's exact begin/end marker comments."""
     out: set[str] = set()
-    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES]:
+    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES] + list(COUNT_SITES):
         out.update(_canon_markers(site_id))
     return out
 
@@ -680,57 +667,60 @@ def check(root: Path) -> list[str]:
         if names != order:
             findings.append(f"{fname}: '{site_id}' rendered table first column {names} does not equal "
                             f"the order {order} (fix the table to match skills-order)")
-        if _table_stray_names(tks, b, e, order):
-            findings.append(f"{fname}: a competing run of skill names appears in the '{site_id}' table "
-                            f"outside its first body column (a reversed header / other-column / diagonal "
-                            f"enumeration) — the enumeration belongs only in column one")
 
     # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all marked spans.
     for fname in (README, PROMPT):
         if fname in tokens:
             findings += _competing_findings(tokens[fname], marked_spans[fname], order, fname)
 
-    for fname, phrases in COUNT_PHRASES.items():
+    if not COUNT_SITES:
+        # vacuous success is exactly the failure this check exists to avoid — an emptied registry would
+        # disable the count guard while the banner still said "count phrases consistent".
+        findings.append("no count sites are configured — the count guard cannot verify anything "
+                        "(fail closed, not clean)")
+    for site_id, (fname, pat, label) in COUNT_SITES.items():
         if fname not in tokens:
-            # locally fail closed rather than relying on the site loop to have already reported it
-            findings.append(f"{fname}: governed doc not found — its count phrases cannot be verified")
+            findings.append(f"{fname}: governed doc not found — count site '{site_id}' cannot be verified")
             continue
-        findings += check_count_phrases(_visible_units(tokens[fname]), phrases, n, fname)
+        try:
+            b, e = _marker_token_span(tokens[fname], site_id)
+        except MarkerError as ex:
+            findings.append(f"{fname}: {ex}")
+            continue
+        marked_spans[fname].append((b, e))
+        findings += check_count_site(tokens[fname], b, e, site_id, fname, pat, label, n)
 
     return findings
 
 
-def check_count_phrases(units: list[str], phrases, n: int, file_label: str) -> list[str]:
-    """PRESENCE-REQUIRED + VALUE-EXACT + EXACTLY-ONCE check of the scalar suite-count phrases. `units` is
-    the list of per-unit rendered texts (see _visible_units); each phrase is (combined_pattern, label),
-    where the pattern binds the count slot to a distinctive ADJACENT anchor (see the constants above).
+def _count_region_text(tokens, b: int, e: int) -> str | None:
+    """The NORMALIZED rendered text of the single paragraph in the marked count region [b, e], or None if
+    the region is not exactly one paragraph (anything smuggled in is a finding, like the pure sites)."""
+    inner = tokens[b + 1:e]
+    if len(inner) == 3 and inner[1].type == "inline" and inner[0].type == "paragraph_open" \
+            and inner[2].type == "paragraph_close":
+        return _norm(_inline_text(inner[1]))
+    return None
 
-    For each phrase, count the combined pattern's matches across ALL units:
-      - 0 matches  -> the canonical sentence was reworded / went stale (a finding); it cannot be masked by
-        placing the bare count fragment elsewhere, because a match requires the count NEXT TO its anchor.
-      - >1 matches -> the canonical sentence was duplicated / relocated (a finding).
-      - exactly 1  -> value-exact: the captured count must read the canonical number.
-    Because the pattern is anchor-bound, an unrelated sentence sharing the count fragment neither satisfies
-    nor trips the check (no document-wide false positive). An empty phrase set is itself a finding — a
-    vacuous 'consistent' is exactly the failure this check exists to avoid (gate-reviews/0010)."""
-    phrases = tuple(phrases or ())
-    if not phrases:
-        return [f"{file_label}: no canonical count-phrase checks are configured — the count guard cannot "
-                f"verify anything (fail closed, not clean)"]
-    accepted = {str(n), NUM_WORDS.get(n, "").lower()} - {""}
-    out = []
-    for pat, label in phrases:
-        matches = [m for u in units for m in pat.finditer(u)]
-        if len(matches) != 1:
-            out.append(f"{file_label}: the canonical count phrase \"{label}\" matched {len(matches)} time(s), "
-                       f"expected exactly 1 — it was reworded/stale (0) or duplicated/relocated (>1). A "
-                       f"count phrase must appear exactly once, next to its anchor, and never go unchecked.")
-            continue
-        tok = re.sub(r"\s+", " ", matches[0].group("count")).strip().lower()
-        if tok not in accepted:
-            out.append(f"{file_label}: \"{label}\" reads \"{tok}\" but there are {n} skills in skills/ "
-                       f"(expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")")
-    return out
+
+def check_count_site(tokens, b: int, e: int, site_id: str, fname: str, pat, label: str, n: int) -> list[str]:
+    """Verify the scalar count in the MARKED region [b, e] reads the skill count. The count is checked ONLY
+    inside its designated marker pair (gate-reviews/0016), so — unlike a document-wide regex — it cannot be
+    masked by a correct restatement elsewhere, false-positive on unrelated prose, or leak through a gap
+    window. Exactly one count phrase must appear in the region, reading the canonical value."""
+    text = _count_region_text(tokens, b, e)
+    if text is None:
+        return [f"{fname}: the '{site_id}' marked count region is not a single paragraph (fix the region)"]
+    matches = list(pat.finditer(text))
+    if len(matches) != 1:
+        return [f"{fname}: the count phrase \"{label}\" appears {len(matches)} time(s) in its '{site_id}' "
+                f"marked region, expected exactly 1 — the region was reworded, or the pattern is stale."]
+    tok = matches[0].group("count")
+    accepted = {str(n), _norm(NUM_WORDS.get(n, ""))} - {""}
+    if tok not in accepted:
+        return [f"{fname}: '{site_id}' \"{label}\" reads \"{tok}\" but there are {n} skills in skills/ "
+                f"(expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")"]
+    return []
 
 
 def write(root: Path) -> int:

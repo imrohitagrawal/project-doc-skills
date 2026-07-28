@@ -649,36 +649,60 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(_raises(f"{A}\n\n{E}\n\n**x**\n\n{B}\n"),
               "_marker_token_span raises when end precedes begin (locks the order branch)")
 
-    # CONTRACT (0010 + 0015): each phrase is (combined_pattern, label); the pattern binds the count slot to
-    # a distinctive ADJACENT anchor. check_count_phrases counts the pattern's matches across ALL units:
-    # exactly-one required, then value-exact. A bare fragment not adjacent to the anchor neither satisfies
-    # nor trips. A synthetic pattern keeps the mechanism test independent of the live docs' wording.
-    COMB = re.compile(rf"widget site has {g._COUNT} gadgets", re.IGNORECASE)
-    one = [(COMB, "widget site has <N> gadgets")]
-    res.check(g.check_count_phrases(["the widget site has three gadgets today", "unrelated noise"],
-                                    one, 3, "x") == [], "count: exactly one correct combined match passes")
-    res.check(len(g.check_count_phrases(["widget site has two gadgets"], one, 3, "x")) == 1,
-              "count: wrong value at the combined match caught")
-    res.check(any("expected exactly 1" in f for f in g.check_count_phrases(["nothing relevant here"],
-              one, 3, "x")), "count: zero matches -> finding (reworded/stale, cannot be masked elsewhere)")
-    res.check(any("expected exactly 1" in f for f in g.check_count_phrases(
-        ["widget site has three gadgets", "a second widget site has three gadgets"], one, 3, "x")),
-        "count: duplicated/relocated combined match (>1) -> finding")
-    # THE FP/MASK LOCK (0015): the pattern requires the count NEXT TO its anchor, so a bare count fragment
-    # elsewhere (wrong or right) is neither required nor flagged — closes both the same-unit mask and the
-    # unrelated-prose false positive that a bare-template scan had.
-    res.check(g.check_count_phrases(
-        ["widget site has three gadgets", "the shed nearby has nine gadgets"], one, 3, "x") == [],
-        "count: a bare fragment not adjacent to the anchor is ignored (mask + FP closed)")
-    res.check(g.check_count_phrases(["anything"], [], 3, "x") != [],
-              "count: an EMPTY phrase set is a finding (no vacuous success)")
-    res.check(len(g.check_count_phrases(["widget site has twenty-one gadgets"], one, 3, "x")) == 1,
-              "count: hyphenated multi-token value caught")
-    md = g._md()
-    res.check(all(any("suite of seven independent" in u for u in g._visible_units(md.parse(s))) for s in
-                  ["suite of **seven** independent", "suite of `seven` independent",
-                   "suite of ` seven ` independent", "suite of **seven**\\\nindependent"]),
-              "_visible_units renders bold / code-span (padded) / backslash-hard-break count to visible")
+    # CONTRACT (0016): scalar counts are MARKED SITES. check_count_site verifies the number ONLY inside the
+    # designated marker region — exactly one count phrase, reading the canonical value. A synthetic pattern
+    # over a synthetic region keeps the mechanism test independent of the live docs' wording. Region text is
+    # built by parsing a marked paragraph and running check_count_site on its span.
+    PAT = re.compile(rf"{g._L}widget count is {g._COUNT}{g._R}")
+    def _count_region(body):
+        src = f"<!-- skills:count-suite:begin -->\n{body}\n<!-- skills:count-suite:end -->\n"
+        tks = g._md().parse(src)
+        b, e = g._marker_token_span(tks, "count-suite")
+        return tks, b, e
+    def _cc(body, n):
+        tks, b, e = _count_region(body)
+        return g.check_count_site(tks, b, e, "count-suite", "x", PAT, "widget count is <N>", n)
+    res.check(_cc("The widget count is three today.", 3) == [], "count site: correct value in region passes")
+    res.check(len(_cc("The widget count is two today.", 3)) == 1, "count site: wrong value in region caught")
+    res.check(len(_cc("The widget total is unstated.", 3)) == 1, "count site: 0 matches (reworded) caught")
+    res.check(len(_cc("Widget count is three; widget count is three.", 3)) == 1,
+              "count site: >1 matches (duplicated in region) caught")
+    res.check(_cc("The widget count is THREE today.", 3) == [], "count site: UPPERCASE value normalized ok")
+    res.check(len(_cc("A prefix rewidget count is three.", 3)) == 1,
+              "count site: a prefixed literal ('rewidget') does not satisfy the bounded pattern")
+    # a smuggled second paragraph in the region is not a single paragraph -> finding.
+    tks, b, e = _count_region("The widget count is three.")
+    tks2 = g._md().parse("<!-- skills:count-suite:begin -->\nThe widget count is three.\n\nExtra.\n"
+                         "<!-- skills:count-suite:end -->\n")
+    b2, e2 = g._marker_token_span(tks2, "count-suite")
+    res.check(len(g.check_count_site(tks2, b2, e2, "count-suite", "x", PAT, "l", 3)) == 1,
+              "count site: region that is not a single paragraph -> finding")
+    # NORMALIZATION unit-locks (0016): case, Unicode dash, and NFKC compatibility forms all fold together.
+    res.check(g._norm("Generated From Skills‑Order") == g._norm("generated from skills-order"),
+              "_norm: casefold + Unicode non-breaking hyphen fold to the ASCII canonical form")
+    res.check(g._norm("PUBLISH-MIRROR") == "publish-mirror", "_norm: uppercase skill name normalizes")
+
+    # FAIL-CLOSED unit-locks (these back battery guards that a source mutation alone cannot prove end to
+    # end): an EMPTIED count-site registry, and an ABSENT parser, must each fail closed with their own
+    # message rather than silently pass.
+    saved = g.COUNT_SITES
+    try:
+        g.COUNT_SITES = {}
+        res.check(any("no count sites are configured" in f for f in g.check(ROOT)),
+                  "empty COUNT_SITES registry -> check() fails closed (no vacuous success)")
+    finally:
+        g.COUNT_SITES = saved
+    saved_md = g.MarkdownIt
+    try:
+        g.MarkdownIt = None
+        raised = False
+        try:
+            g.check(ROOT)
+        except g.MarkerError:
+            raised = True
+        res.check(raised, "absent parser (MarkdownIt=None) -> check() fails closed with MarkerError")
+    finally:
+        g.MarkdownIt = saved_md
 
     # 2. End-to-end on scratch copies of the REAL docs. Baseline clean; every CLAIMED guard bites.
     FULL = ("<!-- skills:improve-order:begin -->\n"
@@ -743,12 +767,8 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             "A suite of eight independent", "A suite of <span>eight</span> independent")),
         ("raw-HTML ban: tagfilter <script> in a cell", repl("README.md", LT,
             '| <script data-x="publish-mirror">learning-track</script> | tutorial + explanation | public | ~9 |')),
-        ("table header/other-column decoy (near-complete run in the header cell)", repl("README.md", HDR,
-            "| Skill (canonical order: learning-track architecture-and-decisions project-faq usage-guide "
-            "operations-runbook onboarding-companion doc-critic publish-mirror) | Diátaxis mode | Scope "
-            "| Reading grade |")),
-        ("bolded count phrase **seven**", repl("README.md", "A suite of eight independent",
-            "A suite of **seven** independent")),
+        ("bolded count in the marked region **seven**", repl("README.md",
+            "A suite of eight independent", "A suite of **seven** independent")),
         ("code-span count `seven` (0008 GPT-3)", repl("README.md", "A suite of eight independent",
             "A suite of `seven` independent")),
         ("backslash hard-break count (0009 GPT-F2)", repl("README.md", "A suite of eight independent",
@@ -784,32 +804,16 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                  "\n\n<!-- skills:improve-order:begin -->\n"
                  "**publish-mirror ⇒ doc-critic ⇒ learning-track.**\n"
                  "<!-- skills:improve-order:end -->")),
-        # 0010 BLOCKER (a regression I shipped): the PROMPT count phrase had no fixture, so a pattern
-        # that could never match rendered text passed CI green. Both halves are now locked.
-        ("prompt count phrase wrong value (0010 BLOCKER)",
-            repl("per-skill-review-prompt.md", "now **eight** skills", "now **seven** skills")),
-        ("prompt count phrase reworded away (presence-required)",
-            repl("per-skill-review-prompt.md", "now **eight** skills", "reworded away entirely")),
-        ("README count phrase reworded away (presence-required)",
+        # 0016: the count is a MARKED region; the count checks below mutate the region's number/noun. A
+        # reworded region (no "suite of <N> independent Claude skills") -> 0 matches -> CAUGHT.
+        ("README count region reworded away",
             repl("README.md", "A suite of eight independent", "A collection of eight independent")),
-        ("hyphenated count value (0010 GPT-MAJOR)",
+        ("hyphenated count value in the region",
             repl("README.md", "A suite of eight independent", "A suite of twenty-one independent")),
-        # 0011 GPT-BLOCKER-2: a suffix rewording must not satisfy the phrase. Now caught by the noun
-        # requirement (0013): "independently maintained ..." has no " skills" clause after "independent",
-        # so PRESENCE-REQUIRED fires — the canonical "... skills" phrase is genuinely gone.
-        ("suffix-reworded count phrase (whole-template, noun required)",
-            repl("README.md", "A suite of eight independent",
-                 "A suite of eight independently maintained")),
-        # 0013: the NOUN of a count phrase must itself be whole-word bounded — a suffixed noun
-        # ("... skillsets") must not satisfy "... skills". This isolates the _R right boundary (with it
-        # relaxed, "skills" matches inside "skillsets" and the stale phrase passes value-exact).
-        ("noun-suffixed count phrase (locks the _R right boundary on the noun)",
+        # a suffixed count-noun ("... skillsets") must not satisfy "... skills" (the _R right boundary).
+        ("noun-suffixed count in the region ('skillsets')",
             repl("README.md", "A suite of eight independent Claude skills.",
                  "A suite of eight independent Claude skillsets.")),
-        # …and a PREFIX evasion: "know eight skills" contains "now eight skills". Without the left
-        # boundary that substring satisfies the phrase while the canonical sentence is gone.
-        ("prefix-substring count evasion (locks the left boundary)",
-            repl("per-skill-review-prompt.md", "now **eight** skills", "know eight skills")),
         # 0011 MINOR-1: a competing enumeration inside a FENCED block renders visibly, so the competing
         # scan must read fence content, not only inline tokens.
         ("competing near-complete run inside a fenced block",
@@ -827,8 +831,8 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             repl("README.md", "<!-- skills:tree:end -->",
                  "\nActually the order is publish-mirror, then doc-critic.\n\n"
                  "<!-- skills:tree:end -->")),
-        # deliberately name-free: a decoy naming skills would be caught by _table_stray_names instead,
-        # leaving the region grammar unproven (which is how it hid for eight rounds).
+        # deliberately name-free: this isolates _table_names' region grammar (a stray paragraph in the
+        # marked table region), independent of the competing scan.
         ("in-region smuggle: stray paragraph inside the table region",
             repl("README.md", "<!-- skills:table:end -->",
                  "\nNote: an unrelated sentence smuggled inside the marked region.\n\n"
@@ -846,15 +850,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                 (t / "README.md").read_text(encoding="utf-8")
                 .replace(FULL, "(the sequence now lives in the appendix)")
                 .rstrip() + "\n\n## Appendix: generated sequence\n\n" + FULL + "\n", encoding="utf-8")),
-        # 0013 BLOCKER-1 (FALSE NEGATIVE): the count template stopped at "independent", so rewording the
-        # sentence's NOUN away ("... independent reviewers.") kept the right number in a truncated match
-        # and reported clean. Requiring the noun makes this trip presence-required.
-        ("count phrase reworded, noun dropped (FN closed)",
+        # 0016: rewording the marked count region's noun away ("... independent reviewers.") -> the count
+        # pattern no longer matches in the region -> CAUGHT.
+        ("count region reworded, noun dropped",
             repl("README.md", "A suite of eight independent Claude skills.",
                  "A suite of eight independent reviewers.")),
-        # the build-all phrase, now bound to its "+ emit" site, still value-checks its own occurrence.
-        ("build-all count wrong value (bound to its + emit site)",
-            repl("README.md", "build all eight + emit", "build all seven + emit")),
     ]
     for name, mut in cases:
         f = scratch(mut)
@@ -900,42 +900,33 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     ORDER8 = ["learning-track", "architecture-and-decisions", "project-faq", "usage-guide",
               "operations-runbook", "onboarding-companion", "doc-critic", "publish-mirror"]
 
-    # --- 0014 BLOCKER-2: count checks must be LOCATION-BOUND. For EACH of the five count sites: masking
-    #     the real sentence (dropping its closed template) is CAUGHT; an unrelated sentence elsewhere that
-    #     shares the template with a WRONG number stays CLEAN (no document-wide scan → no FP, no mask).
-    #     (label, file, real_substring_to_break, replacement, unrelated_prose_appended)
-    COUNT_SITES = [
-        ("suite-count", "README.md", "A suite of eight independent Claude skills.",
-         "A suite of eight independent reviewers evaluate the docs.",
-         "Aside: a suite of nine independent Claude skills lives in some other repo."),
-        ("copies-count", "README.md", "eight copies of the house style", "many copies of the house style",
-         "Aside: keeping nine copies of the house style would be wasteful."),
-        ("build-count", "README.md", "build all eight + emit dist/MANIFEST.sha256",
-         "build all the skills and emit the manifest",
-         "Aside: a fork might build all nine + emit dist/MANIFEST.sha256 instead."),
-        ("N-skill-suite", "per-skill-review-prompt.md", "eight-skill documentation suite",
-         "multi-skill documentation suite",
-         "Aside: a nine-skill documentation suite is purely hypothetical."),
-        ("now-N-skills", "per-skill-review-prompt.md", "now **eight** skills", "now a larger set of skills",
-         "Aside: some roadmap says now nine skills, hypothetically."),
-    ]
     def _append(fname, extra):
         return lambda t: (t / fname).write_text(
             (t / fname).read_text(encoding="utf-8").rstrip() + "\n\n" + extra + "\n", encoding="utf-8")
-    for label, fname, old, new, unrelated in COUNT_SITES:
-        caught = scratch(repl(fname, old, new))
-        res.check(len(caught) >= 1, f"count site '{label}': masking the real sentence is CAUGHT",
+
+    # --- 0016 counts are MARKED SITES. For EACH real count site: a wrong number IN THE MARKED REGION is
+    #     CAUGHT. A wrong count in unrelated prose ELSEWHERE is NOT flagged (checked only in the region, so
+    #     masking-by-restatement and document-wide false positives are gone). Normalization: an UPPERCASE
+    #     value in the region stays clean.
+    COUNT_SITES_LIVE = [
+        ("count-suite", "README.md", "A suite of eight independent Claude skills.",
+         "A suite of nine independent Claude skills."),
+        ("count-nskill", "per-skill-review-prompt.md",
+         "an eight-skill documentation suite", "an nine-skill documentation suite"),
+    ]
+    for site, fname, real, wrong in COUNT_SITES_LIVE:
+        caught = scratch(repl(fname, real, wrong))
+        res.check(len(caught) >= 1, f"count site '{site}': a wrong number in the marked region is CAUGHT",
                   (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
-        clean = scratch(_append(fname, unrelated))
-        res.check(clean == [], f"count site '{label}': unrelated prose sharing the template is NOT flagged",
-                  "; ".join(clean)[:70] or "clean")
-    # The BRIDGE bypass specifically (locks the CLOSED template): a sentence that keeps a `{0,3}`-word
-    # path from "independent" to "skills" but counts something else ("independent reviewers evaluates
-    # skills") must be CAUGHT — a wildcard-bridge template would have matched it and passed.
-    bridge = scratch(repl("README.md", "A suite of eight independent Claude skills.",
-                          "A suite of eight independent reviewers evaluates skills."))
-    res.check(len(bridge) >= 1, "count: a wildcard-bridge rewording is CAUGHT (closed template)",
-              (bridge[0][:60] if bridge else "NOT CAUGHT (clean!)"))
+    # a wrong count in UNRELATED prose outside any marked region -> NOT flagged (site-bound, no doc-wide FP,
+    # no masking: the real region still reads eight).
+    aside = scratch(_append("README.md", "Aside: a suite of nine independent Claude skills lives elsewhere."))
+    res.check(aside == [], "count: a wrong count in unrelated prose (outside the region) is NOT flagged",
+              "; ".join(aside)[:70] or "clean")
+    upper = scratch(repl("README.md", "A suite of eight independent Claude skills.",
+                         "A suite of EIGHT independent Claude skills."))
+    res.check(upper == [], "count: an UPPERCASE value in the region is normalized (stays clean)",
+              "; ".join(upper)[:70] or "clean")
 
     # --- 0014 BLOCKER-3: anchors must be UNIQUE. For EACH of the five sites: CLONING the anchor next to a
     #     relocated block (original site left empty) is caught (uniqueness branch); RELOCATING the block
@@ -989,22 +980,21 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(ok == [], "a two-item skill list is NOT flagged (list aggregation respects the threshold)",
               "; ".join(ok)[:70] or "clean")
 
-    # --- 0014 BLOCKER-4b: a competing enumeration written DOWN a non-first table column (one name per
-    #     cell) must be AGGREGATED per column — no single cell reaches threshold.
-    def _reverse_col2(t):
+    # --- 0016: a decoy enumeration in a NON-FIRST table column is deliberately NOT checked — any such
+    #     check false-positives on a legitimate cross-reference column (a "Handoff" / "Reviewed by" column
+    #     naming several skills). A legit non-first column naming many skills therefore stays CLEAN:
+    def _handoff_col(t):
         import re as _re
-        rev = list(reversed(ORDER8))
         lines = (t / "README.md").read_text(encoding="utf-8").split("\n")
         ri = 0
         for i, ln in enumerate(lines):
             m = _re.match(r"\| \*\*([a-z-]+)\*\* \| ([^|]*)\|(.*)", ln)
             if m and m.group(1) in ORDER8:
-                lines[i] = f"| **{m.group(1)}** | {rev[ri]} |{m.group(3)}"
+                lines[i] = f"| **{m.group(1)}** | hands off to {ORDER8[(ri+1) % 8]} |{m.group(3)}"
                 ri += 1
         (t / "README.md").write_text("\n".join(lines), encoding="utf-8")
-    caught = scratch(_reverse_col2)
-    res.check(len(caught) >= 1, "reversed order written down table column 2 is CAUGHT (column aggregation)",
-              (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
+    res.check(scratch(_handoff_col) == [],
+              "table: a legit cross-reference column naming skills is NOT flagged (stray-names dropped)")
 
     # --- 0014: _competing_run boundaries — look-alike names that merely CONTAIN a skill name as a
     #     substring ("project-faq-notes") are NOT the skills, so a full run of look-alikes stays CLEAN.
@@ -1022,48 +1012,21 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         return lambda t: (t / fname).write_text(
             (t / fname).read_text(encoding="utf-8").rstrip() + "\n\n" + extra + "\n", encoding="utf-8")
 
-    # --- 0015 BLOCKER-1: count checks bind the count to its ADJACENT anchor. Rewording the site's count
-    #     so NO count sits next to the anchor -> zero matches -> CAUGHT, for EACH of the five sites. (A
-    #     decoy placed ADJACENT to the anchor is a valid canonical restatement, not a mask — see the
-    #     exactly-one duplicate case below; a bare count FAR from the anchor cannot rescue it — see next.)
-    MASK_SITES = [
-        ("suite", "README.md", "A suite of eight independent Claude skills.",
-         "A suite of eight independent reviewers evaluate the docs."),
-        ("copies", "README.md", "eight copies of the house style", "many copies of the house style"),
-        ("build", "README.md", "build all eight + emit dist/MANIFEST.sha256",
-         "build every skill and emit the manifest"),
-        ("n-skill", "per-skill-review-prompt.md", "eight-skill documentation suite",
-         "multi-skill documentation suite"),
-        ("now-n", "per-skill-review-prompt.md", "now **eight** skills", "now a larger set of skills"),
-    ]
-    for label, fname, old, new in MASK_SITES:
-        caught = scratch(repl(fname, old, new))
-        res.check(len(caught) >= 1, f"count site '{label}': rewording the count away from its anchor -> CAUGHT",
-                  (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
-    # reword the site's count AND append a BARE correct-count fragment FAR from any anchor -> still CAUGHT
-    # (the far fragment is not adjacent to the anchor, so it cannot mask the drift — the BLOCKER-1 escape).
-    masked = scratch(lambda t: (t / "README.md").write_text(
-        (t / "README.md").read_text(encoding="utf-8")
-        .replace("A suite of eight independent Claude skills.", "A suite of eight independent reviewers.")
-        .rstrip() + "\n\nElsewhere: a suite of eight independent Claude skills, unrelated.\n", encoding="utf-8"))
-    res.check(len(masked) >= 1, "count: reword site + a bare decoy FAR from the anchor is still CAUGHT",
-              (masked[0][:60] if masked else "NOT CAUGHT (clean!)"))
-    # duplicating the FULL canonical count sentence (count + anchor) -> >1 match -> CAUGHT (exactly-one).
-    dup = scratch(_app("README.md",
-        "Note: a suite of nine independent Claude skills. Six turn a software project into documentation."))
-    res.check(len(dup) >= 1, "count: a duplicated/relocated full canonical sentence (>1 match) is CAUGHT",
-              (dup[0][:60] if dup else "NOT CAUGHT (clean!)"))
-    # same-unit WRONG count that is NOT adjacent to the anchor -> NOT flagged (FP closed).
-    fp = scratch(repl("README.md", "each in a distinct Diátaxis mode",
-        "each in a distinct Diátaxis mode (unlike a suite of nine independent Claude skills)"))
-    res.check(fp == [], "count: a same-unit wrong count not adjacent to the anchor is NOT flagged (FP)",
-              "; ".join(fp)[:70] or "clean")
-    # a legit rewording that WIDENS the gap within tolerance stays CLEAN (the gap window is generous
-    # enough for ordinary editing — "Six of them turn ..." rather than "Six turn ...").
-    widegap = scratch(repl("README.md", "skills. Six turn a software project",
-                           "skills. Six of them turn a software project"))
-    res.check(widegap == [], "count: a legit wider-gap rewording (correct count) stays CLEAN",
-              "; ".join(widegap)[:70] or "clean")
+    # --- 0016 competing: a near-complete run in a BLOCKQUOTE (one name per quoted paragraph) and an
+    #     UPPERCASE run are CAUGHT (container aggregation + normalization); nested list-in-blockquote too.
+    bq = "\n".join(f"> {nm}\n>" for nm in ORDER8)
+    res.check(len(scratch(_app("README.md", bq))) >= 1,
+              "competing: a blockquote of one skill per quoted paragraph is CAUGHT (container aggregation)")
+    res.check(len(scratch(_app("README.md", "> see:\n> " + "\n> ".join(f"- {nm}" for nm in ORDER8)))) >= 1,
+              "competing: a nested list inside a blockquote is CAUGHT")
+    res.check(len(scratch(_app("README.md", "Order: " + ", ".join(nm.upper() for nm in ORDER8) + "."))) >= 1,
+              "competing: an UPPERCASE comma run is CAUGHT (normalization)")
+    res.check(len(scratch(_app("per-skill-review-prompt.md",
+              "Order: " + ", ".join(nm.upper() for nm in ORDER8) + "."))) >= 1,
+              "competing: an UPPERCASE run in the PROMPT is CAUGHT")
+    # a two-skill blockquote is a legit cross-reference -> CLEAN (below threshold).
+    res.check(scratch(_app("README.md", "> learning-track\n>\n> project-faq")) == [],
+              "competing: a two-skill blockquote is NOT flagged")
 
     # --- 0015 BLOCKER-2: _anchor_occurrences counts textual matches across ALL visible units, INCLUDING
     #     fences. For EACH site: a fenced copy of the anchor makes it non-unique -> CAUGHT (an inline-only
@@ -1125,53 +1088,21 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(legit == [], "legit prose naming skills across SEPARATE lists is NOT flagged (per-container)",
               "; ".join(legit)[:70] or "clean")
 
-    # --- 0015 BLOCKER-3 tables: split across non-first columns (diagonal) and across header cells.
-    def _split_cols(t):
-        import re as _re
-        lines = (t / "README.md").read_text(encoding="utf-8").split("\n"); ri = 0
-        for i, ln in enumerate(lines):
-            m = _re.match(r"\| \*\*([a-z-]+)\*\* \| ([^|]*)\| ([^|]*)\|(.*)", ln)
-            if m and m.group(1) in ORDER8:
-                c2 = ORDER8[ri] if ri < 4 else m.group(2).strip()
-                c3 = ORDER8[ri] if ri >= 4 else m.group(3).strip()
-                lines[i] = f"| **{m.group(1)}** | {c2} | {c3} |{m.group(4)}"; ri += 1
-        (t / "README.md").write_text("\n".join(lines), encoding="utf-8")
-    res.check(len(scratch(_split_cols)) >= 1,
-              "table: run split diagonally across cols 2 & 3 (each < threshold) is CAUGHT (blob)")
-    def _split_header(t):
-        hdr = "| Skill | Diátaxis mode | Scope | Reading grade |"
-        new_hdr = ("| Skill (learning-track architecture-and-decisions) | Diátaxis (project-faq usage-guide) "
-                   "| Scope (operations-runbook onboarding-companion) | Grade (doc-critic publish-mirror) |")
-        (t / "README.md").write_text((t / "README.md").read_text(encoding="utf-8").replace(hdr, new_hdr),
-                                     encoding="utf-8")
-    res.check(len(scratch(_split_header)) >= 1,
-              "table: run split 2-per-cell across the header (each cell < threshold) is CAUGHT (blob)")
-    # a genuine 2-row reference table is NOT a competing table (MAJOR-8) -> CLEAN.
+    # a genuine 2-row reference table (an OUTSIDE table) is NOT a competing table -> CLEAN.
     ref = scratch(_app("README.md", "| Skill | Note |\n|---|---|\n| learning-track | a |\n| doc-critic | b |"))
-    res.check(ref == [], "a 2-row reference table is NOT flagged as competing (MAJOR-8)",
+    res.check(ref == [], "a 2-row reference table is NOT flagged as competing",
               "; ".join(ref)[:70] or "clean")
 
-    # --- 0015 BLOCKER-4: a missing skills-order fails closed via load_order's own message.
+    # --- a missing skills-order fails closed via load_order's own message.
     no_order = scratch(lambda t: (t / "skills-order").unlink())
     res.check(any("skills-order not found" in f for f in no_order),
               "missing skills-order -> load_order fails closed with its own message",
               (no_order[0][:60] if no_order else "clean!"))
 
-    # --- 0015 MAJOR-5 (a NEGATIVE that stays clean AND underpins the REDUNDANT number-only slot): benign
-    #     prose INSIDE the anchored blockquote is not read as a count, because the combined pattern requires
-    #     the count next to "The suite is now". This is clean under the number-only slot AND under a broad
-    #     slot (the revert-battery declares that redundancy, verified by this fixture staying clean).
-    benign_inline = scratch(repl("per-skill-review-prompt.md", "The suite is now **eight** skills:",
-        "The suite is now **eight** skills (we now review skills before every release):"))
-    res.check(benign_inline == [], "benign 'now review skills' INSIDE the anchored blockquote stays clean",
-              "; ".join(benign_inline)[:70] or "clean")
-
-    # 0011 MINOR-2: a missing governed doc must fail the COUNT loop locally (its own message), not merely
-    # be caught as a side effect of the site loop — otherwise the fail-closed property is emergent, and a
-    # future refactor could decouple the loops and reopen a silent skip.
+    # a missing governed doc fails closed at its COUNT SITE (its own message), not merely as a side effect.
     missing = scratch(lambda t: (t / "per-skill-review-prompt.md").unlink())
-    res.check(any("count phrases cannot be verified" in f for f in missing),
-              "missing governed doc -> the count loop fails closed with its own message",
+    res.check(any("count site 'count-nskill' cannot be verified" in f for f in missing),
+              "missing governed doc -> the count site fails closed with its own message",
               (missing[0][:60] if missing else "clean!"))
 
     # empty source fails closed via check()'s OWN guard (0008 F5: isolate — assert the specific message,

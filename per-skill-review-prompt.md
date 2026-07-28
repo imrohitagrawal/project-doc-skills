@@ -32,7 +32,11 @@ Then paste everything between the lines.
 
 ---
 
-You are improving ONE skill in an eight-skill documentation suite: **{SKILL_NAME}**. The suite shares
+<!-- skills:count-nskill:begin -->
+You are improving ONE skill in an eight-skill documentation suite: **{SKILL_NAME}**.
+<!-- skills:count-nskill:end -->
+
+The suite shares
 canonical files (`house-style.md`, `project-profile.md`, `licensing-and-credits.md`,
 `render-contract.md`, `publish-targets.yaml`, `verify.py`, `ci/`) that live in `shared/` and are
 copied into each packaged skill by `build-skills.sh`. Work inside the attached workspace.
