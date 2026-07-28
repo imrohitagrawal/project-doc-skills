@@ -649,39 +649,31 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(_raises(f"{A}\n\n{E}\n\n**x**\n\n{B}\n"),
               "_marker_token_span raises when end precedes begin (locks the order branch)")
 
-    # CONTRACT (0010 + 0014): presence-required + value-exact + LOCATION-BOUND. Each phrase is
-    # (site_anchor, pattern, label); the template is checked ONLY inside the single rendered unit carrying
-    # its anchor. `units` is a list of per-unit strings. A synthetic anchor keeps the mechanism test
-    # independent of the live docs' wording.
-    ANC = "at the widget site"
-    one = [(ANC, re.compile(rf"{g._L}suite of {g._COUNT} independent Claude skills{g._R}", re.IGNORECASE),
-            "a suite of <N> independent Claude skills")]
-    res.check(g.check_count_phrases(
-        ["a suite of three independent Claude skills — at the widget site", "unrelated noise"], one, 3, "x")
-        == [], "count phrase: correct value at its located site passes")
-    res.check(len(g.check_count_phrases(
-        ["a suite of two independent Claude skills at the widget site"], one, 3, "x")) == 1,
-        "count phrase: wrong value at its site caught")
-    res.check(any("not found at its site" in f for f in g.check_count_phrases(
-        ["at the widget site, but the phrase was reworded away entirely"], one, 3, "x")),
-        "count phrase: reworded-away AT its site is a finding (masking closed)")
+    # CONTRACT (0010 + 0015): each phrase is (combined_pattern, label); the pattern binds the count slot to
+    # a distinctive ADJACENT anchor. check_count_phrases counts the pattern's matches across ALL units:
+    # exactly-one required, then value-exact. A bare fragment not adjacent to the anchor neither satisfies
+    # nor trips. A synthetic pattern keeps the mechanism test independent of the live docs' wording.
+    COMB = re.compile(rf"widget site has {g._COUNT} gadgets", re.IGNORECASE)
+    one = [(COMB, "widget site has <N> gadgets")]
+    res.check(g.check_count_phrases(["the widget site has three gadgets today", "unrelated noise"],
+                                    one, 3, "x") == [], "count: exactly one correct combined match passes")
+    res.check(len(g.check_count_phrases(["widget site has two gadgets"], one, 3, "x")) == 1,
+              "count: wrong value at the combined match caught")
+    res.check(any("expected exactly 1" in f for f in g.check_count_phrases(["nothing relevant here"],
+              one, 3, "x")), "count: zero matches -> finding (reworded/stale, cannot be masked elsewhere)")
     res.check(any("expected exactly 1" in f for f in g.check_count_phrases(
-        ["a suite of three independent Claude skills"], one, 3, "x")),
-        "count phrase: anchor absent -> finding (site cannot be located)")
-    res.check(any("expected exactly 1" in f for f in g.check_count_phrases(
-        ["one at the widget site here", "two at the widget site there"], one, 3, "x")),
-        "count phrase: anchor in >1 unit -> finding (duplicated site)")
-    # THE FP LOCK (0014): a template occurrence in a NON-anchored unit is neither required nor flagged, so
-    # unrelated prose that shares the template with a WRONG number is ignored.
+        ["widget site has three gadgets", "a second widget site has three gadgets"], one, 3, "x")),
+        "count: duplicated/relocated combined match (>1) -> finding")
+    # THE FP/MASK LOCK (0015): the pattern requires the count NEXT TO its anchor, so a bare count fragment
+    # elsewhere (wrong or right) is neither required nor flagged — closes both the same-unit mask and the
+    # unrelated-prose false positive that a bare-template scan had.
     res.check(g.check_count_phrases(
-        ["a suite of three independent Claude skills at the widget site",
-         "unrelated: a suite of nine independent Claude skills mentioned elsewhere"], one, 3, "x") == [],
-        "count phrase: template in a NON-anchored unit is ignored (FP closed)")
+        ["widget site has three gadgets", "the shed nearby has nine gadgets"], one, 3, "x") == [],
+        "count: a bare fragment not adjacent to the anchor is ignored (mask + FP closed)")
     res.check(g.check_count_phrases(["anything"], [], 3, "x") != [],
-              "count phrase: an EMPTY phrase set is a finding (no vacuous success)")
-    res.check(len(g.check_count_phrases(
-        ["a suite of twenty-one independent Claude skills at the widget site"], one, 3, "x")) == 1,
-        "count phrase: hyphenated multi-token value caught")
+              "count: an EMPTY phrase set is a finding (no vacuous success)")
+    res.check(len(g.check_count_phrases(["widget site has twenty-one gadgets"], one, 3, "x")) == 1,
+              "count: hyphenated multi-token value caught")
     md = g._md()
     res.check(all(any("suite of seven independent" in u for u in g._visible_units(md.parse(s))) for s in
                   ["suite of **seven** independent", "suite of `seven` independent",
@@ -767,10 +759,15 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             FULL + "\n\nAlternatively, the same order: " + BROKEN_RUN + ".")),
         # 0009 MINOR 2: lock the two guards that previously had no fixture (they worked, but a no-op
         # revert would have passed CI). Now reverting either reddens the suite.
-        ("_extra_skill_table: a second skill table after the marked block",
+        # 0015: a second table whose cells hold a NEAR-COMPLETE run (>= n-1) is a competing table. A
+        # 2-row reference table is NOT (that negative is locked below) — the fixed ">= 2 first cells" rule
+        # that rejected it is gone.
+        ("competing second table (all skills down column two after the marked block)",
             repl("README.md", "<!-- skills:table:end -->",
-                 "<!-- skills:table:end -->\n\n| Skill | Note |\n|---|---|\n"
-                 "| learning-track | a |\n| doc-critic | b |\n")),
+                 "<!-- skills:table:end -->\n\n| Step | Skill |\n|---|---|\n"
+                 + "\n".join(f"| {i+1} | {nm} |" for i, nm in enumerate(
+                     ["learning-track", "architecture-and-decisions", "project-faq", "usage-guide",
+                      "operations-runbook", "onboarding-companion", "doc-critic", "publish-mirror"])) + "\n")),
         ("duplicate marker pair (improve-order)", repl("README.md", FULL, FULL + "\n\nagain:\n\n" + FULL)),
         # An EMPTY second marker pair. NOTE (corrected in 0011): this does NOT isolate the duplicate
         # branch — with duplicates admitted, the empty first region fails the pure-source comparison and
@@ -1019,6 +1016,155 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     ok = scratch(repl("README.md", "## Build", "Unrelated drafts index:\n\n" + prefixed + "\n\n## Build"))
     res.check(ok == [], "prefix look-alikes ('draft-name') are NOT a competing run (locks the _L boundary)",
               "; ".join(ok)[:70] or "clean")
+
+    # ============================ 0015 (round-11 GPT BLOCKERs) ============================
+    def _app(fname, extra):
+        return lambda t: (t / fname).write_text(
+            (t / fname).read_text(encoding="utf-8").rstrip() + "\n\n" + extra + "\n", encoding="utf-8")
+
+    # --- 0015 BLOCKER-1: count checks bind the count to its ADJACENT anchor. Rewording the site's count
+    #     so NO count sits next to the anchor -> zero matches -> CAUGHT, for EACH of the five sites. (A
+    #     decoy placed ADJACENT to the anchor is a valid canonical restatement, not a mask — see the
+    #     exactly-one duplicate case below; a bare count FAR from the anchor cannot rescue it — see next.)
+    MASK_SITES = [
+        ("suite", "README.md", "A suite of eight independent Claude skills.",
+         "A suite of eight independent reviewers evaluate the docs."),
+        ("copies", "README.md", "eight copies of the house style", "many copies of the house style"),
+        ("build", "README.md", "build all eight + emit dist/MANIFEST.sha256",
+         "build every skill and emit the manifest"),
+        ("n-skill", "per-skill-review-prompt.md", "eight-skill documentation suite",
+         "multi-skill documentation suite"),
+        ("now-n", "per-skill-review-prompt.md", "now **eight** skills", "now a larger set of skills"),
+    ]
+    for label, fname, old, new in MASK_SITES:
+        caught = scratch(repl(fname, old, new))
+        res.check(len(caught) >= 1, f"count site '{label}': rewording the count away from its anchor -> CAUGHT",
+                  (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
+    # reword the site's count AND append a BARE correct-count fragment FAR from any anchor -> still CAUGHT
+    # (the far fragment is not adjacent to the anchor, so it cannot mask the drift — the BLOCKER-1 escape).
+    masked = scratch(lambda t: (t / "README.md").write_text(
+        (t / "README.md").read_text(encoding="utf-8")
+        .replace("A suite of eight independent Claude skills.", "A suite of eight independent reviewers.")
+        .rstrip() + "\n\nElsewhere: a suite of eight independent Claude skills, unrelated.\n", encoding="utf-8"))
+    res.check(len(masked) >= 1, "count: reword site + a bare decoy FAR from the anchor is still CAUGHT",
+              (masked[0][:60] if masked else "NOT CAUGHT (clean!)"))
+    # duplicating the FULL canonical count sentence (count + anchor) -> >1 match -> CAUGHT (exactly-one).
+    dup = scratch(_app("README.md",
+        "Note: a suite of nine independent Claude skills. Six turn a software project into documentation."))
+    res.check(len(dup) >= 1, "count: a duplicated/relocated full canonical sentence (>1 match) is CAUGHT",
+              (dup[0][:60] if dup else "NOT CAUGHT (clean!)"))
+    # same-unit WRONG count that is NOT adjacent to the anchor -> NOT flagged (FP closed).
+    fp = scratch(repl("README.md", "each in a distinct Diátaxis mode",
+        "each in a distinct Diátaxis mode (unlike a suite of nine independent Claude skills)"))
+    res.check(fp == [], "count: a same-unit wrong count not adjacent to the anchor is NOT flagged (FP)",
+              "; ".join(fp)[:70] or "clean")
+    # a legit rewording that WIDENS the gap within tolerance stays CLEAN (the gap window is generous
+    # enough for ordinary editing — "Six of them turn ..." rather than "Six turn ...").
+    widegap = scratch(repl("README.md", "skills. Six turn a software project",
+                           "skills. Six of them turn a software project"))
+    res.check(widegap == [], "count: a legit wider-gap rewording (correct count) stays CLEAN",
+              "; ".join(widegap)[:70] or "clean")
+
+    # --- 0015 BLOCKER-2: _anchor_occurrences counts textual matches across ALL visible units, INCLUDING
+    #     fences. For EACH site: a fenced copy of the anchor makes it non-unique -> CAUGHT (an inline-only
+    #     count would miss the fenced copy and pass).
+    for site, fname, anchor, bm in ANCHOR_SITES:
+        fenced = scratch(_app(fname, "```\n" + anchor + "\n```"))
+        res.check(len(fenced) >= 1, f"anchor '{site}': a fenced copy of the anchor is counted -> CAUGHT",
+                  (fenced[0][:60] if fenced else "NOT CAUGHT (clean!)"))
+    # the full escape for improve-order: lead-in hidden in a fence at the abandoned site + a plain clone
+    # beside the relocated block. Both copies are reader-visible; occ==2 -> CAUGHT.
+    def _fenced_reloc(t):
+        pre, block, post = _cut_block((t / "README.md").read_text(encoding="utf-8"),
+                                      "<!-- skills:improve-order:begin -->")
+        lead = "Improve a skill in its own focused session, in this order (producers before consumers):"
+        pre2 = pre.replace(lead, "```\n" + lead + "\n```")
+        new = pre2.rstrip() + "\n\n(block moved to appendix)" + post
+        new = new.rstrip() + f"\n\n## Appendix\n\nReminder: {lead}\n\n{block}\n"
+        (t / "README.md").write_text(new, encoding="utf-8")
+    res.check(len(scratch(_fenced_reloc)) >= 1,
+              "anchor: fenced lead-in at abandoned site + plain clone beside relocated block -> CAUGHT")
+    # a lead-in SPLIT across a paragraph break (so a per-unit anchor count would miss it) at the abandoned
+    # site, with a clean anchor copy beside the relocated block -> CAUGHT (anchor counted over joined text).
+    def _split_reloc(t):
+        lead = "Improve a skill in its own focused session, in this order (producers before consumers):"
+        pre, block, post = _cut_block((t / "README.md").read_text(encoding="utf-8"),
+                                      "<!-- skills:improve-order:begin -->")
+        pre2 = pre.replace(lead, "Improve a skill in its own focused session, in this order\n\n"
+                                 "(producers before consumers):")
+        new = pre2.rstrip() + "\n\n**learning-track → project-faq → doc-critic.**" + post
+        new = new.rstrip() + f"\n\n## Appendix\n\n{lead}\n\n{block}\n"
+        (t / "README.md").write_text(new, encoding="utf-8")
+    res.check(len(scratch(_split_reloc)) >= 1,
+              "anchor: lead-in SPLIT across a paragraph break + clone beside relocated block -> CAUGHT")
+
+    # --- 0015 BLOCKER-3: competing enumerations in ANY shape outside the marked blocks, no separator.
+    #     (A run split across SEPARATE containers so no one is near-complete is a DISCLOSED residual —
+    #     aggregating across unrelated containers would FP on legit prose; the negative below locks that.)
+    ROUTES = [
+        ("comma paragraph", "README.md", "The full order: " + ", ".join(ORDER8) + "."),
+        ("separator-free fence", "README.md", "```\n" + "\n".join(ORDER8) + "\n```"),
+        ("ordered list", "README.md", "\n".join(f"{i+1}. {nm}" for i, nm in enumerate(ORDER8))),
+        ("fenced name per list item (one list)", "README.md",
+         "\n".join(f"- see\n  ```\n  {nm}\n  ```" for nm in ORDER8)),
+        ("comma paragraph in the PROMPT", "per-skill-review-prompt.md", "Order: " + ", ".join(ORDER8) + "."),
+    ]
+    for label, fname, extra in ROUTES:
+        caught = scratch(_app(fname, extra))
+        res.check(len(caught) >= 1, f"competing route '{label}' is CAUGHT",
+                  (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
+    # FP-SAFETY (the reason aggregation is PER container, not whole-document): legitimate prose that names
+    # several skills across SEPARATE lists — the shape a red-team pass flagged as a false positive under
+    # whole-file list aggregation — must stay CLEAN.
+    legit = scratch(_app("README.md",
+        "## Documentation types\n\n- Tutorials come from `learning-track`\n"
+        "- Explanations from `architecture-and-decisions`\n- Reference from `project-faq`\n"
+        "- How-tos from `usage-guide`\n\nSome prose about the process.\n\n## More types\n\n"
+        "- Runbooks from `operations-runbook`\n- Onboarding from `onboarding-companion`\n"
+        "- Review from `doc-critic`\n- Publishing from `publish-mirror`"))
+    res.check(legit == [], "legit prose naming skills across SEPARATE lists is NOT flagged (per-container)",
+              "; ".join(legit)[:70] or "clean")
+
+    # --- 0015 BLOCKER-3 tables: split across non-first columns (diagonal) and across header cells.
+    def _split_cols(t):
+        import re as _re
+        lines = (t / "README.md").read_text(encoding="utf-8").split("\n"); ri = 0
+        for i, ln in enumerate(lines):
+            m = _re.match(r"\| \*\*([a-z-]+)\*\* \| ([^|]*)\| ([^|]*)\|(.*)", ln)
+            if m and m.group(1) in ORDER8:
+                c2 = ORDER8[ri] if ri < 4 else m.group(2).strip()
+                c3 = ORDER8[ri] if ri >= 4 else m.group(3).strip()
+                lines[i] = f"| **{m.group(1)}** | {c2} | {c3} |{m.group(4)}"; ri += 1
+        (t / "README.md").write_text("\n".join(lines), encoding="utf-8")
+    res.check(len(scratch(_split_cols)) >= 1,
+              "table: run split diagonally across cols 2 & 3 (each < threshold) is CAUGHT (blob)")
+    def _split_header(t):
+        hdr = "| Skill | Diátaxis mode | Scope | Reading grade |"
+        new_hdr = ("| Skill (learning-track architecture-and-decisions) | Diátaxis (project-faq usage-guide) "
+                   "| Scope (operations-runbook onboarding-companion) | Grade (doc-critic publish-mirror) |")
+        (t / "README.md").write_text((t / "README.md").read_text(encoding="utf-8").replace(hdr, new_hdr),
+                                     encoding="utf-8")
+    res.check(len(scratch(_split_header)) >= 1,
+              "table: run split 2-per-cell across the header (each cell < threshold) is CAUGHT (blob)")
+    # a genuine 2-row reference table is NOT a competing table (MAJOR-8) -> CLEAN.
+    ref = scratch(_app("README.md", "| Skill | Note |\n|---|---|\n| learning-track | a |\n| doc-critic | b |"))
+    res.check(ref == [], "a 2-row reference table is NOT flagged as competing (MAJOR-8)",
+              "; ".join(ref)[:70] or "clean")
+
+    # --- 0015 BLOCKER-4: a missing skills-order fails closed via load_order's own message.
+    no_order = scratch(lambda t: (t / "skills-order").unlink())
+    res.check(any("skills-order not found" in f for f in no_order),
+              "missing skills-order -> load_order fails closed with its own message",
+              (no_order[0][:60] if no_order else "clean!"))
+
+    # --- 0015 MAJOR-5 (a NEGATIVE that stays clean AND underpins the REDUNDANT number-only slot): benign
+    #     prose INSIDE the anchored blockquote is not read as a count, because the combined pattern requires
+    #     the count next to "The suite is now". This is clean under the number-only slot AND under a broad
+    #     slot (the revert-battery declares that redundancy, verified by this fixture staying clean).
+    benign_inline = scratch(repl("per-skill-review-prompt.md", "The suite is now **eight** skills:",
+        "The suite is now **eight** skills (we now review skills before every release):"))
+    res.check(benign_inline == [], "benign 'now review skills' INSIDE the anchored blockquote stays clean",
+              "; ".join(benign_inline)[:70] or "clean")
 
     # 0011 MINOR-2: a missing governed doc must fail the COUNT loop locally (its own message), not merely
     # be caught as a side effect of the site loop — otherwise the fail-closed property is emergent, and a

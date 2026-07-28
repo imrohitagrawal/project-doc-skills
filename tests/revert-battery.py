@@ -40,6 +40,7 @@ Run before requesting any review of this gate:
 from __future__ import annotations
 import argparse
 import ast
+import difflib
 import hashlib
 import os
 import shutil
@@ -170,12 +171,10 @@ GUARDS: list[tuple] = [
     ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED"),
     ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED"),
     ("count: whole check", _stub("check_count_phrases", "[]"), ("check_count_phrases",), "RED"),
-    ("count: LOCATION-BOUND (per-site, not document-wide)",
-     _sub("located = [u for u in units if anchor in u]", 'located = [" ".join(units)]'),
-     ("check_count_phrases",), "RED"),
-    ("count: closed template (no wildcard bridge)",
-     _sub("suite of {_COUNT} independent Claude skills",
-          "suite of {_COUNT} independent(?: [A-Za-z]+){{0,3}} skills"),
+    ("count: exactly-one match required (rejects duplicate/relocated)",
+     _sub("if len(matches) != 1:", "if len(matches) < 1:"), ("check_count_phrases",), "RED"),
+    ("count: pattern is anchor-bound (rejects a bare fragment / same-unit mask)",
+     _sub(r'.{{0,60}}?software project into documentation{_R}', ""),
      ("README_COUNT_PHRASES",), "RED"),
     ("count: empty-phrase-set guard", _sub("    if not phrases:\n", "    if False:\n"),
      ("check_count_phrases",), "RED"),
@@ -189,20 +188,23 @@ GUARDS: list[tuple] = [
      _sub('            units.append(re.sub(r"\\s+", " ", _inline_text(t)).strip())',
           '            units.append(re.sub(r"\\s+", " ", t.content).strip())'),
      ("_visible_units",), "RED"),
-    ("competing: whole scan", _stub("_competing", "False"), ("_competing",), "RED"),
+    ("competing: whole scan", _stub("_competing_findings", "[]"), ("_competing_findings",), "RED"),
     ("competing: near-complete run required (not any two names)",
      _sub("threshold = max(2, len(order) - 1)", "threshold = 2"), ("_competing_run",), "RED"),
-    ("competing: code-block scan",
-     _sub('t.content if t.type in ("fence", "code_block") else ""', '""'), ("_competing",), "RED"),
-    ("competing: aggregate across list items (stray list)",
+    ("competing: scans code blocks too (separator-free fence)",
+     _sub('t.content if t.type in ("fence", "code_block") else ""', '""'),
+     ("_competing_findings",), "RED"),
+    ("competing: aggregate within each list container (fenced items / one-per-item)",
      _sub("if _competing_run(agg, order):", "if False and _competing_run(agg, order):"),
-     ("_competing",), "RED"),
+     ("_competing_findings",), "RED"),
+    ("competing: aggregate outside-table cells",
+     _sub("if _competing_run(allcells, order):", "if False and _competing_run(allcells, order):"),
+     ("_competing_findings",), "RED"),
     ("table: stray names outside column one", _stub("_table_stray_names", "False"),
      ("_table_stray_names",), "RED"),
-    ("table: aggregate down each non-first column",
-     _sub("for col in range(1, ncols):", "for col in range(1, 1):"), ("_table_stray_names",), "RED"),
-    ("table: no competing skill table", _stub("_extra_skill_table", "False"),
-     ("_extra_skill_table",), "RED"),
+    ("table: all-non-first-cells blob aggregation (header / column / diagonal)",
+     _sub('    blob = " ".join(header + [c for r in rows for c in r[1:]])', '    blob = ""'),
+     ("_table_stray_names",), "RED"),
     ("table: region is exactly one table",
      _sub("    if inner[0].type != \"table_open\" or inner[-1].type != \"table_close\" "
           "or inner[0].level != 0:", "    if False:"), ("_table_names",), "RED"),
@@ -218,6 +220,8 @@ GUARDS: list[tuple] = [
     ("source: empty skills/ fails closed", _sub("    if not canonical:\n", "    if False:\n"),
      ("check",), "RED"),
     ("source: skills-order permutation", _stub("validate_order", "[]"), ("validate_order",), "RED"),
+    ("source: missing skills-order fails closed", _stub("load_order", "([], [])"),
+     ("load_order",), "RED"),
     ("renderer: improve-order bytes", _stub("render_improve_order", '"**decoy.**"'),
      ("render_improve_order",), "RED"),
     ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED"),
@@ -225,11 +229,13 @@ GUARDS: list[tuple] = [
     # Two guards whose revert is genuinely covered by another guard, so a revert cannot be PROVEN by this
     # method; declared REDUNDANT with the covering guard, reported separately, NOT counted as proven.
     ("parser-absent fail-closed", _stub("_md", "None"), ("_md",), "REDUNDANT"),
-    # number-only count slot: under LOCATION-BINDING the slot is read only inside the anchored unit, where
-    # a non-numeric token in the count position fails value-exact anyway (finding either way). Its revert
-    # is covered by check_count_phrases' value-exact branch; kept in the source as belt-and-suspenders.
-    ("count: number-only slot (redundant under location-binding)",
-     _sub('_COUNT = rf"(?P<count>\\d{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"',
+    # number-only count slot: under the COMBINED anchor-bound pattern the count slot is read only where the
+    # full canonical sentence (anchor + count) sits, so a broad slot can only capture the token AT that
+    # position — a non-number there fails presence (no match) or value-exact (wrong value); either way a
+    # finding. Verified GREEN under a benign-prose-inside-the-anchored-blockquote golden fixture, so its
+    # revert is genuinely covered (not a hidden guard). Kept in the source as belt-and-suspenders.
+    ("count: number-only slot (redundant under anchor-bound patterns)",
+     _sub('_COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"',
           '_COUNT = r"(?P<count>[A-Za-z0-9][A-Za-z0-9-]{0,20}?)"'),
      ("_COUNT",), "REDUNDANT"),
 ]
@@ -250,47 +256,70 @@ def _finding_producers(src: str) -> set[str]:
       - raises MarkerError; OR
       - returns the literal None or False as a verdict; OR
       - returns a BOOLEAN-VALUED EXPRESSION — a comparison or `and`/`or`/`not` — i.e. a predicate verdict
-        (round-10: `_competing_run` returns `hits >= threshold`, `_extra_skill_table` `hits >= 1`; the old
-        literal-only rule silently missed these, so 'N/N claimed' was over a partial denominator); OR
-      - appends to a findings / out / errs accumulator (validate_order builds `errs` and returns it)."""
+        (round-10: `_competing_run` returns `hits >= threshold`); OR
+      - appends to a findings / out / errs accumulator (validate_order builds `errs`; load_order too); OR
+      - FORWARDS a verdict: returns a bare call to a function ALREADY identified as a producer (round-11:
+        `_table_stray_names` returns `_competing_run(blob, order)` — a Call, which the direct rules miss;
+        the fixpoint below re-adds it, so a delegating verdict cannot slip out of the denominator)."""
     tree = ast.parse(src)
+    fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
     out: set[str] = set()
-    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+    for name, fn in fns.items():
         for node in ast.walk(fn):
             if isinstance(node, ast.Raise):
                 exc = node.exc
-                name = getattr(getattr(exc, "func", exc), "id", None)
-                if name == "MarkerError":
-                    out.add(fn.name)
+                if getattr(getattr(exc, "func", exc), "id", None) == "MarkerError":
+                    out.add(name)
             elif isinstance(node, ast.Return) and node.value is not None:
                 v = node.value
                 if isinstance(v, ast.Constant) and v.value in (None, False):
-                    out.add(fn.name)
+                    out.add(name)
                 elif isinstance(v, (ast.Compare, ast.BoolOp, ast.UnaryOp)):
-                    out.add(fn.name)
+                    out.add(name)
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                     and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
                     and node.func.value.id in ("findings", "out", "errs"):
-                out.add(fn.name)
+                out.add(name)
+    # Fixpoint: pull in verdict-forwarders — a function whose RETURN is a bare call to a known producer.
+    changed = True
+    while changed:
+        changed = False
+        for name, fn in fns.items():
+            if name in out:
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Return) and isinstance(node.value, ast.Call) \
+                        and isinstance(node.value.func, ast.Name) and node.value.func.id in out:
+                    out.add(name)
+                    changed = True
+                    break
     return {n for n in out if not n.startswith("__")}
 
 
-def _units_touched(orig: str, patched: str) -> set[str]:
-    """The syntactic units — functions OR top-level assignment targets — whose source lines actually
-    DIFFER between `orig` and `patched`. The provenance oracle: a guard's declared `covers` must name only
-    units the mutation genuinely changed. Round-10 found a stub that mutated ONE renderer yet 'claimed'
-    four functions, and another that claimed `canonical_skills` while mutating only `check` — a claim a
-    revert can never substantiate. This maps a patch to the units it truly edits so those over-claims fail.
-    """
+def _changed_lines(orig: str, patched: str) -> set[int]:
+    """The EXACT 0-based orig line indices a patch changes, from difflib's opcodes — NOT the whole
+    first..last-diff interval. The interval form wrongly attributed an untouched function sitting BETWEEN
+    two edited ones to a two-hunk mutation (gate-reviews/0015 MAJOR-7); real hunks are precise."""
     o, p = orig.splitlines(), patched.splitlines()
-    lo = 0
-    while lo < len(o) and lo < len(p) and o[lo] == p[lo]:
-        lo += 1
-    ro, rp = len(o) - 1, len(p) - 1
-    while ro >= lo and rp >= lo and o[ro] == p[rp]:
-        ro -= 1
-        rp -= 1
-    changed = set(range(lo, ro + 1)) or {min(lo, len(o) - 1)}   # pure insertion collapses to one line
+    changed: set[int] = set()
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=o, b=p, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if i1 == i2:                       # pure insertion between orig lines i1-1 and i1
+            changed.add(min(i1, len(o) - 1))
+            if i1 - 1 >= 0:
+                changed.add(i1 - 1)
+        else:
+            changed.update(range(i1, i2))
+    return changed
+
+
+def _units_touched(orig: str, patched: str) -> set[str]:
+    """The syntactic units — functions OR top-level assignment targets — whose source lines a patch
+    genuinely changes (exact hunks, see _changed_lines). The provenance oracle: a guard's declared
+    `covers` must equal EXACTLY this set (round-10 found a stub that mutated one renderer yet 'claimed'
+    four functions; the check requires ==, not ⊆, so an under-claim is caught too)."""
+    changed = _changed_lines(orig, patched)
     tree = ast.parse(orig)
     units: set[str] = set()
     for node in ast.walk(tree):
@@ -338,21 +367,26 @@ def main() -> int:
             print(f"   [{mark}] {fn}")
     print(f"   {len(producers) - len(owed)}/{len(producers)} finding-producing functions claimed")
 
-    print("\n2b. provenance — each stub's `covers` must match the units it actually mutates")
+    print("\n2b. provenance — each stub's `covers` must EQUAL the units it actually mutates")
     orig = (ROOT / GEN).read_text(encoding="utf-8")
-    # Self-check the provenance ORACLE first (a battery whose oracle cannot fail measures nothing): a known
-    # function mutation must attribute to exactly that function, and a module-constant mutation to exactly
-    # that constant. If either is wrong, refuse to report — the over-claim check would be meaningless.
+    # Self-check the provenance ORACLE first (a battery whose oracle cannot fail measures nothing):
+    #  - a function stub attributes to exactly that function;
+    #  - a module-constant stub attributes to exactly that constant;
+    #  - a TWO-HUNK mutation of two SEPARATED functions attributes to exactly those two, and NOT to an
+    #    untouched function sitting between them (the exact-hunk requirement — gate-reviews/0015 MAJOR-7).
     if _units_touched(orig, _stub("render_pick_list", '"x"')(orig)) != {"render_pick_list"}:
         print("   PROVENANCE ORACLE BROKEN: a function stub did not attribute to that function alone")
         return 2
     if _units_touched(orig, _sub('_R = r"(?![A-Za-z0-9_-])"', '_R = r""')(orig)) != {"_R"}:
         print("   PROVENANCE ORACLE BROKEN: a module-constant stub did not attribute to that constant")
         return 2
-    if "render_improve_order" in _units_touched(orig, _stub("render_pick_list", '"x"')(orig)):
-        print("   PROVENANCE ORACLE BROKEN: a stub attributed to an untouched function")
+    two_hunk = _stub("_tree_body", '"x"')(_stub("render_improve_order", '"y"')(orig))
+    touched_two = _units_touched(orig, two_hunk)
+    if touched_two != {"render_improve_order", "_tree_body"} or "render_pick_list" in touched_two:
+        print(f"   PROVENANCE ORACLE BROKEN: two-hunk attribution wrong (got {sorted(touched_two)}; the "
+              f"untouched render_pick_list between them must NOT appear)")
         return 2
-    print("   ok — oracle attributes a known function mutation and a module-constant mutation correctly")
+    print("   ok — oracle attributes single, module-constant, and two-separated-hunk mutations exactly")
     prov_fail = []
     for name, patch, covers, _expect in GUARDS:
         patched = patch(orig)
@@ -360,13 +394,12 @@ def main() -> int:
             prov_fail.append((name, "stub does not apply to the committed source (it moved)"))
             continue
         touched = _units_touched(orig, patched)
-        overclaim = sorted(set(covers) - touched)
-        if overclaim:
-            prov_fail.append((name, f"claims {overclaim} but the mutation touches only {sorted(touched)}"))
+        if set(covers) != touched:   # EXACT: neither over- nor under-claim
+            prov_fail.append((name, f"claims {sorted(covers)} but the mutation touches {sorted(touched)}"))
     for name, why in prov_fail:
-        print(f"   [OVER-CLAIM] {name} — {why}")
+        print(f"   [MIS-CLAIM] {name} — {why}")
     if not prov_fail:
-        print(f"   ok — every stub's covers ⊆ the units it mutates ({len(GUARDS)} stubs)")
+        print(f"   ok — every stub's covers == the units it mutates ({len(GUARDS)} stubs)")
 
     print("\n3. mutation quality + verdict")
     failures, redundant, seen = [], [], {}
@@ -395,7 +428,7 @@ def main() -> int:
     for fn in owed:
         print(f"    OWED STUB: {fn}() can produce a finding but no stub claims it")
     for name, why in prov_fail:
-        print(f"    OVER-CLAIM: {name} — {why}")
+        print(f"    MIS-CLAIM: {name} — {why}")
     for name, why in failures:
         print(f"    NOT PROVEN: {name} — {why}")
     return 1 if (owed or failures or prov_fail) else 0

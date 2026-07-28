@@ -194,7 +194,7 @@ this policy (that would couple the mechanism to unrelated content):
 
 `generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
 scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
-prevent). Ten independent gate-reviews (`gate-reviews/0005`–`0014`) drove this scope.
+prevent). Eleven independent gate-reviews (`gate-reviews/0005`–`0015`) drove this scope.
 
 **It guarantees (and fixtures lock, each biting on revert — proven by `tests/revert-battery.py`, not
 asserted):**
@@ -206,17 +206,20 @@ asserted):**
 - **Each site is pinned to its lead-in, uniquely** — the markers are HTML comments that travel with the
   block, so identity alone cannot bind a block to a place; a correct block relocated to an appendix (its
   site now empty) would still be "found". Each site is anchored to a stable phrase in the paragraph that
-  introduces it, and that phrase must occur **exactly once**: moving a block **away from its lead-in**, or
-  **cloning the lead-in phrase** next to a relocated block, trips the anchor. (Moving the sole lead-in and
-  its block together is a legitimate reorganization, not drift.)
+  introduces it, and that phrase must occur **exactly once across all reader-visible units — paragraphs,
+  cells, AND fenced/indented code blocks**: moving a block **away from its lead-in**, or **cloning the
+  lead-in phrase** (even hidden in a fence) next to a relocated block, trips the anchor. (Moving the sole
+  lead-in and its block together is a legitimate reorganization, not drift.)
 - **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
   spanning-comment markers, a *competing enumeration* elsewhere **in the same file** (a *cross-file*
-  competing run is a known gap — see the residual), a header/other-column table decoy, and a bold/italic
-  count phrase. A "competing enumeration" is a **near-complete run** of the skill names (all-but-one or
-  more) matched at name boundaries, and it is **aggregated across structure** — across the items of a
-  bullet/ordered list and down a table column — so a run distributed one-name-per-item or one-name-per-cell
-  cannot escape a unit-local check. An incidental one- or two-name cross-reference is legitimate prose and
-  is deliberately not flagged (banning it was an undisclosed over-reach corrected in review).
+  competing run is a known gap — see the residual), a table decoy, and a bold/italic count phrase. A
+  "competing enumeration" is a **near-complete run** of the skill names (all-but-one or more) matched at
+  name boundaries, detected in **any rendered unit outside all five marked blocks — no separator required**
+  — and **aggregated across structure** so it cannot hide by distribution: a comma-separated paragraph, a
+  separator-free fence, a bullet/ordered list (one name per item, even split across two lists), a second
+  table with the run down a column, and a marked table with the run scattered across the header or
+  diagonally across non-first columns. An incidental one- or two-name cross-reference (including a two-row
+  reference table) is legitimate prose and is deliberately not flagged.
 - **Raw HTML is banned document-wide in the governed docs** (`README.md`, `per-skill-review-prompt.md`),
   with **one permitted exception: this suite's exact begin/end marker comments** — enforced as an
   identity allowlist, so an *arbitrary* HTML comment is rejected too. A non-comment raw-HTML block
@@ -229,13 +232,13 @@ asserted):**
   text and the pixels it displays can disagree with each other and with the enumeration. If a governed
   doc ever genuinely needs an image, that is a scope change: permit it explicitly and define how its
   content participates in this policy.
-- **Scalar count phrases are checked fail-closed AND location-bound**: each canonical count (e.g. `a
-  suite of <N> independent Claude skills`, `build all <N> + emit dist/MANIFEST.sha256`) is a **closed
-  template** — no wildcard bridge — checked, presence-required and value-exact, ONLY inside the single
-  rendered unit that carries its **site anchor** (a distinctive phrase co-located with the count). So
-  rewording the sentence at its site trips presence (it cannot be masked by the template still matching a
-  fragment elsewhere), and an unrelated sentence sharing the template anywhere else is neither required
-  nor flagged (no document-wide false positive).
+- **Scalar count phrases are checked fail-closed AND anchor-bound**: each canonical count (e.g. `a suite
+  of <N> independent Claude skills … software project into documentation`, `./build-skills.sh # build all
+  <N> + emit dist/MANIFEST.sha256`) is a **closed combined pattern** that binds the count slot to a
+  distinctive **adjacent anchor**, and must match **exactly once** across the rendered units, value-exact.
+  So rewording the site's sentence drops the match to zero (a finding) — it cannot be masked by a bare
+  count fragment placed **anywhere, including elsewhere in the same unit** — and an unrelated sentence
+  sharing the fragment but not next to the anchor is neither required nor flagged (no false positive).
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
@@ -244,8 +247,11 @@ out of scope for internal tooling whose real threat is accidental drift, not a m
 Known residuals, named rather than hand-waved:
 - markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character or backslash handling in
   table delimiters);
-- **cross-file competing enumerations** — each site's competing scan runs over its own file, so an
-  arrow-joined run planted in `per-skill-review-prompt.md` (which hosts no arrow site) is not scanned;
+- a **competing run split across SEPARATE top-level containers** — e.g. four names in a paragraph and four
+  in a list — so that no single container reaches the near-complete threshold. Aggregating across
+  unrelated containers would false-positive on ordinary prose that legitimately names several skills, so
+  this is left as an accepted limit. (Both governed files are now scanned in full, so the former
+  *cross-file* gap — a run planted in the file that hosts no matching site — is closed.)
 - anything the raw-HTML ban does not cover.
 
 If the threat model ever warrants it, the render-to-DOM pass is the tracked follow-up — but it is not

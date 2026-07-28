@@ -17,21 +17,30 @@ WHAT THIS GATE GUARANTEES (its real job):
   - **Each site is pinned to its lead-in, uniquely.** The markers are HTML comments that travel WITH the
     block, so identity alone cannot bind a block to a location — a correct block relocated to an appendix
     (its site now empty) would still be "found". Every site is anchored to a stable phrase in the paragraph
-    that introduces it, and that phrase must occur EXACTLY ONCE (see _anchor_missing): moving a block away
-    from its lead-in, OR cloning the lead-in phrase next to a relocated block, trips the anchor. (Moving
-    the sole lead-in and its block together is legitimate reorganization, not drift, and is not targeted.)
+    that introduces it, counted over the JOINED reader-visible text of ALL units — every paragraph, cell
+    AND fenced/indented code block — so it must occur EXACTLY ONCE (see _anchor_missing /
+    _anchor_occurrences): moving a block away from its lead-in, cloning the lead-in phrase (even inside a
+    fence, or split across a paragraph break) next to a relocated block, trips the anchor. LIMIT: the gate
+    pins the block to WHERE ITS ANCHOR IS, so removing the lead-in from the old site ENTIRELY and giving
+    the block a fresh unique lead-in elsewhere is treated as legitimate reorganization (the block and its
+    lead-in moved together); a below-threshold partial list left at the abandoned site is then the
+    disclosed competing residual (below all-but-one), not a caught decoy.
   - **Casual decoys are caught.** A hidden-comment row, a code-span comment delimiter, a spanning-comment
-    marker, or a competing enumeration is caught by the parse-tree checks and the competing scan. A
-    *competing enumeration* is a near-complete run of the skill names (>= all-but-one) matched at name
-    boundaries, and it is AGGREGATED across structure so it cannot hide by distribution: across the items
-    of a bullet/ordered list (one name per item) and down a table column (one name per cell), not only
-    within a single paragraph or cell. An incidental one/two-name cross-reference ("reviewed by
-    doc-critic") is legitimate prose and is deliberately NOT flagged.
-  - **Count phrases are LOCATION-BOUND.** Each scalar count ("a suite of <N> ... skills", "build all <N>
-    + emit dist/MANIFEST.sha256", …) is checked, presence-required and value-exact, ONLY inside the one
-    rendered unit carrying its site anchor. So rewording the sentence at its site trips presence (it cannot
-    be masked by the count still matching a fragment elsewhere), and an unrelated sentence sharing the
-    template is neither required nor flagged. Templates are CLOSED (no wildcard bridge).
+    marker, or a competing enumeration is caught by the parse-tree checks and the competing scan
+    (_competing_findings). A *competing enumeration* is a near-complete run of the skill names (>=
+    all-but-one) matched at name boundaries, detected in ANY rendered unit OUTSIDE all five marked blocks —
+    NO separator required — and AGGREGATED across structure so it cannot hide by distribution: a
+    comma-separated paragraph, a separator-free fence, a bullet/ordered list (one name per item, even split
+    across two lists or one fenced name per item), a second table with the run down any column, and a
+    marked table with the run scattered across the header or diagonally across non-first columns. Every
+    legitimate enumeration lives inside a marked block (excluded); an incidental one/two-name
+    cross-reference ("reviewed by doc-critic") is legitimate prose and is deliberately NOT flagged.
+  - **Count phrases are anchor-bound, exactly once.** Each scalar count ("a suite of <N> ... skills",
+    "build all <N> + emit dist/MANIFEST.sha256", …) is a CLOSED combined pattern that binds the count slot
+    to a distinctive ADJACENT anchor, and must match EXACTLY ONCE across the rendered units, value-exact
+    (see check_count_phrases). So rewording the site's sentence drops the match to zero (a finding) — it
+    cannot be masked by a bare count fragment placed elsewhere in the same unit — and an unrelated sentence
+    sharing the fragment, not next to the anchor, is neither required nor flagged (no false positive).
   - **Raw HTML is banned document-wide in the governed docs** (README.md, per-skill-review-prompt.md): a
     non-comment raw-HTML block (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / image
     token anywhere, is rejected — raw HTML is the enabler for a reader-visible decoy that renders
@@ -43,8 +52,12 @@ WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration
   adversarial reader-visible decoy over arbitrary Markdown would require rendering to HTML and verifying
   the DOM (visibility, ancestry) against GitHub's own engine (cmark-gfm) — deliberately out of scope for
   this internal tooling. The raw-HTML ban removes the main adversarial surface cheaply; residuals
-  (markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover) are the disclosed,
-  accepted limit, tracked for a future render-DOM pass if the threat model ever warrants it.
+  (markdown-it-py vs cmark-gfm parse edge cases; a competing run split across SEPARATE top-level containers
+  — e.g. four names in a paragraph and four in a list — so that no single container is near-complete, which
+  cannot be aggregated further without false-positiving on the ordinary prose that legitimately names
+  several skills; anything the ban does not cover) are the disclosed, accepted limit, tracked for a future
+  render-DOM pass if the threat model ever warrants it. (Both governed files are now scanned in full, so a
+  competing run in either file is caught — the former cross-file gap is closed.)
 
 Source of truth: SET = skills/<name>/ with a SKILL.md; ORDER = the root `skills-order` file, validated
 as an exact permutation of the set (fail closed).
@@ -77,44 +90,54 @@ WORD_TO_NUM = {word: n for n, word in NUM_WORDS.items()}
 # ("ONE skill in an eight"). Anything that is not a number makes the phrase not match at all, which trips
 # the PRESENCE half below — reported as "reworded / stale", which is what it actually is.
 _NUM_ALT = "|".join(sorted(NUM_WORDS.values(), key=len, reverse=True))
-_COUNT = rf"(?P<count>\d{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"
+# ASCII digits only ([0-9], not \d): the canonical phrases use ASCII, and \d would also match a fullwidth
+# "８" a reader reads as 8, reporting a spurious "reads ８ but there are 8 skills" (gate-reviews/0015).
+_COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"
 # Whole-template boundaries. `\b` is not enough: it let "rebuild all eight" satisfy "build all <N>",
 # "know eight skills" satisfy "now <N> skills", and suffixed rewordings ("skillsets", "independently",
 # "stylesheet", "suites") pass while the canonical phrase was gone.
 _L = r"(?<![A-Za-z0-9_-])"
 _R = r"(?![A-Za-z0-9_-])"
 
-# Count phrases are LOCATION-BOUND, not scanned document-wide (gate-reviews/0014). Each is a triple
-# (site_anchor, closed_template, label): the template is matched, PRESENCE-REQUIRED and VALUE-EXACT, ONLY
-# inside the single rendered unit (paragraph / blockquote / fenced block) that carries the site_anchor — a
-# distinctive phrase co-located with the count at its canonical site. Two failure modes a document-wide
-# scan could not close (both reproduced in review):
-#   MASKING: reword the real sentence's noun away ("... independent reviewers evaluates skills.") and a
-#     document-wide regex still matched a fragment elsewhere / a loose bridge (`{0,3}` words) still spanned
-#     it — clean while the canonical count was gone. Now the template is CLOSED (no wildcard bridge) and
-#     is required to appear AT its anchored site, so rewording that site's sentence trips presence.
-#   FALSE POSITIVE: an unrelated sentence sharing a fragment ("build all three + emit diagnostic records")
-#     was value-checked against the skill count. Now only the anchored site's unit is inspected, so an
-#     occurrence anywhere else is neither required nor flagged.
-# The templates carry the FULL distinguishing text (e.g. `build all <N> + emit dist/MANIFEST.sha256`,
-# `independent Claude skills`) — deliberately not a shortenable prefix.
+# Count phrases are checked with a CLOSED COMBINED pattern that binds the count slot to a distinctive
+# adjacent anchor phrase, matched over the rendered visible units; each canonical count must occur EXACTLY
+# ONCE across the document, read the canonical value (gate-reviews/0015). Each is (combined_pattern, label).
+#
+# Why combined-and-exactly-one, not "locate the anchor unit then scan it for a bare template" (the round-11
+# design, which was maskable): the older form ran the bare template over the WHOLE anchored paragraph/fence,
+# so rewording the real sentence and dropping the correct template ANYWHERE ELSE IN THE SAME UNIT still
+# passed, and an unrelated wrong count in that unit falsely fired. Binding the count to its adjacent anchor
+# (`build-skills.sh # build all <N> …`, `suite of <N> independent Claude skills … software project into
+# documentation`) within a small bounded gap means:
+#   - MASKING is closed: a decoy count not sitting next to its anchor does not match, so rewording the real
+#     sentence drops the match to zero -> a finding; you cannot satisfy it with a fragment placed elsewhere.
+#   - FALSE POSITIVES are closed: an unrelated sentence that merely shares the count fragment is not next to
+#     the anchor, so it neither satisfies nor trips the check.
+#   - RELOCATION/DUPLICATION is caught: two matches (a real one plus a restated canonical sentence) trip the
+#     exactly-one rule. `.{0,N}?` is a bounded, non-greedy gap over the collapsed single-line unit text.
+# `_COUNT` is number-only so the captured slot is a number (value-exact reports a wrong count precisely);
+# the anchor+gap binding is what makes the location guarantee, not the slot.
+# `.{0,N}?` is a bounded non-greedy gap between the count and its adjacent anchor. `{_R}` guards every
+# literal that abuts the gap (or ends the pattern) so the gap cannot absorb a SUFFIX — e.g. "skillsets"
+# must not satisfy "skills" (gate-reviews/0015). `{_L}`/`{_R}` also bound the count-template so a prefix
+# ("resuite") / suffix likewise cannot sneak in.
 README_COUNT_PHRASES = [
-    ("software project into documentation",
-     re.compile(rf"{_L}suite of {_COUNT} independent Claude skills{_R}", re.IGNORECASE),
-     "a suite of <N> independent Claude skills"),
-    ("self-contained packages",
-     re.compile(rf"{_L}{_COUNT} copies of the house style{_R}", re.IGNORECASE),
-     "<N> copies of the house style"),
-    ("then upload/install",
-     re.compile(rf"{_L}build all {_COUNT} \+ emit dist/MANIFEST\.sha256{_R}", re.IGNORECASE),
-     "build all <N> + emit dist/MANIFEST.sha256"),
+    (re.compile(rf"{_L}suite of {_COUNT} independent Claude skills{_R}"
+                rf".{{0,60}}?software project into documentation{_R}", re.IGNORECASE),
+     "a suite of <N> independent Claude skills … software project into documentation"),
+    (re.compile(rf"self-contained packages{_R}.{{0,60}}?{_L}{_COUNT} copies of the house style{_R}",
+                re.IGNORECASE),
+     "self-contained packages … <N> copies of the house style"),
+    (re.compile(rf"{_L}build-skills\.sh{_R}.{{0,60}}?build all {_COUNT} \+ emit dist/MANIFEST\.sha256{_R}",
+                re.IGNORECASE),
+     "./build-skills.sh # build all <N> + emit dist/MANIFEST.sha256"),
 ]
 PROMPT_COUNT_PHRASES = [
-    ("You are improving ONE skill in",
-     re.compile(rf"{_L}{_COUNT}-skill documentation suite{_R}", re.IGNORECASE),
-     "<N>-skill documentation suite"),
-    ("What changed in the suite",
-     re.compile(rf"{_L}now {_COUNT} skills{_R}", re.IGNORECASE), "now <N> skills"),
+    (re.compile(rf"You are improving ONE skill in an {_COUNT}-skill documentation suite{_R}", re.IGNORECASE),
+     "You are improving ONE skill in an <N>-skill documentation suite"),
+    (re.compile(rf"What changed in the suite{_R}.{{0,60}}?The suite is now {_COUNT} skills{_R}",
+                re.IGNORECASE),
+     "What changed in the suite … The suite is now <N> skills"),
 ]
 
 README = "README.md"
@@ -157,10 +180,14 @@ def validate_order(order: list[str], canonical: set[str]) -> list[str]:
 
 
 def load_order(root: Path, canonical: set[str]) -> tuple[list[str], list[str]]:
-    """Read `skills-order` (skip blank lines and # comments) and validate it. Returns (order, errors)."""
+    """Read `skills-order` (skip blank lines and # comments) and validate it. Returns (order, errors).
+    A missing file is a fail-closed finding — accumulated in `errs` (not a bare list literal) so this
+    finding-producing function is visible to the revert battery's AST inventory (gate-reviews/0015)."""
+    errs: list[str] = []
     p = root / "skills-order"
     if not p.is_file():
-        return [], [f"skills-order not found at {p}"]
+        errs.append(f"skills-order not found at {p}")
+        return [], errs
     order = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines()
              if ln.strip() and not ln.strip().startswith("#")]
     return order, validate_order(order, canonical)
@@ -211,8 +238,10 @@ def _visible_units(tokens) -> list[str]:
     """Each reader-visible rendered unit's text SEPARATELY — one entry per inline token (a paragraph,
     heading, blockquote line, or table cell, emphasis/code unwrapped, soft/hard breaks → space) and one
     per fenced/indented code block, each whitespace-collapsed. HTML comments (the markers) are invisible
-    and excluded. The count-phrase check inspects only the ONE unit carrying a phrase's site anchor, so a
-    count elsewhere in the document is neither required nor flagged — location-bound, not document-wide.
+    and excluded. The count-phrase check scans the combined patterns across ALL units and requires EXACTLY
+    ONE match document-wide — a count is bound to its adjacent anchor by the pattern, not by which unit it
+    sits in, so a bare count fragment elsewhere neither satisfies nor trips the check, while a second FULL
+    canonical restatement (count + anchor) IS flagged (the canonical count is stated once, deliberately).
     A count that is bold, in a code span, or split by a line wrap / backslash hard-break is still checked
     as the reader sees it (the rendering is per unit, unchanged)."""
     units = []
@@ -253,10 +282,16 @@ def _preceding_visible(tokens, begin_idx: int) -> str:
 
 
 def _anchor_occurrences(tokens, anchor: str) -> int:
-    """How many rendered inline blocks (paragraph / heading / blockquote line / table cell) contain
-    `anchor`, whitespace-normalized. Used to require the anchor be UNIQUE — see _anchor_missing."""
-    return sum(1 for t in tokens if t.type == "inline"
-               and anchor in re.sub(r"\s+", " ", _inline_text(t)).strip())
+    """How many TEXTUAL occurrences of `anchor` there are in the doc's reader-visible text — the
+    concatenation of ALL rendered units (paragraphs, headings, cells, AND fenced/indented code blocks;
+    see _visible_units), joined so a phrase is counted even if a paragraph break SPLITS it. Used to require
+    the anchor be UNIQUE (_anchor_missing).
+
+    Both properties are load-bearing (gate-reviews/0015): counting fences (not just inline tokens) closes a
+    relocation that hid the abandoned-site lead-in in a code block; counting over the JOINED text — not
+    per-unit — closes a relocation that SPLIT the abandoned-site lead-in across a paragraph break (which a
+    per-unit count would miss) while a clean copy beside the relocated block became the sole counted one."""
+    return " ".join(_visible_units(tokens)).count(anchor)
 
 
 def _anchor_missing(tokens, begin_idx: int, site_id: str) -> bool:
@@ -383,45 +418,80 @@ def _list_close(tokens, start: int) -> int:
     return len(tokens) - 1
 
 
-def _competing(tokens, b: int, e: int, kind: str, order: list[str]) -> bool:
-    """True if a competing rendered enumeration appears OUTSIDE the marked block [b, e]. Two shapes:
+def _in_any_span(idx: int, spans: list[tuple[int, int]]) -> bool:
+    return any(b <= idx <= e for b, e in spans)
 
-    (1) A separator run in a SINGLE unit — a paragraph or fenced block whose text carries the site's
-        separator plus a near-complete run of the names (see _competing_run). A differently formatted
-        broken run (no trailing period, etc.) is still caught.
-    (2) A stray ENUMERATION LIST — a bullet/ordered list whose items are the skill names, one name per
-        item. Each list item is its own inline token, so the per-unit check in (1) never sees the whole
-        run; the run must be AGGREGATED across the list's items (gate-reviews/0014). The docstring's
-        "a stray second list is caught" promise depends on this aggregation.
 
-    Scope, honestly: this scans the site's OWN file. A competing run planted in the other governed doc is
-    a disclosed residual (CONTRIBUTING "Skill-enumeration gate: scope"), not a claim made here."""
-    sep = {"arrow": " → ", "dot": " · "}.get(kind)
-    # (2) aggregate each list container that lies entirely outside the marked block.
+def _run_hits(text: str, order: list[str]) -> int:
+    return sum(1 for nm in order if re.search(_L + re.escape(nm) + _R, text))
+
+
+def _table_span_close(tokens, start: int) -> int:
+    """Index of the matching table_close for the table_open at `start` (GFM tables do not nest)."""
+    for j in range(start, len(tokens)):
+        if tokens[j].type == "table_close":
+            return j
+    return len(tokens) - 1
+
+
+def _competing_findings(tokens, spans: list[tuple[int, int]], order: list[str], fname: str) -> list[str]:
+    """Findings for any competing enumeration rendered OUTSIDE all marked blocks in this file. A competing
+    enumeration is a NEAR-COMPLETE run of the skill names (see _competing_run); it is detected wherever it
+    renders and however it is distributed within a single structure — NO separator is required
+    (gate-reviews/0015; the old per-site scan only looked when the site's `→`/`·` separator was present,
+    so a comma-separated paragraph or a separator-free fence escaped):
+      (1) any inline unit (paragraph/heading/cell) or fenced/indented code block;
+      (2) each bullet/ordered LIST container, aggregated over ITS OWN items (a run written one name per
+          item — even one fenced name per item — is caught within that list);
+      (3) every OUTSIDE table, all its cells aggregated — a second table with the run down any column.
+    The legitimate enumerations all live inside `spans` (excluded). Aggregation is PER container, not
+    across the whole document, so ordinary prose that legitimately names several skills across separate
+    lists/paragraphs is not false-positived; the price is that a run deliberately SPLIT across separate
+    containers so no one container is near-complete is a disclosed residual (see the module docstring)."""
+    out: list[str] = []
+    # (1) single units outside every marked span.
+    for i, t in enumerate(tokens):
+        if _in_any_span(i, spans):
+            continue
+        txt = _inline_text(t) if t.type == "inline" else (
+            t.content if t.type in ("fence", "code_block") else "")
+        if txt and _competing_run(txt, order):
+            out.append(f"{fname}: a competing enumeration ({_run_hits(txt, order)} of {len(order)} skill "
+                       f"names) renders in a unit outside every marked block — there must be exactly one "
+                       f"enumeration per site")
+            return out
+    # (2) each list container outside the marked spans, aggregated over its own items.
     i = 0
     while i < len(tokens):
         if tokens[i].type in ("bullet_list_open", "ordered_list_open"):
             j = _list_close(tokens, i)
-            if not (b <= i <= e) and not (b <= j <= e):
-                agg = " ".join(_inline_text(x) for x in tokens[i:j + 1] if x.type == "inline")
+            if not _in_any_span(i, spans) and not _in_any_span(j, spans):
+                agg = " ".join((_inline_text(x) if x.type == "inline" else x.content)
+                               for x in tokens[i:j + 1] if x.type in ("inline", "fence", "code_block"))
                 if _competing_run(agg, order):
-                    return True
+                    out.append(f"{fname}: a competing enumeration ({_run_hits(agg, order)} of {len(order)} "
+                               f"skill names) is distributed across a list outside the marked blocks — "
+                               f"there must be exactly one enumeration per site")
+                    return out
             i = j + 1
-            continue
-        i += 1
-    # (1) per-unit separator run in inline prose or a fenced/indented code block.
-    for i, t in enumerate(tokens):
-        if b <= i <= e:
-            continue
-        if sep is not None:
-            txt = _inline_text(t) if t.type == "inline" else (
-                t.content if t.type in ("fence", "code_block") else "")
-            if txt and sep in txt and _competing_run(txt, order):
-                return True
-        if kind == "tree" and t.type == "fence" and t.content.lstrip().startswith("skills/") \
-                and "─" in t.content:
-            return True
-    return False
+        else:
+            i += 1
+    # (3) every table outside the marked spans, all cells aggregated.
+    i = 0
+    while i < len(tokens):
+        if tokens[i].type == "table_open":
+            j = _table_span_close(tokens, i)
+            if not _in_any_span(i, spans) and not _in_any_span(j, spans):
+                header, rows = _table_cells(tokens[i:j + 1])
+                allcells = " ".join(header + [c for r in rows for c in r])
+                if _competing_run(allcells, order):
+                    out.append(f"{fname}: a competing skill table renders outside the marked blocks (its "
+                               f"cells hold a near-complete enumeration) — there must be exactly one")
+                    return out
+            i = j + 1
+        else:
+            i += 1
+    return out
 
 
 def _table_cells(inner) -> tuple[list[str], list[list[str]]]:
@@ -455,60 +525,16 @@ def _table_cells(inner) -> tuple[list[str], list[list[str]]]:
 
 
 def _table_stray_names(tokens, b: int, e: int, order: list[str]) -> bool:
-    """True if a NEAR-COMPLETE run of skill names (a reversed/competing enumeration — see _competing_run)
-    hides in the marked table OUTSIDE its first body column. Checked at three granularities so a run
-    DISTRIBUTED across cells cannot escape a cell-local test (gate-reviews/0014):
-      - each header cell, and the header row as one sequence (a reversed order written across the header);
-      - each NON-FIRST body column, AGGREGATED down its rows (a reversed order written down a column — the
-        exact escape a per-cell check missed: no single cell holds the whole run).
-    The first body column is exempt: _table_names already verifies it equals the order. A singleton
-    cross-reference (one skill named in a description cell) stays below threshold and is allowed."""
+    """True if a NEAR-COMPLETE run of skill names (a reversed/competing enumeration) hides in the marked
+    table OUTSIDE its first body column. ALL header cells and ALL non-first body cells are aggregated into
+    ONE blob and tested with _competing_run, so no DISTRIBUTION escapes — a run written across the header,
+    down any single column, or scattered DIAGONALLY across different columns/rows (each cell below the
+    threshold) is caught alike (gate-reviews/0015). The first body column is excluded: _table_names
+    verifies it equals the order exactly. A singleton cross-reference (one skill named in a description
+    cell) stays below the near-complete threshold and is allowed."""
     header, rows = _table_cells(tokens[b + 1:e])
-    for cell in header:
-        if _competing_run(cell, order):
-            return True
-    if _competing_run(" ".join(header), order):
-        return True
-    ncols = max((len(r) for r in rows), default=0)
-    for col in range(1, ncols):
-        colcat = " ".join(r[col] for r in rows if col < len(r))
-        if _competing_run(colcat, order):
-            return True
-    return False
-
-
-def _extra_skill_table(tokens, b: int, e: int, order: list[str]) -> bool:
-    """True if a SECOND table (outside the marked block [b, e]) has >= 2 body rows whose first cell is a
-    skill name — a relocated/competing table."""
-    names = set(order)
-    hits = 0
-    i = 0
-    while i < len(tokens):
-        t = tokens[i]
-        if t.type == "table_open":
-            start = i
-            j = i
-            first_cells = []
-            in_tbody = False
-            while j < len(tokens) and tokens[j].type != "table_close":
-                if tokens[j].type == "tbody_open":
-                    in_tbody = True
-                elif tokens[j].type == "tbody_close":
-                    in_tbody = False
-                elif tokens[j].type == "tr_open" and in_tbody:
-                    k = j + 1
-                    while k < len(tokens) and tokens[k].type != "tr_close":
-                        if tokens[k].type == "inline":
-                            first_cells.append(_inline_text(tokens[k]))
-                            break
-                        k += 1
-                j += 1
-            inside_marked = b <= start <= e
-            if not inside_marked and sum(1 for c in first_cells if c in names) >= 2:
-                hits += 1
-            i = j
-        i += 1
-    return hits >= 1
+    blob = " ".join(header + [c for r in rows for c in r[1:]])
+    return _competing_run(blob, order)
 
 
 def _allowed_marker_comments() -> set[str]:
@@ -602,6 +628,11 @@ def check(root: Path) -> list[str]:
                 findings.append(f"{fname}: raw inline {raw_inline} is not allowed in a governed doc — it "
                                 f"can render differently than it reads")
 
+    # Marked spans are collected per file so the competing scan below can exclude EVERY legitimate
+    # enumeration (all five sites), not just the one site it is called for — the only enumerations that
+    # may render are inside these spans; any near-complete run elsewhere is competing.
+    marked_spans: dict[str, list[tuple[int, int]]] = {README: [], PROMPT: []}
+
     for site_id, fname, renderer, kind in PURE_SITES:
         if texts.get(fname) is None:
             findings.append(f"{fname}: not found (needed for site '{site_id}')")
@@ -612,6 +643,7 @@ def check(root: Path) -> list[str]:
         except MarkerError as ex:
             findings.append(f"{fname}: {ex}")
             continue
+        marked_spans[fname].append((b, e))
         if _anchor_missing(tks, b, site_id):
             findings.append(f"{fname}: the '{site_id}' marked block is not in its expected location — "
                             f"its unique lead-in anchor is absent or duplicated (a relocated or "
@@ -627,9 +659,6 @@ def check(root: Path) -> list[str]:
             if src != renderer(order):
                 findings.append(f"{fname}: '{site_id}' block is not the generated enumeration "
                                 f"(run generate-skill-enumerations.py)")
-        if _competing(tks, b, e, kind, order):
-            findings.append(f"{fname}: a competing '{site_id}' enumeration renders OUTSIDE the "
-                            f"marked block (relocation / stray list) — there must be exactly one")
 
     for site_id, fname in TABLE_SITES:
         if texts.get(fname) is None:
@@ -641,6 +670,7 @@ def check(root: Path) -> list[str]:
         except MarkerError as ex:
             findings.append(f"{fname}: {ex}")
             continue
+        marked_spans[fname].append((b, e))
         if _anchor_missing(tks, b, site_id):
             findings.append(f"{fname}: the '{site_id}' marked block is not in its expected location — "
                             f"its unique lead-in anchor is absent or duplicated (a relocated or "
@@ -652,11 +682,13 @@ def check(root: Path) -> list[str]:
                             f"the order {order} (fix the table to match skills-order)")
         if _table_stray_names(tks, b, e, order):
             findings.append(f"{fname}: a competing run of skill names appears in the '{site_id}' table "
-                            f"outside its first body column (a reversed header / other-column enumeration) "
-                            f"— the enumeration belongs only in column one")
-        if _extra_skill_table(tks, b, e, order):
-            findings.append(f"{fname}: a competing skill table renders OUTSIDE the '{site_id}' marked "
-                            f"block (relocation / stray table) — there must be exactly one")
+                            f"outside its first body column (a reversed header / other-column / diagonal "
+                            f"enumeration) — the enumeration belongs only in column one")
+
+    # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all marked spans.
+    for fname in (README, PROMPT):
+        if fname in tokens:
+            findings += _competing_findings(tokens[fname], marked_spans[fname], order, fname)
 
     for fname, phrases in COUNT_PHRASES.items():
         if fname not in tokens:
@@ -669,44 +701,35 @@ def check(root: Path) -> list[str]:
 
 
 def check_count_phrases(units: list[str], phrases, n: int, file_label: str) -> list[str]:
-    """PRESENCE-REQUIRED + VALUE-EXACT, LOCATION-BOUND check of the scalar suite-count phrases. `units` is
-    the list of per-unit rendered texts (see _visible_units); each phrase is (site_anchor, pattern, label).
+    """PRESENCE-REQUIRED + VALUE-EXACT + EXACTLY-ONCE check of the scalar suite-count phrases. `units` is
+    the list of per-unit rendered texts (see _visible_units); each phrase is (combined_pattern, label),
+    where the pattern binds the count slot to a distinctive ADJACENT anchor (see the constants above).
 
-    For each phrase: locate the SINGLE unit carrying its site_anchor (exactly one — 0 or >1 is a finding:
-    the site moved, was duplicated, or the anchor drifted); then require the template to occur in THAT unit
-    (absence => reworded / stale) and every occurrence there to read exactly the canonical count. A match
-    ELSEWHERE in the document is neither required nor flagged, which is what makes this both mask-proof and
-    FP-proof (gate-reviews/0014).
-
-    FAIL CLOSED, deliberately: the older form only reported when a pattern matched AND parsed a number, so
-    a phrase reworded away, a multi-token count, a non-numeric word, or a pattern gone stale all SILENTLY
-    SKIPPED while the banner still said "count phrases consistent" (gate-reviews/0010). An empty phrase set
-    is itself a finding — vacuous success is exactly the failure mode this check exists to avoid."""
+    For each phrase, count the combined pattern's matches across ALL units:
+      - 0 matches  -> the canonical sentence was reworded / went stale (a finding); it cannot be masked by
+        placing the bare count fragment elsewhere, because a match requires the count NEXT TO its anchor.
+      - >1 matches -> the canonical sentence was duplicated / relocated (a finding).
+      - exactly 1  -> value-exact: the captured count must read the canonical number.
+    Because the pattern is anchor-bound, an unrelated sentence sharing the count fragment neither satisfies
+    nor trips the check (no document-wide false positive). An empty phrase set is itself a finding — a
+    vacuous 'consistent' is exactly the failure this check exists to avoid (gate-reviews/0010)."""
     phrases = tuple(phrases or ())
     if not phrases:
         return [f"{file_label}: no canonical count-phrase checks are configured — the count guard cannot "
                 f"verify anything (fail closed, not clean)"]
     accepted = {str(n), NUM_WORDS.get(n, "").lower()} - {""}
     out = []
-    for anchor, pat, label in phrases:
-        located = [u for u in units if anchor in u]
-        if len(located) != 1:
-            out.append(f"{file_label}: the count site for \"{label}\" (anchored by \"{anchor}\") was found "
-                       f"in {len(located)} rendered unit(s), expected exactly 1 — the site moved, was "
-                       f"duplicated, or its anchor drifted; the count cannot be located to verify.")
+    for pat, label in phrases:
+        matches = [m for u in units for m in pat.finditer(u)]
+        if len(matches) != 1:
+            out.append(f"{file_label}: the canonical count phrase \"{label}\" matched {len(matches)} time(s), "
+                       f"expected exactly 1 — it was reworded/stale (0) or duplicated/relocated (>1). A "
+                       f"count phrase must appear exactly once, next to its anchor, and never go unchecked.")
             continue
-        unit = located[0]
-        found = 0
-        for m in pat.finditer(unit):
-            found += 1
-            tok = re.sub(r"\s+", " ", m.group("count")).strip().lower()
-            if tok not in accepted:
-                out.append(f"{file_label}: \"{label}\" reads \"{tok}\" but there are {n} skills in "
-                           f"skills/ (expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")")
-        if not found:
-            out.append(f"{file_label}: the canonical count phrase \"{label}\" was not found at its site "
-                       f"(anchored by \"{anchor}\") — it was reworded, or this pattern is stale. Fix the "
-                       f"doc or update the pattern; a count phrase must never go unchecked.")
+        tok = re.sub(r"\s+", " ", matches[0].group("count")).strip().lower()
+        if tok not in accepted:
+            out.append(f"{file_label}: \"{label}\" reads \"{tok}\" but there are {n} skills in skills/ "
+                       f"(expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")")
     return out
 
 
