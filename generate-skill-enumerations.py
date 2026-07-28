@@ -14,21 +14,23 @@ WHAT THIS GATE GUARANTEES (its real job):
     byte-for-byte in the parse tree; tables must have body rows whose first-cell RENDERED TEXT is the
     skills in order. `skills-order` is validated as an exact permutation of `skills/`; an empty/missing
     source fails closed (never a false "clean").
-  - **Each site is pinned to its lead-in, uniquely.** The markers are HTML comments that travel WITH the
+  - **Each site is pinned to its lead-in (ADJACENCY).** The markers are HTML comments that travel WITH the
     block, so identity alone cannot bind a block to a location — a correct block relocated to an appendix
-    (its site now empty) would still be "found". Every site is anchored to a stable phrase in the paragraph
-    that introduces it, counted over the JOINED reader-visible text of ALL units — every paragraph, cell
-    AND fenced/indented code block — so it must occur EXACTLY ONCE (see _anchor_missing /
-    _anchor_occurrences): moving a block away from its lead-in, cloning the lead-in phrase (even inside a
-    fence, or split across a paragraph break) next to a relocated block, trips the anchor. LIMIT: the gate
-    pins the block to WHERE ITS ANCHOR IS, so removing the lead-in from the old site ENTIRELY and giving
-    the block a fresh unique lead-in elsewhere is treated as legitimate reorganization (the block and its
-    lead-in moved together); a below-threshold partial list left at the abandoned site is then the
-    disclosed competing residual (below all-but-one), not a caught decoy.
-  - **All text matching is NORMALIZED** (see _norm): NFKC + Unicode-dash → ASCII '-' + whitespace-collapse
-    + casefold, applied to both the rendered text and every needle (anchor, skill name, count phrase). A
-    reader-visible variant that differs only by case, a Unicode non-breaking hyphen, or a compatibility
-    form is matched the same as the canonical ASCII form (an UPPERCASE skill run, a `mini‑suite` dash).
+    (its site now empty) would still be "found". Every site is anchored to a stable phrase in the block that
+    introduces it — a paragraph, heading, blockquote, or list (normalized) — and the begin marker must be
+    IMMEDIATELY PRECEDED by it (see _anchor_missing): moving a block AWAY from its lead-in (leaving the
+    lead-in behind, or into an appendix under a different heading) trips the anchor. Moving the lead-in AND
+    the block together is legitimate reorganization. LIMIT: this is adjacency only — deliberately CLONING
+    the lead-in phrase beside a relocated block satisfies adjacency and is a disclosed determined-adversary
+    residual (a uniqueness rule would catch it but false-positived when a maintainer innocently repeated an
+    anchor phrase in prose).
+  - **All text matching is NORMALIZED** (see _norm): NFKC + strip zero-width/format chars + Unicode-dash →
+    ASCII '-' + whitespace-collapse + casefold + fold COMMON Cyrillic/Greek homoglyphs, applied to both the
+    rendered text and every needle (anchor, skill name, count phrase). A reader-visible variant that
+    differs only by case, a Unicode dash, a soft hyphen, a compatibility form, or a common homoglyph
+    (`оperations` with a Cyrillic о) is matched as the canonical ASCII form. LIMIT: this folds the casual
+    confusables, not the FULL Unicode confusables table — an obscure-homoglyph / heavy-mixed-script
+    adversary is a disclosed residual.
   - **Casual decoys are caught.** A hidden-comment row, a code-span comment delimiter, a spanning-comment
     marker, or a competing enumeration is caught by the parse-tree checks and the competing scan
     (_competing_findings). A *competing enumeration* is a near-complete run of the skill names (>=
@@ -44,7 +46,14 @@ WHAT THIS GATE GUARANTEES (its real job):
   - **Scalar counts are FIRST-CLASS MARKED SITES** (not document-wide regex). Each count sentence sits in
     its own marker pair; the number is verified ONLY inside that designated region (see check_count_site),
     so it cannot be masked by a restatement elsewhere, false-positive on unrelated prose, or leak through a
-    gap window — the failure classes a regex-over-prose count check kept reproducing. Two HEADLINE counts
+    gap window — the failure classes a regex-over-prose count check kept reproducing. The WHOLE number
+    phrase is captured, so a compound ("eight hundred") or a range ("eight to twelve") reads as the count
+    and fails the value check — the leading token cannot slip past it. Ordinary copyediting is tolerated
+    symmetrically: a qualifier BEFORE the count ("a suite of exactly/at least eight …") and adjectives
+    AFTER it, including a numeric-leading hyphenated one ("eight one-click …"), keep the value readable. The
+    count region is a count SENTENCE,
+    not an enumeration site: a near-complete run of the skill names there is flagged (it would otherwise be
+    excluded from the competing scan yet never verified against skills-order). Two HEADLINE counts
     are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill documentation suite"); the
     lower-value prose numbers (the "eight copies" line, the build-command comment, the "now eight skills"
     note) are deliberately NOT gated — a disclosed scope choice.
@@ -61,10 +70,14 @@ WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration
   or needs the render-DOM pass): (1) a competing run split across SEPARATE top-level containers so no one
   container is near-complete; (2) a decoy enumeration in a NON-FIRST column of a marked table (`_table_names`
   verifies column one; another column naming several skills is an ordinary cross-reference); (3) relocating
-  a block by removing its lead-in ENTIRELY and re-homing it with a fresh unique lead-in (legitimate
-  reorganization), leaving a below-threshold partial list at the old site; (4) markdown-it-py vs cmark-gfm
-  parse edge cases; (5) the three ungated prose counts above. Both governed files are scanned in full, so a
-  competing run in either file is caught.
+  a marked block while CLONING its lead-in phrase beside the new position (adjacency is satisfied; a
+  uniqueness rule would catch it but false-positived on innocent repeats of an anchor phrase); (4) an
+  obscure-homoglyph / heavy-mixed-script variant beyond the common-confusables fold; (5) markdown-it-py vs
+  cmark-gfm parse edge cases; (6) the three ungated prose counts above; (7) an unusual count PHRASING the
+  pattern does not recognize (e.g. punctuation between "suite of" and the number) reports "the count phrase
+  appears 0 times" rather than reading the value — reword to the canonical "a suite of <N> … skills"; the
+  count VALUE is always verified when the phrase IS recognized, never silently wrong. Both governed files
+  are scanned in full, so a competing run in either file is caught.
 
 Source of truth: SET = skills/<name>/ with a SKILL.md; ORDER = the root `skills-order` file, validated
 as an exact permutation of the set (fail closed).
@@ -81,17 +94,39 @@ import unicodedata
 from pathlib import Path
 
 # ONE normalization applied at EVERY text-match point (anchors, count sites, competing names), so a
-# reader-visible variant that differs only by case, Unicode dash, compatibility form, or whitespace is
-# matched the same as the canonical ASCII form (gate-reviews/0016). Without this, `rebuild`-style
-# prefixes, a U+2011 non-breaking hyphen, or an UPPERCASE skill name slipped past ASCII-only checks.
-_DASH_MAP = {ord(c): "-" for c in "‐‑‒–—―−﹘﹣－"}
+# reader-visible variant that differs only by case, a Unicode dash, a zero-width/format character, a
+# compatibility form, whitespace, or a COMMON Latin/Cyrillic/Greek homoglyph is matched the same as the
+# canonical ASCII form (gate-reviews/0016). Without this, `rebuild`-style prefixes, a U+2011 non-breaking
+# hyphen, a soft hyphen, an UPPERCASE name, or a Cyrillic-`о` in a skill name slipped past ASCII checks.
+_DASH_MAP = {ord(c): "-" for c in "‐‑‒–—―−⁃˗﹘﹣－⹀֊־᠆"}
+# Common Latin-lookalike Cyrillic + Greek letters (applied AFTER casefold, so lowercase only). This folds
+# the CASUAL confusables; an EXHAUSTIVE Unicode-confusables table (obscure homoglyphs, full mixed-script)
+# is out of scope — a determined adversary is the disclosed residual (see the module docstring).
+_CONFUSABLE = {
+    # Cyrillic → Latin
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ј": "j", "ѕ": "s",
+    "ё": "e", "һ": "h", "ԁ": "d", "ԛ": "q", "ԝ": "w", "ө": "o", "к": "k", "м": "m", "т": "t", "н": "h",
+    "ѵ": "v", "ԍ": "g", "ӏ": "l", "ⅰ": "i",
+    # Greek → Latin
+    "ο": "o", "α": "a", "ρ": "p", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "τ": "t", "χ": "x", "υ": "u",
+    "μ": "u", "β": "b", "η": "n", "ϲ": "c",
+}
+_CONFUSABLE_MAP = {ord(k): v for k, v in _CONFUSABLE.items()}
 
 
 def _norm(s: str) -> str:
-    """NFKC + Unicode-dash → ASCII '-' + whitespace-collapse + casefold. Idempotent; used on both the
-    rendered text and every needle (anchor, skill name, count phrase) so matching is variant-insensitive."""
-    s = unicodedata.normalize("NFKC", s).translate(_DASH_MAP)
-    return re.sub(r"\s+", " ", s).strip().casefold()
+    """NFKC → strip zero-width/format (Cf) chars → Unicode-dash → ASCII '-' → whitespace-collapse →
+    casefold → fold common Cyrillic/Greek homoglyphs. Idempotent; used on BOTH the rendered text and every
+    needle (anchor, skill name, count phrase), so a case / dash / zero-width / compatibility / common-
+    homoglyph variant is matched as the canonical form."""
+    s = unicodedata.normalize("NFKC", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Cf")   # soft hyphen, ZWSP/ZWJ/ZWNJ, BOM, …
+    s = re.sub(r"\s+", " ", s.translate(_DASH_MAP)).strip().casefold()
+    # A final NFKC pass makes _norm genuinely idempotent: casefold can emit a DECOMPOSED sequence (e.g. a
+    # few Greek codepoints → i/u + combining diaeresis + accent) that a later NFKC would recompose, so
+    # without this norm(norm(x)) != norm(x) for those. Re-composing here has no effect on ASCII/common-fold
+    # text and never re-introduces a dash or format char (gate-reviews/0017).
+    return unicodedata.normalize("NFKC", s.translate(_CONFUSABLE_MAP))
 
 try:
     from markdown_it import MarkdownIt
@@ -109,6 +144,21 @@ WORD_TO_NUM = {word: n for n, word in NUM_WORDS.items()}
 # ("twenty-one"). Applied over normalized (casefolded) text, so lowercase alternatives suffice.
 _NUM_ALT = "|".join(sorted(NUM_WORDS.values(), key=len, reverse=True))
 _COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"
+# A MULTI-TOKEN number phrase: the leading number token plus any number-bearing continuation
+# ("eight hundred", "eight to twelve", "eight or nine"), so a continuation is CAPTURED as the count and
+# value-checked — not left in a tolerant filler where only the leading token would be read
+# (gate-reviews/0017: "a suite of eight hundred … skills" rendered 800 yet passed because the value check
+# saw only "eight"). A continuation is a MULTIPLIER ("hundred"), a further number token, or a RANGE word
+# that is itself followed by a number ("to twelve") — the range word must LEAD TO a number, so an ordinary
+# "eight or so"/"eight to fit" (a correct count in casual prose) is NOT swallowed and stays clean. The
+# conjunction "and" is excluded so "eight and only eight" is not misread as one compound number.
+_NUM_TOK = rf"(?:{_NUM_ALT})|[0-9]{{1,3}}"
+# A number-token continuation must NOT be the head of a HYPHENATED adjective: "eight one-click skills" has
+# eight skills, and "one" heads "one-click", not a compound number — so `(?!-[a-z])` stops it being read as
+# "eight one" (gate-reviews/0017). Multipliers ("hundred") and range words keep their number arms.
+_NUM_CONT = (rf"hundred|thousand|million|billion|dozen|(?:{_NUM_TOK})(?!-[a-z])|"
+             rf"(?:to|or|through)[\s-]+(?:{_NUM_TOK})(?!-[a-z])")
+_COUNT_RUN = rf"(?P<count>(?:{_NUM_TOK})(?:[\s-]+(?:{_NUM_CONT}))*)"
 # Identifier boundaries (over normalized text, where Unicode dashes are already ASCII '-'): `\b` is not
 # enough — it let "rebuild all eight" satisfy "build all", and suffixes ("skillsets") pass.
 _L = r"(?<![a-z0-9_-])"
@@ -125,11 +175,23 @@ PROMPT = "per-skill-review-prompt.md"
 # in. Two headline counts are gated; the lower-value prose numbers (the "eight copies" line, the build
 # command comment, the "now eight skills" note) are deliberately NOT gated — see CONTRIBUTING scope.
 # site_id -> (filename, in-region count pattern over normalized text, human label)
+# The pattern is TOLERANT of ordinary copyediting inside the region — the count number and its noun
+# ("suite of <N> … skills", "an <N>-skill") with any adjectives between — but rejects a changed number or a
+# changed count-noun (gate-reviews/0016: a rigid full-phrase pattern false-positived a good-faith
+# "Claude" → "Claude Code" edit). `[^.]*` stays within the one sentence (it cannot cross a period).
 COUNT_SITES = {
-    "count-suite": (README, re.compile(rf"{_L}suite of {_COUNT} independent claude skills{_R}"),
-                    "a suite of <N> independent Claude skills"),
-    "count-nskill": (PROMPT, re.compile(rf"{_L}an {_COUNT}-skill documentation suite{_R}"),
-                     "an <N>-skill documentation suite"),
+    # count-suite: the count is followed by a tolerant `[^.]*?` filler, so it uses the MULTI-TOKEN
+    # _COUNT_RUN — a continuation ("eight hundred") is captured into `count` and fails the value check,
+    # instead of hiding in the filler. count-nskill binds the count directly to a literal "-skill", so a
+    # continuation there yields zero matches (fail closed) already; plain _COUNT suffices.
+    # `(?:[a-z]+ )*?` tolerates a qualifier before the count ("a suite of exactly/at least/just eight …"),
+    # symmetric with the `[^.]*?` filler AFTER it — the count still binds to the FIRST number (non-greedy),
+    # so a wrong number in the qualifier position becomes the read value and fails, never a mask
+    # (gate-reviews/0017).
+    "count-suite": (README, re.compile(rf"{_L}suite of (?:[a-z]+ )*?{_COUNT_RUN}\b[^.]*?\bskills{_R}"),
+                    "a suite of <N> … skills"),
+    "count-nskill": (PROMPT, re.compile(rf"{_L}an {_COUNT}-skill{_R}"),
+                     "an <N>-skill …"),
 }
 
 
@@ -223,25 +285,6 @@ def _inline_text(tok) -> str:
     return "".join(out)
 
 
-def _visible_units(tokens) -> list[str]:
-    """Each reader-visible rendered unit's text SEPARATELY — one entry per inline token (a paragraph,
-    heading, blockquote line, or table cell, emphasis/code unwrapped, soft/hard breaks → space) and one
-    per fenced/indented code block, each whitespace-collapsed. HTML comments (the markers) are invisible
-    and excluded. The count-phrase check scans the combined patterns across ALL units and requires EXACTLY
-    ONE match document-wide — a count is bound to its adjacent anchor by the pattern, not by which unit it
-    sits in, so a bare count fragment elsewhere neither satisfies nor trips the check, while a second FULL
-    canonical restatement (count + anchor) IS flagged (the canonical count is stated once, deliberately).
-    A count that is bold, in a code span, or split by a line wrap / backslash hard-break is still checked
-    as the reader sees it (the rendering is per unit, unchanged)."""
-    units = []
-    for t in tokens:
-        if t.type == "inline":
-            units.append(re.sub(r"\s+", " ", _inline_text(t)).strip())
-        elif t.type in ("fence", "code_block"):
-            units.append(re.sub(r"\s+", " ", t.content).strip())
-    return units
-
-
 def _marker_token_span(tokens, site_id: str) -> tuple[int, int]:
     """Indices of the site's begin/end markers as STANDALONE top-level html_block tokens. Fail closed if
     a marker is absent, duplicated, embedded in a wrapper (a code fence / <details> / raw-HTML block
@@ -261,42 +304,51 @@ def _marker_token_span(tokens, site_id: str) -> tuple[int, int]:
 
 
 def _preceding_visible(tokens, begin_idx: int) -> str:
-    """Collapsed visible text of the paragraph/heading block IMMEDIATELY before the begin marker at
-    `begin_idx` — the marked block's lead-in — or '' when the marker is not directly preceded by one
-    (another html_block, a fence, a table/list close, an hr, or the top of the document)."""
-    if begin_idx >= 2 and tokens[begin_idx - 1].type in ("paragraph_close", "heading_close") \
+    """Collapsed, normalized visible text of the reader-visible block IMMEDIATELY before the begin marker at
+    `begin_idx` — the marked block's lead-in. A lead-in may be a paragraph/heading OR a blockquote/list: a
+    maintainer may legitimately format the introducing sentence as a quote or a bulleted line, and an intact
+    lead-in reformatted that way must still anchor the block (gate-reviews/0017: it used to yield '' and
+    false-positive as "moved away"). '' when the marker is not directly preceded by any reader-visible block
+    (another html_block, a fence, a table close, an hr, or the top of the document)."""
+    if begin_idx < 1:
+        return ""
+    prev = tokens[begin_idx - 1]
+    if prev.type in ("paragraph_close", "heading_close") and begin_idx >= 2 \
             and tokens[begin_idx - 2].type == "inline":
         return _norm(_inline_text(tokens[begin_idx - 2]))
+    if prev.type in _CONTAINER_CLOSE:
+        # the lead-in was formatted as a blockquote or list — gather that container's inline text, from its
+        # matching open up to the marker, so the anchor phrase is found wherever it sits in the container.
+        depth = 0
+        start = 0
+        for k in range(begin_idx - 1, -1, -1):
+            if tokens[k].type in _CONTAINER_CLOSE:
+                depth += 1
+            elif tokens[k].type in _CONTAINER_OPEN:
+                depth -= 1
+                if depth == 0:
+                    start = k
+                    break
+        return _norm(" ".join(_inline_text(t) for t in tokens[start:begin_idx] if t.type == "inline"))
     return ""
 
 
-def _anchor_occurrences(tokens, anchor: str) -> int:
-    """How many NORMALIZED textual occurrences of `anchor` there are in the doc's reader-visible text — the
-    concatenation of ALL rendered units (paragraphs, headings, cells, AND fenced/indented code blocks),
-    joined so a phrase is counted even if a paragraph break SPLITS it, and normalized so a
-    case/Unicode-dash variant of the anchor still counts (gate-reviews/0016). Used to require the anchor be
-    UNIQUE (_anchor_missing): counting fences closes a relocation that hid the lead-in in a code block;
-    counting over the JOINED text closes one that split the lead-in across a paragraph break; normalizing
-    closes one that changed only the case or a hyphen of the abandoned-site lead-in."""
-    return _norm(" ".join(_visible_units(tokens))).count(_norm(anchor))
-
-
 def _anchor_missing(tokens, begin_idx: int, site_id: str) -> bool:
-    """True if the site's begin marker is NOT immediately preceded by its UNIQUE lead-in context (the
-    ANCHOR). The marker comments travel WITH the block, so identity alone cannot pin a block to a place:
-    relocating a correct block to another section (an appendix, a fold) leaves the real site empty while
-    the check still finds the markers and passes.
+    """True if the site's begin marker is NOT immediately preceded by its lead-in ANCHOR (normalized). The
+    marker comments travel WITH the block, so identity alone cannot pin a block to a place: a maintainer
+    who moves a marked block AWAY from its lead-in (leaving the lead-in behind, or dropping it into an
+    appendix under a different heading) trips this — the block is then preceded by some other text, not the
+    anchor. Moving the lead-in AND the block together is legitimate reorganization and still passes.
 
-    Two conditions, both required (gate-reviews/0014): the anchor must occur EXACTLY ONCE in the document,
-    AND the begin marker must immediately follow that occurrence. Uniqueness is what defeats CLONING the
-    anchor — dropping a second copy of the lead-in phrase next to a relocated block would otherwise satisfy
-    a mere adjacency test while the real site sits empty. Moving the SOLE lead-in and its block together
-    still passes (one occurrence, marker still follows it): that is legitimate reorganization, not drift.
-    Fail closed if the site has no anchor registered, or the anchor is absent / duplicated."""
+    SCOPE (gate-reviews/0016): this is ADJACENCY only. An earlier version also required the anchor to occur
+    EXACTLY ONCE document-wide, to defeat an adversary who CLONES the lead-in phrase beside a relocated
+    block — but the anchors are ordinary descriptive clauses ("generated from skills-order"), so a
+    maintainer who innocently repeats one in prose tripped a uniqueness check on a perfectly correct doc (a
+    false positive). Since a legitimate repeat and an adversarial clone are indistinguishable by count, the
+    uniqueness rule was dropped: casual relocation is caught here; the deliberate anchor-clone relocation is
+    a disclosed determined-adversary residual. Fail closed if the site has no anchor registered."""
     anchor = ANCHORS.get(site_id)
     if not anchor:
-        return True
-    if _anchor_occurrences(tokens, anchor) != 1:
         return True
     return _norm(anchor) not in _preceding_visible(tokens, begin_idx)
 
@@ -633,8 +685,8 @@ def check(root: Path) -> list[str]:
         marked_spans[fname].append((b, e))
         if _anchor_missing(tks, b, site_id):
             findings.append(f"{fname}: the '{site_id}' marked block is not in its expected location — "
-                            f"its unique lead-in anchor is absent or duplicated (a relocated or "
-                            f"anchor-cloned block requires a gate update)")
+                            f"its lead-in anchor does not immediately precede it (a block moved away "
+                            f"from its lead-in requires a gate update)")
             continue
         if kind == "tree":
             body = _fence_body(tks, b, e)
@@ -660,19 +712,21 @@ def check(root: Path) -> list[str]:
         marked_spans[fname].append((b, e))
         if _anchor_missing(tks, b, site_id):
             findings.append(f"{fname}: the '{site_id}' marked block is not in its expected location — "
-                            f"its unique lead-in anchor is absent or duplicated (a relocated or "
-                            f"anchor-cloned block requires a gate update)")
+                            f"its lead-in anchor does not immediately precede it (a block moved away "
+                            f"from its lead-in requires a gate update)")
             continue
         names = _table_names(tks, b, e)
         if names != order:
             findings.append(f"{fname}: '{site_id}' rendered table first column {names} does not equal "
                             f"the order {order} (fix the table to match skills-order)")
 
-    # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all marked spans.
-    for fname in (README, PROMPT):
-        if fname in tokens:
-            findings += _competing_findings(tokens[fname], marked_spans[fname], order, fname)
-
+    # Count sites are MARKED blocks too, so collect their spans BEFORE the competing scan — a near-complete
+    # run rendered INSIDE a count region is inside a marked block, so the general scan must not label it
+    # "outside every marked block" (until 0017 the scan ran first and did exactly that). Excluding it here is
+    # not a hole: check_count_site verifies the count region is a count SENTENCE and flags a near-complete
+    # enumeration in it directly (a run there is not generated/verified, so it would silently rot). The
+    # value check runs after the scan, from the spans collected here.
+    count_checks: list[tuple] = []
     if not COUNT_SITES:
         # vacuous success is exactly the failure this check exists to avoid — an emptied registry would
         # disable the count guard while the banner still said "count phrases consistent".
@@ -688,7 +742,17 @@ def check(root: Path) -> list[str]:
             findings.append(f"{fname}: {ex}")
             continue
         marked_spans[fname].append((b, e))
-        findings += check_count_site(tokens[fname], b, e, site_id, fname, pat, label, n)
+        count_checks.append((fname, b, e, site_id, pat, label))
+
+    # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all marked spans (now
+    # including the two count blocks collected above).
+    for fname in (README, PROMPT):
+        if fname in tokens:
+            findings += _competing_findings(tokens[fname], marked_spans[fname], order, fname)
+
+    # Count VALUE checks, using the spans gathered before the scan.
+    for fname, b, e, site_id, pat, label in count_checks:
+        findings += check_count_site(tokens[fname], b, e, site_id, fname, pat, label, n, order)
 
     return findings
 
@@ -703,7 +767,7 @@ def _count_region_text(tokens, b: int, e: int) -> str | None:
     return None
 
 
-def check_count_site(tokens, b: int, e: int, site_id: str, fname: str, pat, label: str, n: int) -> list[str]:
+def check_count_site(tokens, b, e, site_id, fname, pat, label, n, order) -> list[str]:
     """Verify the scalar count in the MARKED region [b, e] reads the skill count. The count is checked ONLY
     inside its designated marker pair (gate-reviews/0016), so — unlike a document-wide regex — it cannot be
     masked by a correct restatement elsewhere, false-positive on unrelated prose, or leak through a gap
@@ -711,16 +775,27 @@ def check_count_site(tokens, b: int, e: int, site_id: str, fname: str, pat, labe
     text = _count_region_text(tokens, b, e)
     if text is None:
         return [f"{fname}: the '{site_id}' marked count region is not a single paragraph (fix the region)"]
+    out: list[str] = []
+    # The count region is a count SENTENCE, not an enumeration site. A near-complete run of the skill names
+    # here is never generated or verified against skills-order (it silently rots on a reorder), and — since
+    # its span is marked — it is excluded from the general competing scan, which would otherwise flag it. So
+    # catch it HERE (gate-reviews/0017): enumerations belong in their dedicated, generated marked sites. A
+    # one/two-name cross-reference stays below the near-complete threshold and is fine.
+    if _competing_run(text, order):
+        out.append(f"{fname}: the '{site_id}' count region names {_run_hits(text, order)} of {len(order)} "
+                   f"skills — the count sentence must not enumerate the skills; use the dedicated "
+                   f"enumeration sites (they are generated from skills-order)")
     matches = list(pat.finditer(text))
     if len(matches) != 1:
-        return [f"{fname}: the count phrase \"{label}\" appears {len(matches)} time(s) in its '{site_id}' "
-                f"marked region, expected exactly 1 — the region was reworded, or the pattern is stale."]
+        out.append(f"{fname}: the count phrase \"{label}\" appears {len(matches)} time(s) in its '{site_id}' "
+                   f"marked region, expected exactly 1 — the region was reworded, or the pattern is stale.")
+        return out
     tok = matches[0].group("count")
     accepted = {str(n), _norm(NUM_WORDS.get(n, ""))} - {""}
     if tok not in accepted:
-        return [f"{fname}: '{site_id}' \"{label}\" reads \"{tok}\" but there are {n} skills in skills/ "
-                f"(expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")"]
-    return []
+        out.append(f"{fname}: '{site_id}' \"{label}\" reads \"{tok}\" but there are {n} skills in skills/ "
+                   f"(expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")")
+    return out
 
 
 def write(root: Path) -> int:

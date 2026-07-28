@@ -194,8 +194,8 @@ this policy (that would couple the mechanism to unrelated content):
 
 `generate-skill-enumerations.py` keeps the five skill enumerations (and two headline skill-count
 sentences) consistent with `skills-order`. Its scope is stated honestly here so the gate cannot over-claim
-(the failure mode this whole repo exists to prevent). Twelve independent gate-reviews
-(`gate-reviews/0005`–`0016`) drove this scope. This section, the module docstring, the fixtures, and the
+(the failure mode this whole repo exists to prevent). Thirteen independent gate-reviews
+(`gate-reviews/0005`–`0017`) drove this scope. This section, the module docstring, the fixtures, and the
 clean banner state ONE contract — if they ever disagree, that is itself a bug.
 
 **It guarantees (and fixtures lock, each biting on revert — proven by `tests/revert-battery.py`, not
@@ -205,16 +205,22 @@ asserted):**
   (markdown-it-py): pure sites (improve-order, pick-list, tree) match the generated run in the parse
   tree; tables' body rows' first-cell **rendered text** equals the skills, in order. Empty/missing
   `skills/` fails closed.
-- **Each site is pinned to its lead-in, uniquely** — the markers are HTML comments that travel with the
+- **Each site is pinned to its lead-in (adjacency)** — the markers are HTML comments that travel with the
   block, so identity alone cannot bind a block to a place; a correct block relocated to an appendix (its
-  site now empty) would still be "found". Each site is anchored to a stable phrase in the paragraph that
-  introduces it, and that phrase must occur **exactly once across all reader-visible units — paragraphs,
-  cells, AND fenced/indented code blocks**: moving a block **away from its lead-in**, or **cloning the
-  lead-in phrase** (even hidden in a fence) next to a relocated block, trips the anchor. (Moving the sole
-  lead-in and its block together is a legitimate reorganization, not drift.)
-- **All text matching is normalized** — NFKC + Unicode-dash → ASCII `-` + whitespace-collapse + casefold,
-  on both the rendered text and every needle (anchor, skill name, count phrase). A variant that differs
-  only by case, a Unicode non-breaking hyphen, or a compatibility form is matched as the canonical form.
+  site now empty) would still be "found". Each site is anchored to a stable phrase in the block that
+  introduces it — a paragraph, heading, blockquote, or list — and the begin marker must be **immediately
+  preceded by that lead-in**: moving a block **away from its lead-in** (leaving the lead-in behind, or
+  dropping the block into an appendix under a different heading) trips the anchor. (Moving the lead-in and
+  its block together is a legitimate reorganization, not drift.) This is **adjacency only** — an earlier
+  uniqueness rule was dropped because it false-positived when a maintainer innocently repeated an anchor
+  phrase in prose; the deliberate anchor-**clone** relocation it would have caught is a disclosed residual
+  (below).
+- **All text matching is normalized** — NFKC + strip zero-width/format (Cf) characters + Unicode-dash →
+  ASCII `-` + whitespace-collapse + casefold + fold common Cyrillic/Greek homoglyphs, on both the rendered
+  text and every needle (anchor, skill name, count phrase). A variant that differs only by case, a Unicode
+  non-breaking hyphen, a soft hyphen, a compatibility form, or a common homoglyph (an `о`perations with a
+  Cyrillic о) is matched as the canonical form. The full Unicode confusables table is out of scope — an
+  obscure-homoglyph / heavy-mixed-script variant is a disclosed residual (below).
 - **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
   spanning-comment markers, and a *competing enumeration* (in either governed file). A "competing
   enumeration" is a **near-complete run** of the skill names (all-but-one or more) matched at name
@@ -238,11 +244,16 @@ asserted):**
   content participates in this policy.
 - **Scalar counts are first-class MARKED SITES** — each headline count sentence sits in its own marker
   pair (`<!-- skills:count-suite:… -->`, `<!-- skills:count-nskill:… -->`), and the number is verified
-  **only inside that designated region**, value-exact over normalized text. Because it is site-bound, not
+  **only inside that designated region**, value-exact over normalized text. The **whole** number phrase is
+  captured, so a compound ("eight hundred") or a range ("eight to twelve") reads as the count and fails —
+  the leading token cannot slip past into the surrounding prose. Because it is site-bound, not
   document-wide, it **cannot** be masked by a correct restatement elsewhere, false-positive on unrelated
-  prose, or leak through a gap window — the classes a regex-over-prose count check kept reproducing. Two
-  headline counts are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill documentation
-  suite"); the lower-value prose numbers are NOT gated (a disclosed scope choice — see the residuals).
+  prose, or leak through a gap window — the classes a regex-over-prose count check kept reproducing. The
+  count region is a count *sentence*, not an enumeration site: a near-complete run of the skill names inside
+  it is flagged (it is excluded from the general competing scan, so it would otherwise never be verified
+  against `skills-order`). Two headline counts are gated (README "a suite of <N> … skills"; the prompt's
+  "an <N>-skill documentation suite"); the lower-value prose numbers are NOT gated (a disclosed scope
+  choice — see the residuals).
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
@@ -257,6 +268,18 @@ it would false-positive on ordinary content or needs the render-DOM pass):
   by" column), so it is not flagged — flagging it false-positived on good-faith tables.
 - **relocating a block by removing its lead-in ENTIRELY** and re-homing it with a fresh unique lead-in
   (legitimate reorganization), leaving a below-threshold partial list at the old site.
+- **relocating a block while CLONING its lead-in phrase** beside the new position — adjacency is satisfied,
+  so the move passes. A uniqueness rule would catch it, but it false-positived on an innocent repeat of an
+  anchor phrase in prose, so anchoring is adjacency-only (see the guarantees above).
+- an **obscure-homoglyph / heavy-mixed-script** variant of a skill name, anchor, or count, beyond the
+  common Latin/Cyrillic/Greek fold in `_norm`. The casual confusables are folded; the full Unicode
+  confusables table is out of scope.
+- an **unusual count PHRASING** the pattern does not recognize (e.g. punctuation between "suite of" and the
+  number). The count-suite pattern tolerates a qualifier before the number ("exactly/at least eight") and
+  adjectives after it (including a numeric-leading hyphenated one, "eight one-click …"), but an
+  unrecognized phrasing reports "the count phrase appears 0 times" rather than reading the value — reword
+  to the canonical "a suite of `<N>` … skills". The count value is **never silently wrong**: it is
+  verified whenever the phrase is recognized.
 - the **three ungated prose counts** (the "eight copies" line, the build-command comment, the "now eight
   skills" note) — only the two headline counts are marked sites.
 - markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character handling in table delimiters).

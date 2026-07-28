@@ -152,8 +152,8 @@ def _sub(old: str, new: str):
 
 
 # (name, stub, units-it-claims-to-cover, expectation). `covers` must be EXACTLY the syntactic units the
-# stub mutates — functions OR module-level assignment targets (_L/_R/_COUNT/README_COUNT_PHRASES) — and is
-# verified against the patch by _units_touched (round-10: no stub may claim a unit it does not touch).
+# stub mutates — functions OR module-level assignment targets (e.g. _L / _R / _COUNT) — and is verified
+# against the patch by _units_touched (round-10: no stub may claim a unit it does not touch).
 GUARDS: list[tuple] = [
     ("marker: duplicate pair rejected",
      _sub("if len(begins) != 1 or len(ends) != 1:", "if len(begins) < 1 or len(ends) < 1:"),
@@ -165,12 +165,25 @@ GUARDS: list[tuple] = [
      ("_marker_only_html_block",), "RED"),
     ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED"),
     ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED"),
+    # _doc_raw_inline has TWO independent arms (html_inline AND image); the whole-function stub above bites
+    # via the html_inline fixtures alone, so the image arm was a load-bearing branch with no biting fixture
+    # (gate-reviews/0017, same class as the _table_names guard-a gap). Isolate it: reverting only the image
+    # arm reddens the new inline-image golden fixture.
+    ("raw HTML: inline IMAGE arm (isolated from html_inline)",
+     _sub('if c.type in ("html_inline", "image"):', 'if c.type in ("html_inline",):'),
+     ("_doc_raw_inline",), "RED"),
     # --- COUNT sites (marked regions; the number is checked only inside its marker pair) ---
     ("count: whole site check", _stub("check_count_site", "[]"), ("check_count_site",), "RED"),
     ("count: exactly-one in the marked region",
      _sub("if len(matches) != 1:", "if len(matches) < 1:"), ("check_count_site",), "RED"),
     ("count: value-exact in the region",
      _sub("if tok not in accepted:", "if False and tok not in accepted:"), ("check_count_site",), "RED"),
+    # the count region must not itself be an enumeration site (gate-reviews/0017): a near-complete run of
+    # skill names in the count sentence is caught here, since its marked span excludes it from the general
+    # competing scan. Reverting this branch reddens the in-count-region enumeration golden fixture.
+    ("count: region is not an enumeration site",
+     _sub("if _competing_run(text, order):", "if False and _competing_run(text, order):"),
+     ("check_count_site",), "RED"),
     ("count: region is a single paragraph", _stub("_count_region_text", "None"),
      ("_count_region_text",), "RED"),
     ("count: empty registry guard (no vacuous success)",
@@ -180,19 +193,31 @@ GUARDS: list[tuple] = [
           "cannot be verified\")", "            pass"), ("check",), "RED"),
     ("count/name: left boundary", _sub('_L = r"(?<![a-z0-9_-])"', '_L = r""'), ("_L",), "RED"),
     ("count/name: right boundary", _sub('_R = r"(?![a-z0-9_-])"', '_R = r""'), ("_R",), "RED"),
+    # count-suite captures the MULTI-TOKEN number phrase (_COUNT_RUN) so a continuation ("eight hundred",
+    # "eight to twelve") is value-checked, not left in the tolerant filler where only the leading token
+    # would be read (gate-reviews/0017). Reverting the continuation to a single token reddens the
+    # number-word-continuation golden fixtures.
+    ("count: number-phrase continuation captured (no 'eight hundred' masking)",
+     _sub("(?:[\\s-]+(?:{_NUM_CONT}))*", ""), ("_COUNT_RUN",), "RED"),
     # --- NORMALIZATION (kills case / Unicode-dash / compatibility variants) at every match point ---
     ("normalize: casefold + dash fold", _stub("_norm", "s"), ("_norm",), "RED"),
-    # --- ANCHOR uniqueness + adjacency helpers ---
+    # --- ANCHOR adjacency (the begin marker must be immediately preceded by its lead-in) ---
     ("anchor: begin marker must follow its lead-in", _stub("_anchor_missing", "False"),
      ("_anchor_missing",), "RED"),
-    ("anchor: lead-in anchor must be UNIQUE (rejects a cloned anchor)",
-     _sub("if _anchor_occurrences(tokens, anchor) != 1:",
-          "if False and _anchor_occurrences(tokens, anchor) != 1:"), ("_anchor_missing",), "RED"),
-    ("anchor: occurrence count (over joined text incl. fences)", _stub("_anchor_occurrences", "1"),
-     ("_anchor_occurrences",), "RED"),
+    # _anchor_missing's FAIL-CLOSED branch (a site id absent from ANCHORS returns True) is separate from the
+    # adjacency check the whole-function stub bites via; reverting it to `return False` silently accepts an
+    # unregistered marked site. Isolated (gate-reviews/0017), proven by the unregistered-site unit lock.
+    ("anchor: unregistered site id fails closed",
+     _sub("    if not anchor:\n        return True", "    if not anchor:\n        return False"),
+     ("_anchor_missing",), "RED"),
     ("anchor: preceding-unit adjacency", _stub("_preceding_visible", '""'),
      ("_preceding_visible",), "RED"),
-    ("anchor: visible-units feed", _stub("_visible_units", "[]"), ("_visible_units",), "RED"),
+    # _preceding_visible has a second branch: a lead-in formatted as a blockquote/list (not a bare
+    # paragraph) is still read, so an intact-but-reformatted lead-in is not a false "moved away"
+    # (gate-reviews/0017). Reverting only the container branch reddens the blockquote/list lead-in fixtures.
+    ("anchor: blockquote/list lead-in recognized (container branch)",
+     _sub("    if prev.type in _CONTAINER_CLOSE:", "    if False and prev.type in _CONTAINER_CLOSE:"),
+     ("_preceding_visible",), "RED"),
     # --- COMPETING scan + its aggregation/boundary helpers ---
     ("competing: whole scan", _stub("_competing_findings", "[]"), ("_competing_findings",), "RED"),
     ("competing: near-complete run required (not any two names)",
@@ -201,6 +226,15 @@ GUARDS: list[tuple] = [
     ("competing: scans code blocks too (separator-free fence)",
      _sub('t.content if t.type in ("fence", "code_block") else ""', '""'),
      ("_competing_findings",), "RED"),
+    # the two arms above cover FENCES; the code_block (indented) arm is separately load-bearing and, until
+    # 0017, unproven (every fixture used a fence). Isolate each: phase-1 single-unit and phase-2 container
+    # aggregation must both read code_block tokens, proven by the indented + blockquote-split golden fixtures.
+    ("competing: phase-1 reads INDENTED code blocks (code_block arm)",
+     _sub('t.content if t.type in ("fence", "code_block") else ""',
+          't.content if t.type in ("fence",) else ""'), ("_competing_findings",), "RED"),
+    ("competing: phase-2 aggregates INDENTED code blocks (code_block arm)",
+     _sub('for x in tokens[i:j + 1] if x.type in ("inline", "fence", "code_block")',
+          'for x in tokens[i:j + 1] if x.type in ("inline", "fence")'), ("_competing_findings",), "RED"),
     ("competing: aggregate within each container (list / blockquote)",
      _sub("if _competing_run(agg, order):", "if False and _competing_run(agg, order):"),
      ("_competing_findings",), "RED"),
@@ -212,8 +246,13 @@ GUARDS: list[tuple] = [
     ("competing: container span", _stub("_container_close", "start"), ("_container_close",), "RED"),
     ("competing: table span", _stub("_table_span_close", "start"), ("_table_span_close",), "RED"),
     ("competing: table cell reconstruction", _stub("_table_cells", "([], [])"), ("_table_cells",), "RED"),
-    # --- TABLE first-column + PURE/FENCE region grammar ---
-    ("table: region is exactly one table",
+    # --- TABLE first-column + PURE/FENCE region grammar. _table_names has TWO independent return-None
+    #     guards (round-12 found only one was proven): a) the region holds EXACTLY ONE table; b) the region
+    #     BEGINS and ENDS with it. Each has its own stub + biting fixture.
+    ("table: region holds exactly one table",
+     _sub("    if sum(1 for t in inner if t.type == \"table_open\") != 1:",
+          "    if False:"), ("_table_names",), "RED"),
+    ("table: region begins/ends with the table",
      _sub("    if inner[0].type != \"table_open\" or inner[-1].type != \"table_close\" "
           "or inner[0].level != 0:", "    if False:"), ("_table_names",), "RED"),
     ("pure region: exactly one paragraph",
@@ -404,7 +443,10 @@ def main() -> int:
     print("   explicitly-reasoned exemption (call graph derived by ast, not a hand-kept list)")
     gen_src = (ROOT / GEN).read_text(encoding="utf-8")
     producers = _finding_producers(gen_src)
-    load_bearing = _reachable_from(gen_src, {"check"})   # every function check() can reach transitively
+    # Roots: check() plus the renderers it invokes INDIRECTLY through the PURE_SITES registry (a bare
+    # `renderer(order)` call the static call graph cannot resolve to a name) — they are load-bearing
+    # entry points too, so seed them explicitly.
+    load_bearing = _reachable_from(gen_src, {"check", "render_improve_order", "render_pick_list"})
     claimed = {fn for _, _, covers, _ in GUARDS for fn in covers}
     owed = sorted(load_bearing - claimed - set(NON_GUARD))
     for fn, why in sorted(NON_GUARD.items()):
