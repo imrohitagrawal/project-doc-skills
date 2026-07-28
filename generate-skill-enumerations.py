@@ -43,20 +43,19 @@ WHAT THIS GATE GUARANTEES (its real job):
     legitimate prose and is deliberately NOT flagged. LIMIT: a run deliberately split across SEPARATE
     top-level containers, and a decoy in a non-first column of a MARKED table, are disclosed residuals (see
     below) — aggregating either further would false-positive on ordinary cross-referencing content.
-  - **Scalar counts are FIRST-CLASS MARKED SITES** (not document-wide regex). Each count sentence sits in
-    its own marker pair; the number is verified ONLY inside that designated region (see check_count_site),
-    so it cannot be masked by a restatement elsewhere, false-positive on unrelated prose, or leak through a
-    gap window — the failure classes a regex-over-prose count check kept reproducing. The WHOLE number
-    phrase is captured, so a compound ("eight hundred") or a range ("eight to twelve") reads as the count
-    and fails the value check — the leading token cannot slip past it. Ordinary copyediting is tolerated
-    symmetrically: a qualifier BEFORE the count ("a suite of exactly/at least eight …") and adjectives
-    AFTER it, including a numeric-leading hyphenated one ("eight one-click …"), keep the value readable. The
-    count region is a count SENTENCE,
-    not an enumeration site: a near-complete run of the skill names there is flagged (it would otherwise be
-    excluded from the competing scan yet never verified against skills-order). Two HEADLINE counts
-    are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill documentation suite"); the
-    lower-value prose numbers (the "eight copies" line, the build-command comment, the "now eight skills"
-    note) are deliberately NOT gated — a disclosed scope choice.
+  - **Scalar counts are FIRST-CLASS MARKED SITES, checked by PRESENCE** (not by parsing the sentence). Each
+    count sentence sits in its own marker pair; inside that region the count value N — the digit or its
+    number word — must appear as a BOUNDED token (see _CL/_CR) that is not enlarged into a compound ("eight
+    hundred") or a range ("eight to twelve"; see _NOT_ENLARGED). Because no sentence STRUCTURE is parsed,
+    ordinary prose variation cannot false-positive it — an article ("a"/"an"), a qualifier ("exactly/at
+    least eight"), a numeric adjective ("eight 100% …", "eight one-click …"), or another number elsewhere in
+    the sentence are all irrelevant — while casual drift (a wrong number, so N is absent) and a compound or
+    range mask are still caught. (Four earlier rounds proved a positional "suite of <N> … skills" regex is a
+    bottomless false-positive well; the presence check ends that class at the root, gate-reviews/0018.) The
+    count region is a count SENTENCE, not an enumeration site: a near-complete run of the skill names there
+    is flagged. Two HEADLINE counts are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill
+    documentation suite"); the lower-value prose numbers (the "eight copies" line, the build-command
+    comment, the "now eight skills" note) are deliberately NOT gated — a disclosed scope choice.
   - **Raw HTML is banned document-wide in the governed docs** (README.md, per-skill-review-prompt.md): a
     non-comment raw-HTML block (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / image
     token anywhere, is rejected — raw HTML is the enabler for a reader-visible decoy that renders
@@ -73,10 +72,12 @@ WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration
   a marked block while CLONING its lead-in phrase beside the new position (adjacency is satisfied; a
   uniqueness rule would catch it but false-positived on innocent repeats of an anchor phrase); (4) an
   obscure-homoglyph / heavy-mixed-script variant beyond the common-confusables fold; (5) markdown-it-py vs
-  cmark-gfm parse edge cases; (6) the three ungated prose counts above; (7) an unusual count PHRASING the
-  pattern does not recognize (e.g. punctuation between "suite of" and the number) reports "the count phrase
-  appears 0 times" rather than reading the value — reword to the canonical "a suite of <N> … skills"; the
-  count VALUE is always verified when the phrase IS recognized, never silently wrong. Both governed files
+  cmark-gfm parse edge cases; (6) the three ungated prose counts above; (7) the count check verifies the
+  value N is PRESENT in the region, not that it is the sole or stated count — the noun is not verified, and
+  a stray occurrence of N (a version number like "Claude 8", or a second conflicting count clause) satisfies
+  presence even if the prominent count is wrong. This is the accepted cost of the presence check dropping
+  sentence-structure parsing (the source of four rounds of false positives); the PRIMARY threat — casual
+  drift, a wrong number with no coincidental N — is still caught. Both governed files
   are scanned in full, so a competing run in either file is caught.
 
 Source of truth: SET = skills/<name>/ with a SKILL.md; ORDER = the root `skills-order` file, validated
@@ -138,29 +139,29 @@ NUM_WORDS = {
     9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen",
     16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
 }
-WORD_TO_NUM = {word: n for n, word in NUM_WORDS.items()}
-
-# The count slot matches ONLY a number token — a digit run, a number word, or a hyphenated compound
-# ("twenty-one"). Applied over normalized (casefolded) text, so lowercase alternatives suffice.
 _NUM_ALT = "|".join(sorted(NUM_WORDS.values(), key=len, reverse=True))
-_COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"
-# A MULTI-TOKEN number phrase: the leading number token plus any number-bearing continuation
-# ("eight hundred", "eight to twelve", "eight or nine"), so a continuation is CAPTURED as the count and
-# value-checked — not left in a tolerant filler where only the leading token would be read
-# (gate-reviews/0017: "a suite of eight hundred … skills" rendered 800 yet passed because the value check
-# saw only "eight"). A continuation is a MULTIPLIER ("hundred"), a further number token, or a RANGE word
-# that is itself followed by a number ("to twelve") — the range word must LEAD TO a number, so an ordinary
-# "eight or so"/"eight to fit" (a correct count in casual prose) is NOT swallowed and stays clean. The
-# conjunction "and" is excluded so "eight and only eight" is not misread as one compound number.
-_NUM_TOK = rf"(?:{_NUM_ALT})|[0-9]{{1,3}}"
-# A number-token continuation must NOT be the head of a HYPHENATED adjective: "eight one-click skills" has
-# eight skills, and "one" heads "one-click", not a compound number — so `(?!-[a-z])` stops it being read as
-# "eight one" (gate-reviews/0017). Multipliers ("hundred") and range words keep their number arms.
-_NUM_CONT = (rf"hundred|thousand|million|billion|dozen|(?:{_NUM_TOK})(?!-[a-z])|"
-             rf"(?:to|or|through)[\s-]+(?:{_NUM_TOK})(?!-[a-z])")
-_COUNT_RUN = rf"(?P<count>(?:{_NUM_TOK})(?:[\s-]+(?:{_NUM_CONT}))*)"
-# Identifier boundaries (over normalized text, where Unicode dashes are already ASCII '-'): `\b` is not
-# enough — it let "rebuild all eight" satisfy "build all", and suffixes ("skillsets") pass.
+# The canonical count is checked by PRESENCE, not by parsing the sentence (gate-reviews/0018). Four prior
+# rounds proved a positional "suite of <N> … skills" regex is a bottomless false-positive well: every round
+# found another correct phrasing it flagged (a compound continuation, a qualifier "exactly/at least", a
+# hyphenated adjective "one-click", a percent adjective "100%", the article "a" vs "an"). The presence check
+# never parses sentence structure, so all of that is irrelevant. The region must simply CONTAIN the count
+# value N — the digit or its number word — as a bounded token that is not enlarged into a bigger number.
+# It still catches casual drift (a wrong number → N absent) and a compound/range mask ("eight hundred" /
+# "eight to twelve" → N present but immediately enlarged, so not a plain count).
+#
+# Count-token boundaries: no adjacent DIGIT or LETTER (so "eight" is not read inside "eighteen", nor "8"
+# inside "18"), but a following hyphen IS allowed so "an eight-skill" reads its count as "eight". These are
+# DISTINCT from _L/_R below, which fence a hyphen because they bound SKILL NAMES ("project-faq" must not
+# match "project-faq-notes").
+_CL = r"(?<![a-z0-9])"
+_CR = r"(?![a-z0-9])"
+# A count token is NOT a plain count when it is immediately ENLARGED into a compound ("eight hundred") or a
+# range ("eight to/or/through <number>"). "eight or so" is not a range (no number after "or") and stays a
+# plain count; "and" is not a compounding word.
+_MULT = "hundred|thousand|million|billion|dozen"
+_NOT_ENLARGED = rf"(?![\s-]+(?:{_MULT}|(?:to|or|through)[\s-]+(?:{_NUM_ALT}|[0-9])))"
+# Identifier boundaries for SKILL NAMES (fence a hyphen so a name is not a prefix of a longer one): `\b` is
+# not enough — it let "rebuild all eight" satisfy "build all", and suffixes ("skillsets") pass.
 _L = r"(?<![a-z0-9_-])"
 _R = r"(?![a-z0-9_-])"
 
@@ -168,30 +169,14 @@ README = "README.md"
 PROMPT = "per-skill-review-prompt.md"
 
 # Scalar counts are FIRST-CLASS MARKED SITES (gate-reviews/0016), not document-wide regex. Each count
-# sentence sits in its own marker pair; the check verifies the number ONLY inside that designated region,
-# so it cannot be masked by a restatement elsewhere, false-positive on unrelated prose, or leak through a
-# gap window (the failure classes that a regex-over-prose count check kept reproducing). The pattern below
-# is applied to the NORMALIZED region text; `{_L}`/`{_R}` bound the count so a prefix/suffix cannot sneak
-# in. Two headline counts are gated; the lower-value prose numbers (the "eight copies" line, the build
-# command comment, the "now eight skills" note) are deliberately NOT gated — see CONTRIBUTING scope.
-# site_id -> (filename, in-region count pattern over normalized text, human label)
-# The pattern is TOLERANT of ordinary copyediting inside the region — the count number and its noun
-# ("suite of <N> … skills", "an <N>-skill") with any adjectives between — but rejects a changed number or a
-# changed count-noun (gate-reviews/0016: a rigid full-phrase pattern false-positived a good-faith
-# "Claude" → "Claude Code" edit). `[^.]*` stays within the one sentence (it cannot cross a period).
+# sentence sits in its own marker pair; the check verifies the count ONLY inside that designated region, by
+# PRESENCE of the value N (see check_count_site + _CL/_CR/_NOT_ENLARGED above). Two headline counts are
+# gated; the lower-value prose numbers (the "eight copies" line, the build-command comment, the "now eight
+# skills" note) are deliberately NOT gated — see CONTRIBUTING scope.
+# site_id -> (filename, human label for messages)
 COUNT_SITES = {
-    # count-suite: the count is followed by a tolerant `[^.]*?` filler, so it uses the MULTI-TOKEN
-    # _COUNT_RUN — a continuation ("eight hundred") is captured into `count` and fails the value check,
-    # instead of hiding in the filler. count-nskill binds the count directly to a literal "-skill", so a
-    # continuation there yields zero matches (fail closed) already; plain _COUNT suffices.
-    # `(?:[a-z]+ )*?` tolerates a qualifier before the count ("a suite of exactly/at least/just eight …"),
-    # symmetric with the `[^.]*?` filler AFTER it — the count still binds to the FIRST number (non-greedy),
-    # so a wrong number in the qualifier position becomes the read value and fails, never a mask
-    # (gate-reviews/0017).
-    "count-suite": (README, re.compile(rf"{_L}suite of (?:[a-z]+ )*?{_COUNT_RUN}\b[^.]*?\bskills{_R}"),
-                    "a suite of <N> … skills"),
-    "count-nskill": (PROMPT, re.compile(rf"{_L}an {_COUNT}-skill{_R}"),
-                     "an <N>-skill …"),
+    "count-suite": (README, "a suite of <N> … skills"),
+    "count-nskill": (PROMPT, "an <N>-skill …"),
 }
 
 
@@ -732,7 +717,7 @@ def check(root: Path) -> list[str]:
         # disable the count guard while the banner still said "count phrases consistent".
         findings.append("no count sites are configured — the count guard cannot verify anything "
                         "(fail closed, not clean)")
-    for site_id, (fname, pat, label) in COUNT_SITES.items():
+    for site_id, (fname, label) in COUNT_SITES.items():
         if fname not in tokens:
             findings.append(f"{fname}: governed doc not found — count site '{site_id}' cannot be verified")
             continue
@@ -742,7 +727,7 @@ def check(root: Path) -> list[str]:
             findings.append(f"{fname}: {ex}")
             continue
         marked_spans[fname].append((b, e))
-        count_checks.append((fname, b, e, site_id, pat, label))
+        count_checks.append((fname, b, e, site_id, label))
 
     # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all marked spans (now
     # including the two count blocks collected above).
@@ -750,9 +735,9 @@ def check(root: Path) -> list[str]:
         if fname in tokens:
             findings += _competing_findings(tokens[fname], marked_spans[fname], order, fname)
 
-    # Count VALUE checks, using the spans gathered before the scan.
-    for fname, b, e, site_id, pat, label in count_checks:
-        findings += check_count_site(tokens[fname], b, e, site_id, fname, pat, label, n, order)
+    # Count PRESENCE checks, using the spans gathered before the scan.
+    for fname, b, e, site_id, label in count_checks:
+        findings += check_count_site(tokens[fname], b, e, site_id, fname, label, n, order)
 
     return findings
 
@@ -767,11 +752,15 @@ def _count_region_text(tokens, b: int, e: int) -> str | None:
     return None
 
 
-def check_count_site(tokens, b, e, site_id, fname, pat, label, n, order) -> list[str]:
-    """Verify the scalar count in the MARKED region [b, e] reads the skill count. The count is checked ONLY
-    inside its designated marker pair (gate-reviews/0016), so — unlike a document-wide regex — it cannot be
-    masked by a correct restatement elsewhere, false-positive on unrelated prose, or leak through a gap
-    window. Exactly one count phrase must appear in the region, reading the canonical value."""
+def check_count_site(tokens, b, e, site_id, fname, label, n, order) -> list[str]:
+    """Verify the MARKED count region [b, e] states the skill count N, checked ONLY inside its marker pair
+    by PRESENCE (gate-reviews/0018): N — the digit or its number word — must appear as a bounded count token
+    (see _CL/_CR) that is not enlarged into a compound/range (see _NOT_ENLARGED). No sentence structure is
+    parsed, so ordinary prose variation around the count (article a/an, qualifier "exactly/at least", a
+    numeric adjective "100%"/"one-click", another number elsewhere in the sentence) cannot false-positive; a
+    wrong number (N absent) or a compound/range mask ("eight hundred"/"eight to twelve") is still caught.
+    LIMIT: exactly-one matching was dropped with the positional pattern — a SECOND conflicting count clause
+    in the same region is a disclosed residual (the region still states N, so it passes)."""
     text = _count_region_text(tokens, b, e)
     if text is None:
         return [f"{fname}: the '{site_id}' marked count region is not a single paragraph (fix the region)"]
@@ -785,16 +774,12 @@ def check_count_site(tokens, b, e, site_id, fname, pat, label, n, order) -> list
         out.append(f"{fname}: the '{site_id}' count region names {_run_hits(text, order)} of {len(order)} "
                    f"skills — the count sentence must not enumerate the skills; use the dedicated "
                    f"enumeration sites (they are generated from skills-order)")
-    matches = list(pat.finditer(text))
-    if len(matches) != 1:
-        out.append(f"{fname}: the count phrase \"{label}\" appears {len(matches)} time(s) in its '{site_id}' "
-                   f"marked region, expected exactly 1 — the region was reworded, or the pattern is stale.")
-        return out
-    tok = matches[0].group("count")
     accepted = {str(n), _norm(NUM_WORDS.get(n, ""))} - {""}
-    if tok not in accepted:
-        out.append(f"{fname}: '{site_id}' \"{label}\" reads \"{tok}\" but there are {n} skills in skills/ "
-                   f"(expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\")")
+    present = any(re.search(_CL + re.escape(tok) + _CR + _NOT_ENLARGED, text) for tok in accepted)
+    if not present:
+        out.append(f"{fname}: the '{site_id}' count region (\"{label}\") does not state {n} as a plain "
+                   f"count — expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\" as a bounded number, present and "
+                   f"not enlarged into a compound/range")
     return out
 
 

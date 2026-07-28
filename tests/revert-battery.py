@@ -172,12 +172,25 @@ GUARDS: list[tuple] = [
     ("raw HTML: inline IMAGE arm (isolated from html_inline)",
      _sub('if c.type in ("html_inline", "image"):', 'if c.type in ("html_inline",):'),
      ("_doc_raw_inline",), "RED"),
-    # --- COUNT sites (marked regions; the number is checked only inside its marker pair) ---
+    # --- COUNT sites (marked regions; the count is checked by PRESENCE of N inside its marker pair,
+    #     gate-reviews/0018) ---
     ("count: whole site check", _stub("check_count_site", "[]"), ("check_count_site",), "RED"),
-    ("count: exactly-one in the marked region",
-     _sub("if len(matches) != 1:", "if len(matches) < 1:"), ("check_count_site",), "RED"),
-    ("count: value-exact in the region",
-     _sub("if tok not in accepted:", "if False and tok not in accepted:"), ("check_count_site",), "RED"),
+    # PRESENCE: reverting the presence branch lets a WRONG count (N absent) pass -> the wrong-number golden
+    # fixtures redden.
+    ("count: canonical count must be present",
+     _sub("    if not present:\n", "    if False:\n"), ("check_count_site",), "RED"),
+    # ENLARGEMENT guard: reverting it lets a compound ("N hundred") or range ("N to M") read N as a plain
+    # count -> the compound/range golden masks redden.
+    ("count: a compound/range is not read as the plain count (_NOT_ENLARGED)",
+     _sub('_NOT_ENLARGED = rf"(?![\\s-]+(?:{_MULT}|(?:to|or|through)[\\s-]+(?:{_NUM_ALT}|[0-9])))"',
+          '_NOT_ENLARGED = r""'), ("_NOT_ENLARGED",), "RED"),
+    # count-token boundaries (distinct from _L/_R, which fence a hyphen for SKILL NAMES): reverting either
+    # lets N match INSIDE a longer number word/digit run, so a wrong count reads present. Proven by the
+    # "eighteen"/"18" golden fixtures.
+    ("count: no letter after the count token (not inside 'eighteen')",
+     _sub('_CR = r"(?![a-z0-9])"', '_CR = r""'), ("_CR",), "RED"),
+    ("count: no digit before the count token (not inside '18')",
+     _sub('_CL = r"(?<![a-z0-9])"', '_CL = r""'), ("_CL",), "RED"),
     # the count region must not itself be an enumeration site (gate-reviews/0017): a near-complete run of
     # skill names in the count sentence is caught here, since its marked span excludes it from the general
     # competing scan. Reverting this branch reddens the in-count-region enumeration golden fixture.
@@ -193,12 +206,6 @@ GUARDS: list[tuple] = [
           "cannot be verified\")", "            pass"), ("check",), "RED"),
     ("count/name: left boundary", _sub('_L = r"(?<![a-z0-9_-])"', '_L = r""'), ("_L",), "RED"),
     ("count/name: right boundary", _sub('_R = r"(?![a-z0-9_-])"', '_R = r""'), ("_R",), "RED"),
-    # count-suite captures the MULTI-TOKEN number phrase (_COUNT_RUN) so a continuation ("eight hundred",
-    # "eight to twelve") is value-checked, not left in the tolerant filler where only the leading token
-    # would be read (gate-reviews/0017). Reverting the continuation to a single token reddens the
-    # number-word-continuation golden fixtures.
-    ("count: number-phrase continuation captured (no 'eight hundred' masking)",
-     _sub("(?:[\\s-]+(?:{_NUM_CONT}))*", ""), ("_COUNT_RUN",), "RED"),
     # --- NORMALIZATION (kills case / Unicode-dash / compatibility variants) at every match point ---
     ("normalize: casefold + dash fold", _stub("_norm", "s"), ("_norm",), "RED"),
     # --- ANCHOR adjacency (the begin marker must be immediately preceded by its lead-in) ---
@@ -274,14 +281,6 @@ GUARDS: list[tuple] = [
      ("render_improve_order",), "RED"),
     ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED"),
     ("renderer: tree body bytes", _stub("_tree_body", '"decoy"'), ("_tree_body",), "RED"),
-    # REDUNDANT (VALIDATED, round-12 F9): the mutant must leave the golden suite GREEN, confirming its
-    # revert is genuinely covered by another guard. If it reddens, the "redundant" claim is FALSE and the
-    # battery fails (make it a real RED guard). number-only-slot: under marked count sites, a non-number in
-    # the count position fails value-exact (wrong value) or presence (no match) — value-exact covers it.
-    ("count: number-only slot (redundant; value-exact covers a non-number)",
-     _sub('_COUNT = rf"(?P<count>[0-9]{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"',
-          '_COUNT = r"(?P<count>[a-z0-9][a-z0-9-]{0,20}?)"'),
-     ("_COUNT",), "REDUNDANT"),
 ]
 
 # Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is

@@ -650,11 +650,10 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(_raises(f"{A}\n\n{E}\n\n**x**\n\n{B}\n"),
               "_marker_token_span raises when end precedes begin (locks the order branch)")
 
-    # CONTRACT (0016): scalar counts are MARKED SITES. check_count_site verifies the number ONLY inside the
-    # designated marker region — exactly one count phrase, reading the canonical value. A synthetic pattern
-    # over a synthetic region keeps the mechanism test independent of the live docs' wording. Region text is
-    # built by parsing a marked paragraph and running check_count_site on its span.
-    PAT = re.compile(rf"{g._L}widget count is {g._COUNT}{g._R}")
+    # CONTRACT (0018): scalar counts are MARKED SITES. check_count_site verifies the count ONLY inside the
+    # region by PRESENCE of N — a bounded number token (_CL/_CR) not enlarged into a compound/range
+    # (_NOT_ENLARGED). No sentence pattern is parsed. Synthetic marked regions keep the mechanism test
+    # independent of the live docs' wording. order == ["alpha","beta","gamma"] here (threshold 2).
     def _count_region(body):
         src = f"<!-- skills:count-suite:begin -->\n{body}\n<!-- skills:count-suite:end -->\n"
         tks = g._md().parse(src)
@@ -662,25 +661,30 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         return tks, b, e
     def _cc(body, n):
         tks, b, e = _count_region(body)
-        return g.check_count_site(tks, b, e, "count-suite", "x", PAT, "widget count is <N>", n, order)
-    res.check(_cc("The widget count is three today.", 3) == [], "count site: correct value in region passes")
-    res.check(len(_cc("The widget count is two today.", 3)) == 1, "count site: wrong value in region caught")
-    res.check(len(_cc("The widget total is unstated.", 3)) == 1, "count site: 0 matches (reworded) caught")
-    res.check(len(_cc("Widget count is three; widget count is three.", 3)) == 1,
-              "count site: >1 matches (duplicated in region) caught")
-    res.check(_cc("The widget count is THREE today.", 3) == [], "count site: UPPERCASE value normalized ok")
-    res.check(len(_cc("A prefix rewidget count is three.", 3)) == 1,
-              "count site: a prefixed literal ('rewidget') does not satisfy the bounded pattern")
-    # 0017: a near-complete run of the skills in the count region is caught (the count sentence is not an
-    # enumeration site). order is ["alpha","beta","gamma"] here, so naming all three trips the guard.
-    res.check(len(_cc("The widget count is three: alpha, beta, gamma.", 3)) == 1,
+        return g.check_count_site(tks, b, e, "count-suite", "x", "a suite of <N> … skills", n, order)
+    res.check(_cc("A suite of three widgets.", 3) == [], "count site: N present as a plain count passes")
+    res.check(len(_cc("A suite of two widgets.", 3)) == 1, "count site: wrong number (N absent) is caught")
+    res.check(len(_cc("A suite of several widgets.", 3)) == 1, "count site: N absent (no number) is caught")
+    res.check(_cc("A suite of THREE widgets.", 3) == [], "count site: an UPPERCASE N is normalized ok")
+    res.check(_cc("A suite of exactly three fully-tested widgets.", 3) == [],
+              "count site: a qualifier + adjectives around N stay clean (no sentence parse)")
+    res.check(_cc("A suite of three 100% supported widgets.", 3) == [],
+              "count site: a numeric adjective (100%) next to N stays clean (0018 FP fix)")
+    res.check(_cc("A suite of three one-click widgets.", 3) == [],
+              "count site: a hyphenated numeric adjective (one-click) next to N stays clean")
+    res.check(len(_cc("A suite of three hundred widgets.", 3)) == 1,
+              "count site: a compound (N + multiplier 'hundred') is caught (not a plain count)")
+    res.check(len(_cc("A suite of three to five widgets.", 3)) == 1,
+              "count site: a range (N to M) is caught (not a plain count)")
+    res.check(_cc("A suite of three or so widgets.", 3) == [],
+              "count site: 'three or so' is NOT a range (no number after 'or') -> stays clean")
+    res.check(len(_cc("A suite of three: alpha, beta, gamma.", 3)) == 1,
               "count site: a near-complete skill run in the count region is caught (not an enumeration site)")
     # a smuggled second paragraph in the region is not a single paragraph -> finding.
-    tks, b, e = _count_region("The widget count is three.")
-    tks2 = g._md().parse("<!-- skills:count-suite:begin -->\nThe widget count is three.\n\nExtra.\n"
+    tks2 = g._md().parse("<!-- skills:count-suite:begin -->\nA suite of three widgets.\n\nExtra.\n"
                          "<!-- skills:count-suite:end -->\n")
     b2, e2 = g._marker_token_span(tks2, "count-suite")
-    res.check(len(g.check_count_site(tks2, b2, e2, "count-suite", "x", PAT, "l", 3, order)) == 1,
+    res.check(len(g.check_count_site(tks2, b2, e2, "count-suite", "x", "l", 3, order)) == 1,
               "count site: region that is not a single paragraph -> finding")
     # NORMALIZATION unit-locks (0016): case, Unicode dash, and NFKC compatibility forms all fold together.
     res.check(g._norm("Generated From Skills‑Order") == g._norm("generated from skills-order"),
@@ -829,16 +833,19 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                  "\n\n<!-- skills:improve-order:begin -->\n"
                  "**publish-mirror ⇒ doc-critic ⇒ learning-track.**\n"
                  "<!-- skills:improve-order:end -->")),
-        # 0016: the count is a MARKED region; the count checks below mutate the region's number/noun. A
-        # reworded region (no "suite of <N> independent Claude skills") -> 0 matches -> CAUGHT.
-        ("README count region reworded away",
-            repl("README.md", "A suite of eight independent", "A collection of eight independent")),
-        ("hyphenated count value in the region",
+        # 0018: the count is a MARKED region checked by PRESENCE of N. A WRONG number in the region (the
+        # canonical "eight" replaced by "twenty-one") makes N absent -> CAUGHT. (Rewording the SENTENCE
+        # around N — "suite"->"collection", or the noun — is NOT number-drift and stays clean; see the count
+        # CLEAN checks below.)
+        ("wrong number in the count region ('twenty-one' for n=8)",
             repl("README.md", "A suite of eight independent", "A suite of twenty-one independent")),
-        # a suffixed count-noun ("... skillsets") must not satisfy "... skills" (the _R right boundary).
-        ("noun-suffixed count in the region ('skillsets')",
-            repl("README.md", "A suite of eight independent Claude skills.",
-                 "A suite of eight independent Claude skillsets.")),
+        # 0018 count-token boundaries (_CL/_CR): N must not be read INSIDE a longer number word/digit run.
+        # n=8: "eighteen" contains "eight" but is 18, and "18" contains "8" but is 18 — both leave the count
+        # WRONG, so the presence check must NOT match, i.e. must fail closed (CAUGHT).
+        ("count region says 'eighteen' (n=8) -> 'eight' not matched inside it",
+            repl("README.md", "A suite of eight independent", "A suite of eighteen independent")),
+        ("count region says '18' (n=8) -> '8' not matched inside it",
+            repl("README.md", "A suite of eight independent", "A suite of 18 independent")),
         # 0011 MINOR-1: a competing enumeration inside a FENCED block renders visibly, so the competing
         # scan must read fence content, not only inline tokens.
         ("competing near-complete run inside a fenced block",
@@ -882,11 +889,6 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                 (t / "README.md").read_text(encoding="utf-8")
                 .replace(FULL, "(the sequence now lives in the appendix)")
                 .rstrip() + "\n\n## Appendix: generated sequence\n\n" + FULL + "\n", encoding="utf-8")),
-        # 0016: rewording the marked count region's noun away ("... independent reviewers.") -> the count
-        # pattern no longer matches in the region -> CAUGHT.
-        ("count region reworded, noun dropped",
-            repl("README.md", "A suite of eight independent Claude skills.",
-                 "A suite of eight independent reviewers.")),
     ]
     for name, mut in cases:
         f = scratch(mut)
@@ -1025,13 +1027,29 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                         "an eight-skill, Diátaxis-based documentation suite"))
     res.check(same == [], "count nskill: a legit internal copyedit keeping <N>-skill stays CLEAN",
               "; ".join(same)[:70] or "clean")
-    # a same-paragraph decoy — a wrong near-miss count clause plus a canonical clause — is CAUGHT (two
-    # matches: the tolerant, non-greedy pattern reads both numbers, so exactly-one fails).
+    # 0018 (presence design): rewording the SENTENCE around N while keeping the count is NOT drift and stays
+    # CLEAN — the exact false-positive class four prior rounds kept hitting is gone (suite -> collection).
+    reworded = scratch(repl("README.md", "A suite of eight independent", "A collection of eight independent"))
+    res.check(reworded == [], "count: rewording the sentence around N (suite -> collection) stays CLEAN",
+              "; ".join(reworded)[:70] or "clean")
+    # DISCLOSED RESIDUALS (presence design, gate-reviews/0018): the count NOUN is not verified, and a SECOND
+    # conflicting count clause in the same region is not caught (N is still present). Both are the accepted
+    # cost of dropping sentence-structure parsing; assert them so the scope is visible, not a surprise.
+    noun = scratch(repl("README.md", "A suite of eight independent Claude skills.",
+                        "A suite of eight independent Claude skillsets."))
+    res.check(noun == [], "count residual: a reworded count-noun with N present is NOT caught (disclosed)",
+              "; ".join(noun)[:70] or "clean")
     decoy = scratch(repl("README.md", "A suite of eight independent Claude skills.",
         "A suite of nine bundled independent Claude skills ship today; historically, a suite of "
         "eight independent Claude skills."))
-    res.check(len(decoy) >= 1, "count: an in-region wrong+canonical decoy is CAUGHT (>1 count match)",
-              (decoy[0][:60] if decoy else "NOT CAUGHT (clean!)"))
+    res.check(decoy == [], "count residual: a second conflicting count clause (N still present) is NOT caught",
+              "; ".join(decoy)[:70] or "clean")
+    # a STRAY occurrence of N (here a version "Claude 8") satisfies presence even though the prominent count
+    # ("nine") is wrong — the disclosed cost of not parsing which number is THE count.
+    stray = scratch(repl("README.md", "A suite of eight independent Claude skills.",
+                         "A suite of nine independent Claude 8 skills."))
+    res.check(stray == [], "count residual: a stray N (version 'Claude 8') satisfies presence (disclosed)",
+              "; ".join(stray)[:70] or "clean")
 
     # --- 0017: anchoring is ADJACENCY-ONLY (the 0014 uniqueness rule was dropped — it false-positived on an
     #     innocent repeat of an anchor phrase). For EACH of the five sites: RELOCATING the block away from

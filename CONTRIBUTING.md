@@ -242,18 +242,20 @@ asserted):**
   text and the pixels it displays can disagree with each other and with the enumeration. If a governed
   doc ever genuinely needs an image, that is a scope change: permit it explicitly and define how its
   content participates in this policy.
-- **Scalar counts are first-class MARKED SITES** — each headline count sentence sits in its own marker
-  pair (`<!-- skills:count-suite:… -->`, `<!-- skills:count-nskill:… -->`), and the number is verified
-  **only inside that designated region**, value-exact over normalized text. The **whole** number phrase is
-  captured, so a compound ("eight hundred") or a range ("eight to twelve") reads as the count and fails —
-  the leading token cannot slip past into the surrounding prose. Because it is site-bound, not
-  document-wide, it **cannot** be masked by a correct restatement elsewhere, false-positive on unrelated
-  prose, or leak through a gap window — the classes a regex-over-prose count check kept reproducing. The
-  count region is a count *sentence*, not an enumeration site: a near-complete run of the skill names inside
-  it is flagged (it is excluded from the general competing scan, so it would otherwise never be verified
-  against `skills-order`). Two headline counts are gated (README "a suite of <N> … skills"; the prompt's
-  "an <N>-skill documentation suite"); the lower-value prose numbers are NOT gated (a disclosed scope
-  choice — see the residuals).
+- **Scalar counts are first-class MARKED SITES, checked by PRESENCE** — each headline count sentence sits
+  in its own marker pair (`<!-- skills:count-suite:… -->`, `<!-- skills:count-nskill:… -->`), and inside
+  that region the count value N — the digit or its number word — must appear as a **bounded token that is
+  not enlarged** into a compound ("eight hundred") or a range ("eight to twelve"). The check never parses
+  the sentence STRUCTURE, so ordinary prose variation cannot false-positive it — an article ("a"/"an"), a
+  qualifier ("exactly/at least eight"), a numeric adjective ("eight 100% …", "eight one-click …"), or
+  another number elsewhere in the sentence are all irrelevant — while casual drift (a wrong number → N
+  absent) and a compound/range mask are still caught. **Four rounds of review proved a positional "suite of
+  <N> … skills" regex is a bottomless false-positive well** (a new correct phrasing failed every round: a
+  continuation, a qualifier, a hyphenated adjective, a percent adjective, the article); the presence check
+  ends that class at the root. The count region is a count *sentence*, not an enumeration site: a
+  near-complete run of the skill names inside it is flagged. Two headline counts are gated (README "a suite
+  of <N> … skills"; the prompt's "an <N>-skill documentation suite"); the lower-value prose numbers are NOT
+  gated (a disclosed scope choice — see the residuals).
 
 **It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
 a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
@@ -274,12 +276,12 @@ it would false-positive on ordinary content or needs the render-DOM pass):
 - an **obscure-homoglyph / heavy-mixed-script** variant of a skill name, anchor, or count, beyond the
   common Latin/Cyrillic/Greek fold in `_norm`. The casual confusables are folded; the full Unicode
   confusables table is out of scope.
-- an **unusual count PHRASING** the pattern does not recognize (e.g. punctuation between "suite of" and the
-  number). The count-suite pattern tolerates a qualifier before the number ("exactly/at least eight") and
-  adjectives after it (including a numeric-leading hyphenated one, "eight one-click …"), but an
-  unrecognized phrasing reports "the count phrase appears 0 times" rather than reading the value — reword
-  to the canonical "a suite of `<N>` … skills". The count value is **never silently wrong**: it is
-  verified whenever the phrase is recognized.
+- the count check verifies the **value** N is **present** in the region, not that it is the sole or stated
+  count. The noun is not verified ("… eight reviewers" passes); and a **stray occurrence of N** — a version
+  number ("… nine Claude 8 skills"), or a second conflicting count clause — satisfies presence even if the
+  prominent count is wrong. This is the accepted cost of the presence check dropping sentence-structure
+  parsing (the source of four rounds of false positives). The **primary** threat — casual drift, a wrong
+  number with no coincidental N — is still caught.
 - the **three ungated prose counts** (the "eight copies" line, the build-command comment, the "now eight
   skills" note) — only the two headline counts are marked sites.
 - markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character handling in table delimiters).
