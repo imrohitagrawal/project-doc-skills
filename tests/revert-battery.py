@@ -150,7 +150,9 @@ def _sub(old: str, new: str):
     return apply
 
 
-# name -> (stub, functions it claims to cover, expectation)
+# (name, stub, units-it-claims-to-cover, expectation). `covers` must be EXACTLY the syntactic units the
+# stub mutates — functions OR module-level assignment targets (_L/_R/_COUNT/README_COUNT_PHRASES) — and is
+# verified against the patch by _units_touched (round-10: no stub may claim a unit it does not touch).
 GUARDS: list[tuple] = [
     ("marker: duplicate pair rejected",
      _sub("if len(begins) != 1 or len(ends) != 1:", "if len(begins) < 1 or len(ends) < 1:"),
@@ -160,40 +162,45 @@ GUARDS: list[tuple] = [
      ("_marker_token_span",), "RED"),
     ("marker: identity allowlist", _stub("_marker_only_html_block", "True"),
      ("_marker_only_html_block",), "RED"),
-    ("anchor: each site pinned to its lead-in context", _stub("_anchor_missing", "False"),
+    ("anchor: begin marker must follow its lead-in", _stub("_anchor_missing", "False"),
      ("_anchor_missing",), "RED"),
+    ("anchor: lead-in anchor must be UNIQUE (rejects a cloned anchor)",
+     _sub("if _anchor_occurrences(tokens, anchor) != 1:",
+          "if False and _anchor_occurrences(tokens, anchor) != 1:"), ("_anchor_missing",), "RED"),
     ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED"),
     ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED"),
     ("count: whole check", _stub("check_count_phrases", "[]"), ("check_count_phrases",), "RED"),
-    ("count: template includes its noun (rejects a truncated match)",
-     _sub("independent(?: [A-Za-z]+){{0,3}} skills", "independent"), ("check_count_phrases",), "RED"),
-    ("count: build-all bound to its +emit site (not generic prose)",
-     _sub("build all {_COUNT} \\+ emit", "build all {_COUNT}"), ("check_count_phrases",), "RED"),
+    ("count: LOCATION-BOUND (per-site, not document-wide)",
+     _sub("located = [u for u in units if anchor in u]", 'located = [" ".join(units)]'),
+     ("check_count_phrases",), "RED"),
+    ("count: closed template (no wildcard bridge)",
+     _sub("suite of {_COUNT} independent Claude skills",
+          "suite of {_COUNT} independent(?: [A-Za-z]+){{0,3}} skills"),
+     ("README_COUNT_PHRASES",), "RED"),
     ("count: empty-phrase-set guard", _sub("    if not phrases:\n", "    if False:\n"),
      ("check_count_phrases",), "RED"),
-    ("count: number-only slot",
-     _sub('_COUNT = rf"(?P<count>\\d{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"',
-          '_COUNT = r"(?P<count>[A-Za-z0-9][A-Za-z0-9-]{0,20}?)"'),
-     ("check_count_phrases",), "RED"),
-    ("count: left boundary", _sub('_L = r"(?<![A-Za-z0-9_-])"', '_L = r""'),
-     ("check_count_phrases",), "RED"),
-    ("count: right boundary", _sub('_R = r"(?![A-Za-z0-9_-])"', '_R = r""'),
-     ("check_count_phrases",), "RED"),
+    ("count: left boundary", _sub('_L = r"(?<![A-Za-z0-9_-])"', '_L = r""'), ("_L",), "RED"),
+    ("count: right boundary", _sub('_R = r"(?![A-Za-z0-9_-])"', '_R = r""'), ("_R",), "RED"),
     ("count: missing-doc finding",
      _sub('            findings.append(f"{fname}: governed doc not found — its count phrases cannot '
           'be verified")', "            pass"),
      ("check",), "RED"),
-    ("count: rendered-visible-text input",
-     _sub('        if t.type == "inline":\n            parts.append(_inline_text(t))',
-          '        if t.type == "inline":\n            parts.append(t.content)'),
-     ("_visible_text",), "RED"),
+    ("count: rendered-visible-unit input",
+     _sub('            units.append(re.sub(r"\\s+", " ", _inline_text(t)).strip())',
+          '            units.append(re.sub(r"\\s+", " ", t.content).strip())'),
+     ("_visible_units",), "RED"),
     ("competing: whole scan", _stub("_competing", "False"), ("_competing",), "RED"),
     ("competing: near-complete run required (not any two names)",
      _sub("threshold = max(2, len(order) - 1)", "threshold = 2"), ("_competing_run",), "RED"),
     ("competing: code-block scan",
      _sub('t.content if t.type in ("fence", "code_block") else ""', '""'), ("_competing",), "RED"),
+    ("competing: aggregate across list items (stray list)",
+     _sub("if _competing_run(agg, order):", "if False and _competing_run(agg, order):"),
+     ("_competing",), "RED"),
     ("table: stray names outside column one", _stub("_table_stray_names", "False"),
      ("_table_stray_names",), "RED"),
+    ("table: aggregate down each non-first column",
+     _sub("for col in range(1, ncols):", "for col in range(1, 1):"), ("_table_stray_names",), "RED"),
     ("table: no competing skill table", _stub("_extra_skill_table", "False"),
      ("_extra_skill_table",), "RED"),
     ("table: region is exactly one table",
@@ -209,14 +216,22 @@ GUARDS: list[tuple] = [
      _sub("if body != _tree_body(order):", "if False and body != _tree_body(order):"),
      ("check",), "RED"),
     ("source: empty skills/ fails closed", _sub("    if not canonical:\n", "    if False:\n"),
-     ("check", "canonical_skills"), "RED"),
+     ("check",), "RED"),
     ("source: skills-order permutation", _stub("validate_order", "[]"), ("validate_order",), "RED"),
-    ("renderers: generated bytes", _stub("render_improve_order", '"**decoy.**"'),
-     ("render_improve_order", "render_pick_list", "render_tree", "_tree_body"), "RED"),
-    # A real guard (absent parser -> MarkerError -> FAIL, never "clean") that cannot be proven by source
-    # mutation: simulating it means removing an installed dependency, which is an environment change, not
-    # a one-line revert. Declared, reported separately, and deliberately NOT counted as proven.
+    ("renderer: improve-order bytes", _stub("render_improve_order", '"**decoy.**"'),
+     ("render_improve_order",), "RED"),
+    ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED"),
+    ("renderer: tree body bytes", _stub("_tree_body", '"decoy"'), ("_tree_body",), "RED"),
+    # Two guards whose revert is genuinely covered by another guard, so a revert cannot be PROVEN by this
+    # method; declared REDUNDANT with the covering guard, reported separately, NOT counted as proven.
     ("parser-absent fail-closed", _stub("_md", "None"), ("_md",), "REDUNDANT"),
+    # number-only count slot: under LOCATION-BINDING the slot is read only inside the anchored unit, where
+    # a non-numeric token in the count position fails value-exact anyway (finding either way). Its revert
+    # is covered by check_count_phrases' value-exact branch; kept in the source as belt-and-suspenders.
+    ("count: number-only slot (redundant under location-binding)",
+     _sub('_COUNT = rf"(?P<count>\\d{{1,3}}|(?:{_NUM_ALT})(?:-(?:{_NUM_ALT}))?)"',
+          '_COUNT = r"(?P<count>[A-Za-z0-9][A-Za-z0-9-]{0,20}?)"'),
+     ("_COUNT",), "REDUNDANT"),
 ]
 
 # Functions the AST rule flags that are NOT verdict guards. Listed explicitly, with the reason, so the
@@ -230,9 +245,14 @@ NON_GUARD = {
 # ---- coverage, derived from the source ----------------------------------------------------------
 
 def _finding_producers(src: str) -> set[str]:
-    """Every function that can decide 'this document is wrong': it raises MarkerError, returns None/False
-    as a verdict, or appends to a findings list. Derived from the AST so the inventory is not a number
-    the battery declares about itself."""
+    """Every function that can decide 'this document is wrong'. Derived from the AST so the inventory is
+    NOT a number the battery declares about itself (round-8 lesson). A function qualifies if it:
+      - raises MarkerError; OR
+      - returns the literal None or False as a verdict; OR
+      - returns a BOOLEAN-VALUED EXPRESSION — a comparison or `and`/`or`/`not` — i.e. a predicate verdict
+        (round-10: `_competing_run` returns `hits >= threshold`, `_extra_skill_table` `hits >= 1`; the old
+        literal-only rule silently missed these, so 'N/N claimed' was over a partial denominator); OR
+      - appends to a findings / out / errs accumulator (validate_order builds `errs` and returns it)."""
     tree = ast.parse(src)
     out: set[str] = set()
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
@@ -242,14 +262,50 @@ def _finding_producers(src: str) -> set[str]:
                 name = getattr(getattr(exc, "func", exc), "id", None)
                 if name == "MarkerError":
                     out.add(fn.name)
-            elif isinstance(node, ast.Return) and isinstance(node.value, ast.Constant) \
-                    and node.value.value in (None, False):
-                out.add(fn.name)
+            elif isinstance(node, ast.Return) and node.value is not None:
+                v = node.value
+                if isinstance(v, ast.Constant) and v.value in (None, False):
+                    out.add(fn.name)
+                elif isinstance(v, (ast.Compare, ast.BoolOp, ast.UnaryOp)):
+                    out.add(fn.name)
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                     and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
-                    and node.func.value.id in ("findings", "out"):
+                    and node.func.value.id in ("findings", "out", "errs"):
                 out.add(fn.name)
     return {n for n in out if not n.startswith("__")}
+
+
+def _units_touched(orig: str, patched: str) -> set[str]:
+    """The syntactic units — functions OR top-level assignment targets — whose source lines actually
+    DIFFER between `orig` and `patched`. The provenance oracle: a guard's declared `covers` must name only
+    units the mutation genuinely changed. Round-10 found a stub that mutated ONE renderer yet 'claimed'
+    four functions, and another that claimed `canonical_skills` while mutating only `check` — a claim a
+    revert can never substantiate. This maps a patch to the units it truly edits so those over-claims fail.
+    """
+    o, p = orig.splitlines(), patched.splitlines()
+    lo = 0
+    while lo < len(o) and lo < len(p) and o[lo] == p[lo]:
+        lo += 1
+    ro, rp = len(o) - 1, len(p) - 1
+    while ro >= lo and rp >= lo and o[ro] == p[rp]:
+        ro -= 1
+        rp -= 1
+    changed = set(range(lo, ro + 1)) or {min(lo, len(o) - 1)}   # pure insertion collapses to one line
+    tree = ast.parse(orig)
+    units: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            if any(node.lineno - 1 <= c <= (node.end_lineno or node.lineno) - 1 for c in changed):
+                units.add(node.name)
+    for node in ast.iter_child_nodes(tree):     # top-level assignments only
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target.id]
+        if targets and any(node.lineno - 1 <= c <= (node.end_lineno or node.lineno) - 1 for c in changed):
+            units.update(targets)
+    return units
 
 
 def main() -> int:
@@ -282,6 +338,36 @@ def main() -> int:
             print(f"   [{mark}] {fn}")
     print(f"   {len(producers) - len(owed)}/{len(producers)} finding-producing functions claimed")
 
+    print("\n2b. provenance — each stub's `covers` must match the units it actually mutates")
+    orig = (ROOT / GEN).read_text(encoding="utf-8")
+    # Self-check the provenance ORACLE first (a battery whose oracle cannot fail measures nothing): a known
+    # function mutation must attribute to exactly that function, and a module-constant mutation to exactly
+    # that constant. If either is wrong, refuse to report — the over-claim check would be meaningless.
+    if _units_touched(orig, _stub("render_pick_list", '"x"')(orig)) != {"render_pick_list"}:
+        print("   PROVENANCE ORACLE BROKEN: a function stub did not attribute to that function alone")
+        return 2
+    if _units_touched(orig, _sub('_R = r"(?![A-Za-z0-9_-])"', '_R = r""')(orig)) != {"_R"}:
+        print("   PROVENANCE ORACLE BROKEN: a module-constant stub did not attribute to that constant")
+        return 2
+    if "render_improve_order" in _units_touched(orig, _stub("render_pick_list", '"x"')(orig)):
+        print("   PROVENANCE ORACLE BROKEN: a stub attributed to an untouched function")
+        return 2
+    print("   ok — oracle attributes a known function mutation and a module-constant mutation correctly")
+    prov_fail = []
+    for name, patch, covers, _expect in GUARDS:
+        patched = patch(orig)
+        if patched == orig:
+            prov_fail.append((name, "stub does not apply to the committed source (it moved)"))
+            continue
+        touched = _units_touched(orig, patched)
+        overclaim = sorted(set(covers) - touched)
+        if overclaim:
+            prov_fail.append((name, f"claims {overclaim} but the mutation touches only {sorted(touched)}"))
+    for name, why in prov_fail:
+        print(f"   [OVER-CLAIM] {name} — {why}")
+    if not prov_fail:
+        print(f"   ok — every stub's covers ⊆ the units it mutates ({len(GUARDS)} stubs)")
+
     print("\n3. mutation quality + verdict")
     failures, redundant, seen = [], [], {}
     for name, patch, _covers, expect in GUARDS:
@@ -304,12 +390,15 @@ def main() -> int:
 
     proven = len(GUARDS) - len(failures) - len(redundant)
     print(f"\n--- revert battery: {proven}/{len(GUARDS) - len(redundant)} stubs bite; "
-          f"{len(producers) - len(owed)}/{len(producers)} guard functions claimed ---")
+          f"{len(producers) - len(owed)}/{len(producers)} guard functions claimed; "
+          f"{len(GUARDS) - len(prov_fail)}/{len(GUARDS)} provenance-clean ---")
     for fn in owed:
         print(f"    OWED STUB: {fn}() can produce a finding but no stub claims it")
+    for name, why in prov_fail:
+        print(f"    OVER-CLAIM: {name} — {why}")
     for name, why in failures:
         print(f"    NOT PROVEN: {name} — {why}")
-    return 1 if (owed or failures) else 0
+    return 1 if (owed or failures or prov_fail) else 0
 
 
 if __name__ == "__main__":
