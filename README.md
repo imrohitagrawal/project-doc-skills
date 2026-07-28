@@ -1,8 +1,6 @@
 # Project documentation skills — source
 
-<!-- skills:count-suite:begin -->
 A suite of eight independent Claude skills.
-<!-- skills:count-suite:end -->
 
 Six turn a software project into documentation, each in a
 distinct Diátaxis mode; **doc-critic** is the independent review gate that critiques those docs before

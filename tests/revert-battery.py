@@ -83,21 +83,34 @@ def _child_env() -> dict:
     return env
 
 
-def _classify(p: subprocess.CompletedProcess) -> tuple[str, str]:
+def _failed_names(out: str) -> set[str]:
+    """The set of golden assertion NAMES that FAILED (parsed from run-golden's `  [FAIL] <name> — …` lines),
+    so a mutant can be checked to redden the INTENDED assertion, not merely SOME assertion (gate-reviews/0018:
+    a GPT review found the battery treated any red summary as a bite)."""
+    names = set()
+    for l in out.splitlines():
+        if l.startswith("  [FAIL] "):
+            names.add(l[len("  [FAIL] "):].split(" — ", 1)[0].strip())
+    return names
+
+
+def _classify(p: subprocess.CompletedProcess) -> tuple[str, str, set[str]]:
     out = p.stdout + p.stderr
+    failed = _failed_names(out)
     summary = next((l for l in out.splitlines() if l.startswith("--- golden")), "")
     if "required path missing" in out:
-        return "HARNESS", "the suite aborted before asserting (required path missing)"
+        return "HARNESS", "the suite aborted before asserting (required path missing)", failed
     if "Traceback (most recent call last)" in out or not summary:
         first = next((l for l in out.splitlines() if l.strip()), "")
-        return "CRASH", f"the suite did not complete: {first[:70]}"
+        return "CRASH", f"the suite did not complete: {first[:70]}", failed
     if p.returncode == 0:
-        return "GREEN", summary
-    return ("RED", summary) if " 0 failed" not in summary else ("CRASH", summary)
+        return "GREEN", summary, failed
+    return (("RED", summary, failed) if " 0 failed" not in summary
+            else ("CRASH", summary, failed))
 
 
-def _run(patch=None) -> tuple[str, str, str]:
-    """Returns (verdict, detail, mutant-fingerprint)."""
+def _run(patch=None) -> tuple[str, str, str, set]:
+    """Returns (verdict, detail, mutant-fingerprint, failed-assertion-names)."""
     tmp = Path(tempfile.mkdtemp(prefix="revert-battery-"))
     try:
         dst = tmp / "repo"
@@ -109,22 +122,22 @@ def _run(patch=None) -> tuple[str, str, str]:
             src = target.read_text(encoding="utf-8")
             patched = patch(src)
             if patched == src:
-                return "PATCH-MISS", "the stub did not apply — the source moved", ""
+                return "PATCH-MISS", "the stub did not apply — the source moved", "", set()
             target.write_text(patched, encoding="utf-8")
             fingerprint = hashlib.sha256(patched.encode()).hexdigest()[:12]
             try:
                 compile(patched, GEN, "exec")
             except SyntaxError as e:
-                return "CRASH", f"the stub produced invalid Python: {e}", fingerprint
+                return "CRASH", f"the stub produced invalid Python: {e}", fingerprint, set()
         try:
             p = subprocess.run([sys.executable, GOLDEN], cwd=dst, capture_output=True, text=True,
                                timeout=TIMEOUT_S, env=_child_env())
         except subprocess.TimeoutExpired:
-            return "HARNESS", f"the suite did not finish within {TIMEOUT_S}s", fingerprint
+            return "HARNESS", f"the suite did not finish within {TIMEOUT_S}s", fingerprint, set()
         if p.returncode < 0:
-            return "HARNESS", f"the suite was killed by signal {-p.returncode}", fingerprint
-        verdict, detail = _classify(p)
-        return verdict, detail, fingerprint
+            return "HARNESS", f"the suite was killed by signal {-p.returncode}", fingerprint, set()
+        verdict, detail, failed = _classify(p)
+        return verdict, detail, fingerprint, failed
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -151,136 +164,192 @@ def _sub(old: str, new: str):
     return apply
 
 
-# (name, stub, units-it-claims-to-cover, expectation). `covers` must be EXACTLY the syntactic units the
-# stub mutates — functions OR module-level assignment targets (e.g. _L / _R / _COUNT) — and is verified
-# against the patch by _units_touched (round-10: no stub may claim a unit it does not touch).
+def _finding_branches(src: str):
+    """Every finding-EMITTING statement in the generator — findings/errs/out `.append(...)` and
+    `raise MarkerError(...)` — as (label, patch) where the patch neuters that ONE statement with `pass`.
+    The curated GUARDS above prove each NAMED branch bites; this sweep proves EXHAUSTIVELY that NO
+    finding-branch is a silent no-op-revert (the guard-a class). It is committed (gate-reviews/0018) so this
+    is a durable part of the battery, not an unrepeatable pre-ship run a GPT review flagged."""
+    tree = ast.parse(src)
+    spans = []
+    class V(ast.NodeVisitor):
+        def visit_Call(self, node):
+            f = node.func
+            if (isinstance(f, ast.Attribute) and f.attr == "append"
+                    and isinstance(f.value, ast.Name) and f.value.id in ("findings", "errs", "out")):
+                spans.append((node.lineno, node.end_lineno, f"{f.value.id}.append @L{node.lineno}"))
+            self.generic_visit(node)
+        def visit_Raise(self, node):
+            if "MarkerError" in (ast.get_source_segment(src, node) or ""):
+                spans.append((node.lineno, node.end_lineno, f"raise MarkerError @L{node.lineno}"))
+            self.generic_visit(node)
+    V().visit(tree)
+    out = []
+    for lo, hi, label in spans:
+        def patch(s, lo=lo, hi=hi):
+            ls = s.split("\n")
+            indent = len(ls[lo - 1]) - len(ls[lo - 1].lstrip())
+            return "\n".join(ls[:lo - 1] + [" " * indent + "pass  # MUTATED"] + ls[hi:])
+        out.append((label, patch))
+    return out
+
+
+# (name, stub, covers, expectation, expect_fx). `covers` must be EXACTLY the syntactic units the stub
+# mutates — functions OR module-level assignment targets (e.g. _L / _R) — verified against the patch by
+# _units_touched (round-10). `expect_fx` (gate-reviews/0018) is a substring of the golden ASSERTION this
+# revert must redden; the runner counts a bite only when THAT assertion fails, so a mutant that merely
+# reddens some unrelated assertion (a GPT review found the battery treated any red as a bite) is REJECTED
+# as MIS-TARGETED. For a decoy/drift GUARD `expect_fx` names a "-> caught"/"is CAUGHT" fixture; for a
+# PRODUCER (a renderer, the order loader) whose only correct-behaviour proof is that the pristine docs
+# match its output, it names the live-docs baseline — a distinct, honest signal, not a strengthening red.
+BASELINE_FX = "live README + prompt pass"   # the pristine-docs check; a PRODUCER's revert reddens it
 GUARDS: list[tuple] = [
     ("marker: duplicate pair rejected",
      _sub("if len(begins) != 1 or len(ends) != 1:", "if len(begins) < 1 or len(ends) < 1:"),
-     ("_marker_token_span",), "RED"),
+     ("_marker_token_span",), "RED", "raises on a DUPLICATE marker pair"),
     ("marker: end-after-begin required",
      _sub("if ends[0] <= begins[0]:", "if False and ends[0] <= begins[0]:"),
-     ("_marker_token_span",), "RED"),
+     ("_marker_token_span",), "RED", "raises when end precedes begin"),
     ("marker: identity allowlist", _stub("_marker_only_html_block", "True"),
-     ("_marker_only_html_block",), "RED"),
-    ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED"),
-    ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED"),
+     ("_marker_only_html_block",), "RED", "arbitrary (non-marker) HTML comment"),
+    ("raw HTML: block ban", _stub("_stray_html_block", "None"), ("_stray_html_block",), "RED",
+     "raw-HTML ban: raw <ol> decoy"),
+    ("raw HTML: inline/image ban", _stub("_doc_raw_inline", "None"), ("_doc_raw_inline",), "RED",
+     "inline HTML in prose outside markers"),
     # _doc_raw_inline has TWO independent arms (html_inline AND image); the whole-function stub above bites
     # via the html_inline fixtures alone, so the image arm was a load-bearing branch with no biting fixture
     # (gate-reviews/0017, same class as the _table_names guard-a gap). Isolate it: reverting only the image
     # arm reddens the new inline-image golden fixture.
     ("raw HTML: inline IMAGE arm (isolated from html_inline)",
      _sub('if c.type in ("html_inline", "image"):', 'if c.type in ("html_inline",):'),
-     ("_doc_raw_inline",), "RED"),
-    # --- COUNT sites (marked regions; the count is checked by PRESENCE of N inside its marker pair,
-    #     gate-reviews/0018) ---
-    ("count: whole site check", _stub("check_count_site", "[]"), ("check_count_site",), "RED"),
-    # PRESENCE: reverting the presence branch lets a WRONG count (N absent) pass -> the wrong-number golden
-    # fixtures redden.
-    ("count: canonical count must be present",
-     _sub("    if not present:\n", "    if False:\n"), ("check_count_site",), "RED"),
-    # ENLARGEMENT guard: reverting it lets a compound ("N hundred") or range ("N to M") read N as a plain
-    # count -> the compound/range golden masks redden.
-    ("count: a compound/range is not read as the plain count (_NOT_ENLARGED)",
-     _sub('_NOT_ENLARGED = rf"(?![\\s-]+(?:{_MULT}|(?:to|or|through)[\\s-]+(?:{_NUM_ALT}|[0-9])))"',
-          '_NOT_ENLARGED = r""'), ("_NOT_ENLARGED",), "RED"),
-    # count-token boundaries (distinct from _L/_R, which fence a hyphen for SKILL NAMES): reverting either
-    # lets N match INSIDE a longer number word/digit run, so a wrong count reads present. Proven by the
-    # "eighteen"/"18" golden fixtures.
-    ("count: no letter after the count token (not inside 'eighteen')",
-     _sub('_CR = r"(?![a-z0-9])"', '_CR = r""'), ("_CR",), "RED"),
-    ("count: no digit before the count token (not inside '18')",
-     _sub('_CL = r"(?<![a-z0-9])"', '_CL = r""'), ("_CL",), "RED"),
-    # the count region must not itself be an enumeration site (gate-reviews/0017): a near-complete run of
-    # skill names in the count sentence is caught here, since its marked span excludes it from the general
-    # competing scan. Reverting this branch reddens the in-count-region enumeration golden fixture.
-    ("count: region is not an enumeration site",
-     _sub("if _competing_run(text, order):", "if False and _competing_run(text, order):"),
-     ("check_count_site",), "RED"),
-    ("count: region is a single paragraph", _stub("_count_region_text", "None"),
-     ("_count_region_text",), "RED"),
-    ("count: empty registry guard (no vacuous success)",
-     _sub("    if not COUNT_SITES:\n", "    if False:\n"), ("check",), "RED"),
-    ("count: missing-doc finding",
-     _sub("            findings.append(f\"{fname}: governed doc not found — count site '{site_id}' "
-          "cannot be verified\")", "            pass"), ("check",), "RED"),
-    ("count/name: left boundary", _sub('_L = r"(?<![a-z0-9_-])"', '_L = r""'), ("_L",), "RED"),
-    ("count/name: right boundary", _sub('_R = r"(?![a-z0-9_-])"', '_R = r""'), ("_R",), "RED"),
-    # --- NORMALIZATION (kills case / Unicode-dash / compatibility variants) at every match point ---
-    ("normalize: casefold + dash fold", _stub("_norm", "s"), ("_norm",), "RED"),
+     ("_doc_raw_inline",), "RED", "inline image in governed-doc prose"),
+    # --- SKILL-NAME identifier boundaries (used by _run_hits in the competing scan): `\b` is not enough —
+    #     it let a suffix ("skillsets") or prefix pass. Reverting either reddens the look-alike golden
+    #     fixtures ("name-notes" / "draft-name" runs must stay CLEAN). ---
+    ("name: left boundary", _sub('_L = r"(?<![a-z0-9_-])"', '_L = r""'), ("_L",), "RED",
+     "prefix look-alikes ('draft-name')"),
+    ("name: right boundary", _sub('_R = r"(?![a-z0-9_-])"', '_R = r""'), ("_R",), "RED",
+     "suffix look-alikes ('name-notes')"),
+    # --- NORMALIZATION, ONE mutant PER STAGE (gate-reviews/0018): a whole-function _norm stub bit via a
+    #     sibling stage and left each stage unproven (a GPT review reproduced this). Each mutant reverts ONE
+    #     stage; its isolating _norm-stage golden unit-lock is the only thing that reddens.
+    ("normalize stage: initial NFKC (before whitespace-collapse)",
+     _sub('s = unicodedata.normalize("NFKC", s)\n', 's = s\n'), ("_norm",), "RED",
+     "the initial NFKC runs BEFORE whitespace-collapse"),
+    ("normalize stage: zero-width/format (Cf) strip",
+     _sub('s = "".join(c for c in s if unicodedata.category(c) != "Cf")', 's = s'), ("_norm",), "RED",
+     "removes a soft hyphen (U+00AD)"),
+    ("normalize stage: Unicode-dash fold",
+     _sub("s.translate(_DASH_MAP)", "s"), ("_norm",), "RED", "maps a modifier-minus (U+02D7)"),
+    ("normalize stage: casefold",
+     _sub(".strip().casefold()", ".strip()"), ("_norm",), "RED", "casefold lowers a name"),
+    ("normalize stage: confusable (homoglyph) fold",
+     _sub("s.translate(_CONFUSABLE_MAP)", "s"), ("_norm",), "RED", "maps a Cyrillic 'о' (U+043E)"),
+    ("normalize stage: final NFKC (idempotence)",
+     _sub('return unicodedata.normalize("NFKC", s.translate(_CONFUSABLE_MAP))',
+          "return s.translate(_CONFUSABLE_MAP)"), ("_norm",), "RED",
+     "U+0390 idempotent"),
     # --- ANCHOR adjacency (the begin marker must be immediately preceded by its lead-in) ---
     ("anchor: begin marker must follow its lead-in", _stub("_anchor_missing", "False"),
-     ("_anchor_missing",), "RED"),
+     ("_anchor_missing",), "RED", "moving the block away from its lead-in is CAUGHT"),
     # _anchor_missing's FAIL-CLOSED branch (a site id absent from ANCHORS returns True) is separate from the
     # adjacency check the whole-function stub bites via; reverting it to `return False` silently accepts an
     # unregistered marked site. Isolated (gate-reviews/0017), proven by the unregistered-site unit lock.
     ("anchor: unregistered site id fails closed",
      _sub("    if not anchor:\n        return True", "    if not anchor:\n        return False"),
-     ("_anchor_missing",), "RED"),
+     ("_anchor_missing",), "RED", "an unregistered site id (not in ANCHORS) fails closed"),
+    # _preceding_visible READS the lead-in text; its correct-behaviour proof is FP-prevention — a valid
+    # paragraph lead-in stays recognized. Reverting it to "" over-flags, so the plain-paragraph unit lock
+    # (distinct to this function) reddens.
     ("anchor: preceding-unit adjacency", _stub("_preceding_visible", '""'),
-     ("_preceding_visible",), "RED"),
+     ("_preceding_visible",), "RED", "a plain-paragraph lead-in is recognized"),
     # _preceding_visible has a second branch: a lead-in formatted as a blockquote/list (not a bare
     # paragraph) is still read, so an intact-but-reformatted lead-in is not a false "moved away"
     # (gate-reviews/0017). Reverting only the container branch reddens the blockquote/list lead-in fixtures.
     ("anchor: blockquote/list lead-in recognized (container branch)",
      _sub("    if prev.type in _CONTAINER_CLOSE:", "    if False and prev.type in _CONTAINER_CLOSE:"),
-     ("_preceding_visible",), "RED"),
+     ("_preceding_visible",), "RED", "a BLOCKQUOTE lead-in (intact anchor, adjacent) is recognized"),
     # --- COMPETING scan + its aggregation/boundary helpers ---
-    ("competing: whole scan", _stub("_competing_findings", "[]"), ("_competing_findings",), "RED"),
+    ("competing: whole scan", _stub("_competing_findings", "[]"), ("_competing_findings",), "RED",
+     "competing route 'comma paragraph' is CAUGHT"),
     ("competing: near-complete run required (not any two names)",
      _sub("_run_hits(text, order) >= max(2, len(order) - 1)", "_run_hits(text, order) >= 2"),
-     ("_competing_run",), "RED"),
+     ("_competing_run",), "RED", "a two-item skill list is NOT flagged"),
     ("competing: scans code blocks too (separator-free fence)",
      _sub('t.content if t.type in ("fence", "code_block") else ""', '""'),
-     ("_competing_findings",), "RED"),
+     ("_competing_findings",), "RED", "competing route 'separator-free fence' is CAUGHT"),
     # the two arms above cover FENCES; the code_block (indented) arm is separately load-bearing and, until
     # 0017, unproven (every fixture used a fence). Isolate each: phase-1 single-unit and phase-2 container
     # aggregation must both read code_block tokens, proven by the indented + blockquote-split golden fixtures.
     ("competing: phase-1 reads INDENTED code blocks (code_block arm)",
      _sub('t.content if t.type in ("fence", "code_block") else ""',
-          't.content if t.type in ("fence",) else ""'), ("_competing_findings",), "RED"),
+          't.content if t.type in ("fence",) else ""'), ("_competing_findings",), "RED",
+     "stray INDENTED (code_block) list of all skills is CAUGHT"),
     ("competing: phase-2 aggregates INDENTED code blocks (code_block arm)",
      _sub('for x in tokens[i:j + 1] if x.type in ("inline", "fence", "code_block")',
-          'for x in tokens[i:j + 1] if x.type in ("inline", "fence")'), ("_competing_findings",), "RED"),
+          'for x in tokens[i:j + 1] if x.type in ("inline", "fence")'), ("_competing_findings",), "RED",
+     "blockquote split across a paragraph + indented code block is CAUGHT"),
     ("competing: aggregate within each container (list / blockquote)",
      _sub("if _competing_run(agg, order):", "if False and _competing_run(agg, order):"),
-     ("_competing_findings",), "RED"),
+     ("_competing_findings",), "RED", "competing route 'ordered list' is CAUGHT"),
     ("competing: aggregate outside-table cells",
      _sub("if _competing_run(allcells, order):", "if False and _competing_run(allcells, order):"),
-     ("_competing_findings",), "RED"),
-    ("competing: name-boundary hit count", _stub("_run_hits", "0"), ("_run_hits",), "RED"),
-    ("competing: outside-block exclusion", _stub("_in_any_span", "False"), ("_in_any_span",), "RED"),
-    ("competing: container span", _stub("_container_close", "start"), ("_container_close",), "RED"),
-    ("competing: table span", _stub("_table_span_close", "start"), ("_table_span_close",), "RED"),
-    ("competing: table cell reconstruction", _stub("_table_cells", "([], [])"), ("_table_cells",), "RED"),
+     ("_competing_findings",), "RED", "competing second table"),
+    ("competing: name-boundary hit count", _stub("_run_hits", "0"), ("_run_hits",), "RED",
+     "competing route 'comma paragraph' is CAUGHT"),
+    # _in_any_span EXCLUDES the five marked enumerations from the competing scan; reverting it makes them
+    # self-flag, so a valid doc no longer stays clean (FP-prevention proof).
+    ("competing: outside-block exclusion", _stub("_in_any_span", "False"), ("_in_any_span",), "RED",
+     "a 2-row reference table is NOT flagged"),
+    ("competing: container span", _stub("_container_close", "start"), ("_container_close",), "RED",
+     "competing route 'ordered list' is CAUGHT"),
+    ("competing: table span", _stub("_table_span_close", "start"), ("_table_span_close",), "RED",
+     "competing second table"),
+    ("competing: table cell reconstruction", _stub("_table_cells", "([], [])"), ("_table_cells",), "RED",
+     "competing second table"),
     # --- TABLE first-column + PURE/FENCE region grammar. _table_names has TWO independent return-None
     #     guards (round-12 found only one was proven): a) the region holds EXACTLY ONE table; b) the region
     #     BEGINS and ENDS with it. Each has its own stub + biting fixture.
     ("table: region holds exactly one table",
      _sub("    if sum(1 for t in inner if t.type == \"table_open\") != 1:",
-          "    if False:"), ("_table_names",), "RED"),
+          "    if False:"), ("_table_names",), "RED", "a second (header-only) table inside the table region"),
     ("table: region begins/ends with the table",
      _sub("    if inner[0].type != \"table_open\" or inner[-1].type != \"table_close\" "
-          "or inner[0].level != 0:", "    if False:"), ("_table_names",), "RED"),
+          "or inner[0].level != 0:", "    if False:"), ("_table_names",), "RED",
+     "stray paragraph inside the table region"),
     ("pure region: exactly one paragraph",
      _sub('if len(inner) == 3 and inner[0].type == "paragraph_open"',
-          'if len(inner) >= 3 and inner[0].type == "paragraph_open"'), ("_pure_source",), "RED"),
+          'if len(inner) >= 3 and inner[0].type == "paragraph_open"'), ("_pure_source",), "RED",
+     "decoy fence inside the improve-order region"),
     ("fence region: exactly one fence",
      _sub('if len(inner) == 1 and inner[0].type == "fence"',
-          'if len(inner) >= 1 and inner[0].type == "fence"'), ("_fence_body",), "RED"),
+          'if len(inner) >= 1 and inner[0].type == "fence"'), ("_fence_body",), "RED",
+     "decoy paragraph inside the tree region"),
+    # the PURE/TREE block comparison (`src != renderer(order)` / `body != _tree_body(order)`) is what catches
+    # drift in a marked pure block. WEAKENING each (disable the comparison) reddens the drift fixture — the
+    # right proof for a rejection guard (gate-reviews/0018; a renderer-BYTES stub only broke the baseline).
     ("site: tree comparison",
      _sub("if body != _tree_body(order):", "if False and body != _tree_body(order):"),
-     ("check",), "RED"),
+     ("check",), "RED", "drift tree (rename last node)"),
+    ("site: pure block comparison (improve-order / pick-list drift)",
+     _sub("if src != renderer(order):", "if False and src != renderer(order):"),
+     ("check",), "RED", "drift improve-order"),
     # --- SOURCE of truth + renderers ---
     ("source: empty skills/ fails closed", _sub("    if not canonical:\n", "    if False:\n"),
-     ("check",), "RED"),
-    ("source: skills-order permutation", _stub("validate_order", "[]"), ("validate_order",), "RED"),
-    ("source: missing skills-order fails closed", _stub("load_order", "([], [])"),
-     ("load_order",), "RED"),
+     ("check",), "RED", "empty skills/ -> check() fails closed"),
+    ("source: skills-order permutation", _stub("validate_order", "[]"), ("validate_order",), "RED",
+     "order: dup rejected"),
+    # PRODUCERS: load_order supplies the order, and the three renderers generate the expected block bytes.
+    # Their correct-behaviour proof is that the pristine docs MATCH — so each revert reddens the live-docs
+    # baseline (an honest producer signal, distinct from a decoy catch). The drift catch itself is proven by
+    # the two comparison stubs above.
+    ("source: load_order supplies the order every block is checked against",
+     _stub("load_order", "([], [])"), ("load_order",), "RED", BASELINE_FX),
     ("renderer: improve-order bytes", _stub("render_improve_order", '"**decoy.**"'),
-     ("render_improve_order",), "RED"),
-    ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED"),
-    ("renderer: tree body bytes", _stub("_tree_body", '"decoy"'), ("_tree_body",), "RED"),
+     ("render_improve_order",), "RED", BASELINE_FX),
+    ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED",
+     BASELINE_FX),
+    ("renderer: tree body bytes", _stub("_tree_body", '"decoy"'), ("_tree_body",), "RED", BASELINE_FX),
 ]
 
 # Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is
@@ -427,7 +496,7 @@ def main() -> int:
     args = ap.parse_args()
 
     print("1. harness sanity — the unpatched suite must run, be green, and not be degraded")
-    verdict, detail, _ = _run(None)
+    verdict, detail, _, _ = _run(None)
     if verdict != "GREEN":
         print(f"   HARNESS UNUSABLE ({verdict}): {detail}")
         print("   Refusing to report on the guards — a battery whose oracle cannot fail measures nothing.")
@@ -446,7 +515,7 @@ def main() -> int:
     # `renderer(order)` call the static call graph cannot resolve to a name) — they are load-bearing
     # entry points too, so seed them explicitly.
     load_bearing = _reachable_from(gen_src, {"check", "render_improve_order", "render_pick_list"})
-    claimed = {fn for _, _, covers, _ in GUARDS for fn in covers}
+    claimed = {fn for entry in GUARDS for fn in entry[2]}
     owed = sorted(load_bearing - claimed - set(NON_GUARD))
     for fn, why in sorted(NON_GUARD.items()):
         if fn in load_bearing:
@@ -483,7 +552,7 @@ def main() -> int:
         return 2
     print("   ok — oracle attributes single, module-constant, and two-separated-hunk mutations exactly")
     prov_fail = []
-    for name, patch, covers, _expect in GUARDS:
+    for name, patch, covers, _expect, _fx in GUARDS:
         patched = patch(orig)
         if patched == orig:
             prov_fail.append((name, "stub does not apply to the committed source (it moved)"))
@@ -496,10 +565,10 @@ def main() -> int:
     if not prov_fail:
         print(f"   ok — every stub's covers == the units it mutates ({len(GUARDS)} stubs)")
 
-    print("\n3. mutation quality + verdict")
+    print("\n3. mutation quality + verdict (each RED must redden its DECLARED fixture, not merely some red)")
     failures, redundant, seen = [], [], {}
-    for name, patch, _covers, expect in GUARDS:
-        verdict, detail, fp = _run(patch)
+    for name, patch, _covers, expect, expect_fx in GUARDS:
+        verdict, detail, fp, failed = _run(patch)
         if fp and fp in seen:
             failures.append((name, f"DUPLICATE MUTANT — identical to '{seen[fp]}'"))
             print(f"   [DUPLICATE] {name}")
@@ -518,23 +587,47 @@ def main() -> int:
                                        f"— it is load-bearing; make it a RED guard"))
                 print(f"   [NOT-REDUNDANT] {name} — {verdict}: {detail}")
             continue
-        if verdict == "RED":
-            print(f"   [BITES] {name}" + (f" — {detail}" if args.verbose else ""))
-        else:
+        if verdict != "RED":
             failures.append((name, f"{verdict}: {detail}"))
             print(f"   [{verdict}] {name} — {detail}")
+        elif not any(expect_fx in fn for fn in failed):
+            # RED, but the wrong assertion(s) reddened — the mutant proves nothing about its guard
+            # (gate-reviews/0018). This catches a STRENGTHENING revert whose red is only the baseline
+            # breaking, or a mis-authored stub that trips an unrelated fixture.
+            failures.append((name, f"MIS-TARGETED — reddened {sorted(failed)[:2]} but NOT its declared "
+                                   f"fixture '{expect_fx}'"))
+            print(f"   [MIS-TARGETED] {name} — expected '{expect_fx}' to fail; it did not")
+        else:
+            print(f"   [BITES] {name}" + (f" — reddens '{expect_fx}'" if args.verbose else ""))
+
+    print("\n4. finding-branch sweep — EVERY findings/errs/out.append + raise-MarkerError reverted to a "
+          "no-op must redden golden (no silent gap the curated stubs above missed)")
+    branches = _finding_branches(orig)
+    sweep_fail = []
+    for label, patch in branches:
+        verdict, _detail, _fp, _failed = _run(patch)
+        if verdict == "GREEN":
+            sweep_fail.append((label, "revert left golden GREEN — this finding-branch has no biting fixture"))
+            print(f"   [UNCOVERED] {label}")
+        elif args.verbose:
+            print(f"   [{'reddens' if verdict == 'RED' else verdict}] {label}")
+    if not sweep_fail:
+        print(f"   ok — all {len(branches)} finding-branches redden golden on revert")
 
     proven = len(GUARDS) - len(failures) - len(redundant)
     print(f"\n--- revert battery: {proven}/{len(GUARDS) - len(redundant)} stubs bite; "
           f"{covered}/{len(load_bearing)} verdict-path functions covered; "
-          f"{len(GUARDS) - len(prov_fail)}/{len(GUARDS)} provenance-clean ---")
+          f"{len(GUARDS) - len(prov_fail)}/{len(GUARDS)} provenance-clean; "
+          f"{len(branches) - len(sweep_fail)}/{len(branches)} finding-branches redden ---")
     for fn in owed:
         print(f"    OWED: {fn}() is on the verdict path but is neither stubbed nor exempted")
     for name, why in prov_fail:
         print(f"    MIS-CLAIM: {name} — {why}")
     for name, why in failures:
         print(f"    NOT PROVEN: {name} — {why}")
-    return 1 if (owed or failures or prov_fail) else 0
+    for label, why in sweep_fail:
+        print(f"    UNCOVERED BRANCH: {label} — {why}")
+    return 1 if (owed or failures or prov_fail or sweep_fail) else 0
 
 
 if __name__ == "__main__":

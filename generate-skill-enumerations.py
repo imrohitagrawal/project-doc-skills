@@ -26,7 +26,7 @@ WHAT THIS GATE GUARANTEES (its real job):
     anchor phrase in prose).
   - **All text matching is NORMALIZED** (see _norm): NFKC + strip zero-width/format chars + Unicode-dash →
     ASCII '-' + whitespace-collapse + casefold + fold COMMON Cyrillic/Greek homoglyphs, applied to both the
-    rendered text and every needle (anchor, skill name, count phrase). A reader-visible variant that
+    rendered text and every needle (anchor, skill name). A reader-visible variant that
     differs only by case, a Unicode dash, a soft hyphen, a compatibility form, or a common homoglyph
     (`оperations` with a Cyrillic о) is matched as the canonical ASCII form. LIMIT: this folds the casual
     confusables, not the FULL Unicode confusables table — an obscure-homoglyph / heavy-mixed-script
@@ -43,19 +43,6 @@ WHAT THIS GATE GUARANTEES (its real job):
     legitimate prose and is deliberately NOT flagged. LIMIT: a run deliberately split across SEPARATE
     top-level containers, and a decoy in a non-first column of a MARKED table, are disclosed residuals (see
     below) — aggregating either further would false-positive on ordinary cross-referencing content.
-  - **Scalar counts are FIRST-CLASS MARKED SITES, checked by PRESENCE** (not by parsing the sentence). Each
-    count sentence sits in its own marker pair; inside that region the count value N — the digit or its
-    number word — must appear as a BOUNDED token (see _CL/_CR) that is not enlarged into a compound ("eight
-    hundred") or a range ("eight to twelve"; see _NOT_ENLARGED). Because no sentence STRUCTURE is parsed,
-    ordinary prose variation cannot false-positive it — an article ("a"/"an"), a qualifier ("exactly/at
-    least eight"), a numeric adjective ("eight 100% …", "eight one-click …"), or another number elsewhere in
-    the sentence are all irrelevant — while casual drift (a wrong number, so N is absent) and a compound or
-    range mask are still caught. (Four earlier rounds proved a positional "suite of <N> … skills" regex is a
-    bottomless false-positive well; the presence check ends that class at the root, gate-reviews/0018.) The
-    count region is a count SENTENCE, not an enumeration site: a near-complete run of the skill names there
-    is flagged. Two HEADLINE counts are gated (README "a suite of <N> … skills"; the prompt's "an <N>-skill
-    documentation suite"); the lower-value prose numbers (the "eight copies" line, the build-command
-    comment, the "now eight skills" note) are deliberately NOT gated — a disclosed scope choice.
   - **Raw HTML is banned document-wide in the governed docs** (README.md, per-skill-review-prompt.md): a
     non-comment raw-HTML block (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML / image
     token anywhere, is rejected — raw HTML is the enabler for a reader-visible decoy that renders
@@ -72,12 +59,11 @@ WHAT IT DOES NOT GUARANTEE (honest scope — see CONTRIBUTING "Skill-enumeration
   a marked block while CLONING its lead-in phrase beside the new position (adjacency is satisfied; a
   uniqueness rule would catch it but false-positived on innocent repeats of an anchor phrase); (4) an
   obscure-homoglyph / heavy-mixed-script variant beyond the common-confusables fold; (5) markdown-it-py vs
-  cmark-gfm parse edge cases; (6) the three ungated prose counts above; (7) the count check verifies the
-  value N is PRESENT in the region, not that it is the sole or stated count — the noun is not verified, and
-  a stray occurrence of N (a version number like "Claude 8", or a second conflicting count clause) satisfies
-  presence even if the prominent count is wrong. This is the accepted cost of the presence check dropping
-  sentence-structure parsing (the source of four rounds of false positives); the PRIMARY threat — casual
-  drift, a wrong number with no coincidental N — is still caught. Both governed files
+  cmark-gfm parse edge cases; (6) the suite's HEADLINE COUNT SENTENCES ("a suite of eight … skills"; "an
+  eight-skill … suite") and every other prose count are NOT gated — the five generated enumeration sites
+  catch every skill add/remove/reorder, so a prose number adds only a lone-typo nudge, and verifying "the
+  doc states exactly N" in free English proved a bottomless well of both false positives and masks (five
+  review rounds, gate-reviews/0018). A stale prose count number is therefore not caught. Both governed files
   are scanned in full, so a competing run in either file is caught.
 
 Source of truth: SET = skills/<name>/ with a SKILL.md; ORDER = the root `skills-order` file, validated
@@ -85,7 +71,7 @@ as an exact permutation of the set (fail closed).
 
 Usage:
     python3 generate-skill-enumerations.py [root]            # WRITE: fill the three pure blocks in place
-    python3 generate-skill-enumerations.py [root] --check    # CHECK: assert all five sites + the count
+    python3 generate-skill-enumerations.py [root] --check    # CHECK: assert all five enumeration sites
 """
 from __future__ import annotations
 import argparse
@@ -94,7 +80,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-# ONE normalization applied at EVERY text-match point (anchors, count sites, competing names), so a
+# ONE normalization applied at EVERY text-match point (anchors, competing skill names), so a
 # reader-visible variant that differs only by case, a Unicode dash, a zero-width/format character, a
 # compatibility form, whitespace, or a COMMON Latin/Cyrillic/Greek homoglyph is matched the same as the
 # canonical ASCII form (gate-reviews/0016). Without this, `rebuild`-style prefixes, a U+2011 non-breaking
@@ -117,16 +103,20 @@ _CONFUSABLE_MAP = {ord(k): v for k, v in _CONFUSABLE.items()}
 
 def _norm(s: str) -> str:
     """NFKC → strip zero-width/format (Cf) chars → Unicode-dash → ASCII '-' → whitespace-collapse →
-    casefold → fold common Cyrillic/Greek homoglyphs. Idempotent; used on BOTH the rendered text and every
-    needle (anchor, skill name, count phrase), so a case / dash / zero-width / compatibility / common-
-    homoglyph variant is matched as the canonical form."""
+    casefold → fold common Cyrillic/Greek homoglyphs → a final NFKC. Idempotent OVER THE ASCII / common-fold
+    range (all skill names and anchors are ASCII); used on BOTH the rendered text and every needle (anchor,
+    skill name), so a case / dash / zero-width / compatibility / common-homoglyph variant is matched as the
+    canonical form. LIMIT: an arbitrary base+combining sequence in an EXOTIC script (e.g. a Greek precomposed
+    letter whose casefold re-decomposes to a foldable base) is not guaranteed idempotent — inert here, since
+    every call site normalizes ONCE and never composes _norm on already-normed text (gate-reviews/0018)."""
     s = unicodedata.normalize("NFKC", s)
     s = "".join(c for c in s if unicodedata.category(c) != "Cf")   # soft hyphen, ZWSP/ZWJ/ZWNJ, BOM, …
     s = re.sub(r"\s+", " ", s.translate(_DASH_MAP)).strip().casefold()
-    # A final NFKC pass makes _norm genuinely idempotent: casefold can emit a DECOMPOSED sequence (e.g. a
-    # few Greek codepoints → i/u + combining diaeresis + accent) that a later NFKC would recompose, so
-    # without this norm(norm(x)) != norm(x) for those. Re-composing here has no effect on ASCII/common-fold
-    # text and never re-introduces a dash or format char (gate-reviews/0017).
+    # A final NFKC pass recomposes the common decomposed sequences casefold emits (a few Greek/Latin
+    # codepoints → base + combining marks), so norm(norm(x)) == norm(x) across the ASCII / common-fold range
+    # that matters. It has no effect on ASCII text and never re-introduces a dash or format char. It does NOT
+    # make _norm idempotent for EVERY exotic base+combining sequence (see the docstring LIMIT) — that would
+    # need iterating to a fixpoint, and is functionally inert here (gate-reviews/0018).
     return unicodedata.normalize("NFKC", s.translate(_CONFUSABLE_MAP))
 
 try:
@@ -134,32 +124,6 @@ try:
 except ImportError:  # fail closed: the gate cannot verify anything without the parser
     MarkdownIt = None
 
-NUM_WORDS = {
-    1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight",
-    9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen",
-    16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty",
-}
-_NUM_ALT = "|".join(sorted(NUM_WORDS.values(), key=len, reverse=True))
-# The canonical count is checked by PRESENCE, not by parsing the sentence (gate-reviews/0018). Four prior
-# rounds proved a positional "suite of <N> … skills" regex is a bottomless false-positive well: every round
-# found another correct phrasing it flagged (a compound continuation, a qualifier "exactly/at least", a
-# hyphenated adjective "one-click", a percent adjective "100%", the article "a" vs "an"). The presence check
-# never parses sentence structure, so all of that is irrelevant. The region must simply CONTAIN the count
-# value N — the digit or its number word — as a bounded token that is not enlarged into a bigger number.
-# It still catches casual drift (a wrong number → N absent) and a compound/range mask ("eight hundred" /
-# "eight to twelve" → N present but immediately enlarged, so not a plain count).
-#
-# Count-token boundaries: no adjacent DIGIT or LETTER (so "eight" is not read inside "eighteen", nor "8"
-# inside "18"), but a following hyphen IS allowed so "an eight-skill" reads its count as "eight". These are
-# DISTINCT from _L/_R below, which fence a hyphen because they bound SKILL NAMES ("project-faq" must not
-# match "project-faq-notes").
-_CL = r"(?<![a-z0-9])"
-_CR = r"(?![a-z0-9])"
-# A count token is NOT a plain count when it is immediately ENLARGED into a compound ("eight hundred") or a
-# range ("eight to/or/through <number>"). "eight or so" is not a range (no number after "or") and stays a
-# plain count; "and" is not a compounding word.
-_MULT = "hundred|thousand|million|billion|dozen"
-_NOT_ENLARGED = rf"(?![\s-]+(?:{_MULT}|(?:to|or|through)[\s-]+(?:{_NUM_ALT}|[0-9])))"
 # Identifier boundaries for SKILL NAMES (fence a hyphen so a name is not a prefix of a longer one): `\b` is
 # not enough — it let "rebuild all eight" satisfy "build all", and suffixes ("skillsets") pass.
 _L = r"(?<![a-z0-9_-])"
@@ -168,16 +132,13 @@ _R = r"(?![a-z0-9_-])"
 README = "README.md"
 PROMPT = "per-skill-review-prompt.md"
 
-# Scalar counts are FIRST-CLASS MARKED SITES (gate-reviews/0016), not document-wide regex. Each count
-# sentence sits in its own marker pair; the check verifies the count ONLY inside that designated region, by
-# PRESENCE of the value N (see check_count_site + _CL/_CR/_NOT_ENLARGED above). Two headline counts are
-# gated; the lower-value prose numbers (the "eight copies" line, the build-command comment, the "now eight
-# skills" note) are deliberately NOT gated — see CONTRIBUTING scope.
-# site_id -> (filename, human label for messages)
-COUNT_SITES = {
-    "count-suite": (README, "a suite of <N> … skills"),
-    "count-nskill": (PROMPT, "an <N>-skill …"),
-}
+# NOTE: the suite's headline count SENTENCES ("a suite of eight … skills"; "an eight-skill … suite") are
+# deliberately NOT gated (gate-reviews/0018). The five ENUMERATION sites below are generated from
+# skills-order and catch every skill add / remove / reorder — the drift that matters. A prose count number
+# adds only a lone-typo nudge on top of that, and verifying "the doc states exactly N" in free English was a
+# bottomless well of false positives AND masks (five review rounds). As the suite grows (8 → 10 → …), a
+# hardcoded prose count is maintenance burden guarding a cosmetic error, so it is out of scope — see
+# CONTRIBUTING "Skill-enumeration gate: scope".
 
 
 class MarkerError(Exception):
@@ -564,7 +525,7 @@ def _table_cells(inner) -> tuple[list[str], list[list[str]]]:
 def _allowed_marker_comments() -> set[str]:
     """The ONLY raw HTML permitted in a governed doc: this suite's exact begin/end marker comments."""
     out: set[str] = set()
-    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES] + list(COUNT_SITES):
+    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES]:
         out.update(_canon_markers(site_id))
     return out
 
@@ -632,7 +593,6 @@ def check(root: Path) -> list[str]:
     order, errs = load_order(root, canonical)
     if errs:
         return errs
-    n = len(canonical)
     md = _md()
     findings: list[str] = []
 
@@ -705,82 +665,14 @@ def check(root: Path) -> list[str]:
             findings.append(f"{fname}: '{site_id}' rendered table first column {names} does not equal "
                             f"the order {order} (fix the table to match skills-order)")
 
-    # Count sites are MARKED blocks too, so collect their spans BEFORE the competing scan — a near-complete
-    # run rendered INSIDE a count region is inside a marked block, so the general scan must not label it
-    # "outside every marked block" (until 0017 the scan ran first and did exactly that). Excluding it here is
-    # not a hole: check_count_site verifies the count region is a count SENTENCE and flags a near-complete
-    # enumeration in it directly (a run there is not generated/verified, so it would silently rot). The
-    # value check runs after the scan, from the spans collected here.
-    count_checks: list[tuple] = []
-    if not COUNT_SITES:
-        # vacuous success is exactly the failure this check exists to avoid — an emptied registry would
-        # disable the count guard while the banner still said "count phrases consistent".
-        findings.append("no count sites are configured — the count guard cannot verify anything "
-                        "(fail closed, not clean)")
-    for site_id, (fname, label) in COUNT_SITES.items():
-        if fname not in tokens:
-            findings.append(f"{fname}: governed doc not found — count site '{site_id}' cannot be verified")
-            continue
-        try:
-            b, e = _marker_token_span(tokens[fname], site_id)
-        except MarkerError as ex:
-            findings.append(f"{fname}: {ex}")
-            continue
-        marked_spans[fname].append((b, e))
-        count_checks.append((fname, b, e, site_id, label))
-
-    # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all marked spans (now
-    # including the two count blocks collected above).
+    # Competing-enumeration scan, once per file: any near-complete run OUTSIDE all five marked enumeration
+    # spans. Every legitimate enumeration lives inside a marked block (excluded); a near-complete run
+    # anywhere else in a governed file is a competing enumeration.
     for fname in (README, PROMPT):
         if fname in tokens:
             findings += _competing_findings(tokens[fname], marked_spans[fname], order, fname)
 
-    # Count PRESENCE checks, using the spans gathered before the scan.
-    for fname, b, e, site_id, label in count_checks:
-        findings += check_count_site(tokens[fname], b, e, site_id, fname, label, n, order)
-
     return findings
-
-
-def _count_region_text(tokens, b: int, e: int) -> str | None:
-    """The NORMALIZED rendered text of the single paragraph in the marked count region [b, e], or None if
-    the region is not exactly one paragraph (anything smuggled in is a finding, like the pure sites)."""
-    inner = tokens[b + 1:e]
-    if len(inner) == 3 and inner[1].type == "inline" and inner[0].type == "paragraph_open" \
-            and inner[2].type == "paragraph_close":
-        return _norm(_inline_text(inner[1]))
-    return None
-
-
-def check_count_site(tokens, b, e, site_id, fname, label, n, order) -> list[str]:
-    """Verify the MARKED count region [b, e] states the skill count N, checked ONLY inside its marker pair
-    by PRESENCE (gate-reviews/0018): N — the digit or its number word — must appear as a bounded count token
-    (see _CL/_CR) that is not enlarged into a compound/range (see _NOT_ENLARGED). No sentence structure is
-    parsed, so ordinary prose variation around the count (article a/an, qualifier "exactly/at least", a
-    numeric adjective "100%"/"one-click", another number elsewhere in the sentence) cannot false-positive; a
-    wrong number (N absent) or a compound/range mask ("eight hundred"/"eight to twelve") is still caught.
-    LIMIT: exactly-one matching was dropped with the positional pattern — a SECOND conflicting count clause
-    in the same region is a disclosed residual (the region still states N, so it passes)."""
-    text = _count_region_text(tokens, b, e)
-    if text is None:
-        return [f"{fname}: the '{site_id}' marked count region is not a single paragraph (fix the region)"]
-    out: list[str] = []
-    # The count region is a count SENTENCE, not an enumeration site. A near-complete run of the skill names
-    # here is never generated or verified against skills-order (it silently rots on a reorder), and — since
-    # its span is marked — it is excluded from the general competing scan, which would otherwise flag it. So
-    # catch it HERE (gate-reviews/0017): enumerations belong in their dedicated, generated marked sites. A
-    # one/two-name cross-reference stays below the near-complete threshold and is fine.
-    if _competing_run(text, order):
-        out.append(f"{fname}: the '{site_id}' count region names {_run_hits(text, order)} of {len(order)} "
-                   f"skills — the count sentence must not enumerate the skills; use the dedicated "
-                   f"enumeration sites (they are generated from skills-order)")
-    accepted = {str(n), _norm(NUM_WORDS.get(n, ""))} - {""}
-    present = any(re.search(_CL + re.escape(tok) + _CR + _NOT_ENLARGED, text) for tok in accepted)
-    if not present:
-        out.append(f"{fname}: the '{site_id}' count region (\"{label}\") does not state {n} as a plain "
-                   f"count — expected \"{NUM_WORDS.get(n, n)}\" or \"{n}\" as a bounded number, present and "
-                   f"not enlarged into a compound/range")
-    return out
 
 
 def write(root: Path) -> int:
@@ -841,8 +733,8 @@ def main() -> int:
         return 1
     n = len(canonical_skills(root))
     print(f"--- skill-enumerations: clean ({n} skills; every marked enumeration matches skills-order in "
-          f"the parsed Markdown; governed docs contain no raw HTML except the comment markers; count "
-          f"phrases consistent — drift-catcher, see CONTRIBUTING for scope) ---")
+          f"the parsed Markdown; governed docs contain no raw HTML except the comment markers — "
+          f"drift-catcher, see CONTRIBUTING for scope) ---")
     return 0
 
 

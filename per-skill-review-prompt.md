@@ -32,9 +32,7 @@ Then paste everything between the lines.
 
 ---
 
-<!-- skills:count-nskill:begin -->
 You are improving ONE skill in an eight-skill documentation suite: **{SKILL_NAME}**.
-<!-- skills:count-nskill:end -->
 
 The suite shares
 canonical files (`house-style.md`, `project-profile.md`, `licensing-and-credits.md`,
