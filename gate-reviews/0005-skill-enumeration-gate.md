@@ -3,11 +3,11 @@
 - Prompt: gate-review-prompt.md v1.0.0
 - Tier: full
 - PR / branch: PR #12 · `feat/skill-count-generate` (issue #7)
-- Diff range: e4bc544..HEAD (current head; the PR has been reviewed over FIFTEEN rounds — see below)
+- Diff range: e4bc544..HEAD (current head; the PR has been reviewed over SIXTEEN rounds — see below)
 - Gate-layer paths changed: `.github/gate-paths`, `.github/workflows/release-gate.yml`, `CONTRIBUTING.md`,
   `build-skills.sh`, `generate-skill-enumerations.py`, `lint-skill-count.py` (DELETED), `release-gate.sh`,
   `skills-order`, `tests/run-golden.py`, `tests/revert-battery.py`
-- Reviewers / instruments: **fifteen independent review rounds**. Rounds 1–11 paired a same-model
+- Reviewers / instruments: **sixteen independent review rounds**. Rounds 1–11 paired a same-model
   (Claude) blind multi-lens pass with a different-vendor (GPT) cold pass on the same head; from round 12
   on, reviews are a different-vendor (GPT) cold pass by the owner's decision, each against a verbatim
   provenance bundle (HEAD sha + per-file sha256 + exact source). The author reproduces every load-bearing
@@ -41,7 +41,8 @@
 | 12 | 2a09f8f | BLOCK | **Owner flagged the review loop** and demanded a root-cause fix: count-by-regex-over-prose is inherently leaky, and there was no normalization. | rebuild — structural marked count sites; ONE `_norm` at every match point; per-container competing; call-graph battery |
 | 13 | 5ca2232 | (self) | Three adversarial self-red-team rounds + an AST mutation sweep found 13 issues (count number-continuation, competing-scan-before-spans, blockquote/list lead-in FP, the `_doc_raw_inline` image arm, `_norm` Greek-casefold non-idempotence, …). | all 13 fixed; final NFKC pass added; anchoring reduced to adjacency-only |
 | 14 | eab308a→c095772 | BLOCK | GPT: the count sites were never LOCATION-bound; the presence guard was a one-sided lookahead that both masked and false-positived; the banner over-claimed; the battery proved FUNCTION- not BRANCH-level and counted any red as a bite. | **DROP the scalar count check entirely** (a bottomless FP/mask well over five rounds, little value over the five generated sites); battery made assertion-specific (`expect_fx`) + branch-level + committed AST finding-branch sweep |
-| 15 | (this head) | pending | GPT: the real `--check` CLI verdict path was outside golden and the battery; the finding-branch sweep counted CRASHES as reddens and mis-labeled its denominator (`_inline_text` data appends); the source-of-truth producers were not locked to their files; the raw-HTML ban + retired-marker allowlist were fixtured on one file only; `_preceding_visible`'s heading arm and both `_norm` call sites were unproven. | *(this round)* end-to-end CLI fixture + main mutants; sweep requires RED + semantic inventory; producer file-dependency fixtures; both-files raw-HTML + retired-marker fixtures; heading + normalized anchor fixtures |
+| 15 | 8fccfe5 | BLOCK | GPT: the real `--check` CLI verdict path was outside golden and the battery; the finding-branch sweep counted CRASHES as reddens and mis-labeled its denominator (`_inline_text` data appends); the source-of-truth producers were not locked to their files; the raw-HTML ban + retired-marker allowlist were fixtured on one file only; `_preceding_visible`'s heading arm and both `_norm` call sites were unproven. | *(this round)* end-to-end CLI fixture + main mutants; sweep requires RED + semantic inventory; producer file-dependency fixtures; both-files raw-HTML + retired-marker fixtures; heading + normalized anchor fixtures |
+| 16 | aea626d | pending | GPT: `main()`'s EXCEPTIONAL verdict path (`except MarkerError` -> `return 1`) was still uncovered — no fixture made the parser unavailable to the CLI; the CLI oracle used SUBSTRINGS, so a traceback containing "FAIL" satisfied the drift arm and a phantom `FAIL` beside the clean banner satisfied the pristine arm; the inventory oracle checked OWNER membership not statements, so deleting the collector's `ast.Raise` arm (21->18) stayed green; `genuine()` was applied to 13 sites but SEVEN inline `len(scratch(...)) >= 1` positives still accepted the crash sentinel; the `hardbreak` half of `_inline_text` had no fixture; the producers' declared FILTERING semantics (blank/`#` lines; the `SKILL.md` predicate) were unlocked. | *(this round)* a typed `ScratchResult` makes crash-as-finding UNREPRESENTABLE (exception is a separate field; all 33 positives go through `was_caught`/`was_caught_msg`); a LINE-BASED CLI oracle (exact `FAIL  skill-enum:` lines, no traceback, one banner carrying every advertised scope clause) plus a parser-missing arm that shadows `markdown_it` in the child; a STATEMENT-LEVEL inventory oracle (synthetic collector probe + independently-derived raise owners + per-owner append cardinality); hardbreak fixture+mutant; producer filtering fixtures+mutants; curated `_md` mutant. |
 
 **The author's own verification was the root cause of the loop.** Rounds 4–7 each reported "every guard
 bites"; that claim rested on a hand-rolled battery whose scratch copy was incomplete, so
@@ -93,35 +94,41 @@ number can drift. `docs/adr/` is recorded in the gate-paths "deliberately NOT ga
 
 ## Fixture requirement
 
-`tests/run-golden.py` carries the `skill_enumerations` battery (**199/199** assertions green), and
+`tests/run-golden.py` carries the `skill_enumerations` battery (**203/203** assertions green), and
 `tests/revert-battery.py` proves the fixtures BITE rather than merely existing: it stubs each of the
-**53** guards on a full-repo copy and requires the golden suite to go red **via the guard's DECLARED
+**61** guards on a full-repo copy and requires the golden suite to go red **via the guard's DECLARED
 assertion** (`expect_fx`) — a mutant that reddens only some unrelated assertion is rejected as
-MIS-TARGETED — **53/53 bite** — after first asserting its own harness ran green. It also derives
+MIS-TARGETED — **61/61 bite** — after first asserting its own harness ran green. It also derives
 finding-branch coverage from the AST: every `raise MarkerError` and every verdict-accumulator append
 reverted to a no-op must redden golden as an ASSERTION, not a crash (**21/21**), and every stub's
-declared `covers` must equal the units it actually mutates (**53/53** provenance-clean). `CONTRIBUTING`
+declared `covers` must equal the units it actually mutates (**61/61** provenance-clean). `CONTRIBUTING`
 requirement (ii) mandates running it before requesting a review, and requires a new guard to arrive with
 its stub.
 
 ## Findings
 
-- none outstanding in the author's own verification — every round-15 finding is resolved and locked by a
-  fixture proven to bite (`tests/revert-battery.py`: 53/53 stubs + 21/21 finding-branches). Anchors for
-  this round's fixes: `tests/run-golden.py` `_cli_check` (end-to-end CLI verdict), the `0019` fixture
-  block (source-of-truth, both-files raw-HTML, retired markers, heading/normalized anchors), and
-  `tests/revert-battery.py` `_finding_branches` (semantic inventory) + the sweep's RED requirement + the
-  eleven `0019` GUARDS. A 5-lens adversarial self-red-team then found two issues in the fixes themselves
-  (the inventory oracle only pinned inclusion for `check()`; the new broad `except` in `scratch()` let a
-  crash pass a bare `len>=1` assertion) — both fixed (oracle now pins every verdict-append function; a
-  `genuine()` helper rejects the crash sentinel). The resolution has NOT yet been independently reviewed,
-  so the record stays BLOCK.
+- none outstanding in the author's own verification — every round-16 finding is resolved and locked by a
+  fixture proven to bite (`tests/revert-battery.py`: 61/61 stubs + 21/21 finding-branches), and each
+  original break-test was RE-RUN and now reddens exactly the fixture built for it. Anchors:
+  `tests/run-golden.py` `ScratchResult` / `was_caught` / `was_caught_msg` (crash-as-finding made
+  unrepresentable), `_cli_check` + `_cli_lines` + `BANNER_CLAUSES` (line-based CLI oracle, three arms
+  including parser-missing), the `0020` fixture block (hardbreak; producer filtering semantics), and
+  `tests/revert-battery.py` `_synthetic_inventory_probe` / `_raise_owners` / `_independent_append_count`
+  (statement-level inventory oracle) plus the eight `0020` GUARDS.
 
-**Why this record is nevertheless BLOCK:** the most recent independent review (round 15) returned BLOCK,
+  **Pattern acknowledged (rounds 14–16).** Each round the author fixed the INSTANCES a review named
+  rather than making the bad state unrepresentable: function-level → branch-level (14); branch-level →
+  a crash-tolerant sweep (15); `genuine()` applied to 13 sites while 7 inline positives kept the old
+  form (16). This round the fixes are structural — an exception cannot enter the findings list at all;
+  the CLI oracle parses whole lines, not substrings; the inventory is compared statement-by-statement
+  against an independently-derived count. The resolution has NOT yet been independently reviewed, so
+  the record stays BLOCK.
+
+**Why this record is nevertheless BLOCK:** the most recent independent review (round 16) returned BLOCK,
 and the fixes answering it have **not yet been reviewed by anyone independent**. Under the rule this
 repository exists to enforce — a green build is necessary, not sufficient, and the author's own
 verification is not a review — the verdict cannot flip on the author's say-so. It flips only when an
-independent round-16 review (a different-vendor cold pass, per the Independence note above) examines the
+independent round-17 review (a different-vendor cold pass, per the Independence note above) examines the
 current head and finds it clean.
 
 ---

@@ -241,6 +241,102 @@ def _branch_functions(src: str) -> set[str]:
     return {enclosing(int(lab.split("@L")[1])) for lab, _ in _finding_branches(src)}
 
 
+def _owner_of(src: str, line: int) -> str:
+    """The innermost function enclosing `line` (by max lineno) — shared by the inventory oracles."""
+    tree = ast.parse(src)
+    cands = [fn for fn in ast.walk(tree)
+             if isinstance(fn, ast.FunctionDef) and fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
+    return max(cands, key=lambda fn: fn.lineno).name if cands else "?"
+
+
+def _raise_owners(src: str) -> list[str]:
+    """Every function that raises MarkerError, one entry PER raise statement (so the COUNT is comparable,
+    not just the owner set). Derived INDEPENDENTLY of _finding_branches — the oracle compares the two, so
+    deleting the sweep's `ast.Raise` arm (which silently shrank the denominator 21 -> 18 while every
+    append-owner stayed present) is caught (gate-reviews/0020 MAJOR-3)."""
+    tree = ast.parse(src)
+    owners: list[str] = []
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
+                owners.append(fn.name)
+    return sorted(owners)
+
+
+def _branch_labels_by_owner(src: str) -> dict[str, int]:
+    """How many inventoried finding-branches each owning function has — CARDINALITY per owner, so losing
+    ONE of several appends inside a function (the owner stays present) is visible to the oracle."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+
+    def enclosing(line: int):
+        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
+        return max(cands, key=lambda fn: fn.lineno).name if cands else "?"
+    out: dict[str, int] = {}
+    for lab, _ in _finding_branches(src):
+        out[enclosing(int(lab.split("@L")[1]))] = out.get(enclosing(int(lab.split("@L")[1])), 0) + 1
+    return out
+
+
+def _independent_append_count(src: str) -> dict[str, int]:
+    """Verdict-append statements per function, counted INDEPENDENTLY of _finding_branches (same semantic
+    rule, separate walk): an append to a findings/errs/out accumulator that the function RETURNS by name.
+    The oracle compares this to the sweep's own per-owner cardinality."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    out: dict[str, int] = {}
+    for fn in funcs:
+        returned = _returned_names(fn)
+        n = 0
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
+                    and node.func.value.id in ("findings", "errs", "out") \
+                    and node.func.value.id in returned:
+                n += 1
+        if n:
+            out[fn.name] = n
+    return out
+
+
+def _synthetic_inventory_probe() -> tuple[bool, str]:
+    """Run _finding_branches over a SYNTHETIC source whose correct answer is known by construction: two
+    verdict appends in one function, one returned-DATA append, and one MarkerError raise. The collector
+    must return exactly the two verdict appends + the raise (gate-reviews/0020 MAJOR-3: the oracle must
+    test the COLLECTOR itself, not only its output on today's real source)."""
+    synthetic = '''
+class MarkerError(Exception):
+    pass
+
+
+def verdicts():
+    findings = []
+    findings.append("one")
+    findings.append("two")
+    return findings
+
+
+def data():
+    rows = []
+    rows.append("not a finding")
+    return rows
+
+
+def raiser():
+    raise MarkerError("boom")
+'''
+    labels = [lab for lab, _ in _finding_branches(synthetic)]
+    appends = [l for l in labels if ".append" in l]
+    raises = [l for l in labels if "raise MarkerError" in l]
+    if len(appends) != 2:
+        return False, f"expected exactly 2 verdict appends, collector returned {len(appends)}: {appends}"
+    if len(raises) != 1:
+        return False, f"expected exactly 1 MarkerError raise, collector returned {len(raises)}: {raises}"
+    if len(labels) != 3:
+        return False, f"expected exactly 3 branches (2 appends + 1 raise), got {len(labels)}: {labels}"
+    return True, "collector returns exactly the 2 verdict appends + 1 raise (data append excluded)"
+
+
 def _appends_to_finding_accum(src: str) -> set[str]:
     """Every function that appends to a findings accumulator (a Name in {findings, errs, out}) — the
     SUPERSET of the sweep's verdict-append functions PLUS the data-append exceptions (_inline_text appends
@@ -478,24 +574,53 @@ GUARDS: list[tuple] = [
      _sub('return _norm(" ".join(_inline_text(t) for t in tokens[start:begin_idx] if t.type == "inline"))',
           'return " ".join(_inline_text(t) for t in tokens[start:begin_idx] if t.type == "inline")'),
      ("_preceding_visible",), "RED", "NORMALIZED blockquote lead-in"),
+    # ============================ 0020 (round-16 GPT BLOCK) ============================
+    # BLOCKER-1: main()'s EXCEPTIONAL verdict path (`except MarkerError` -> return 1) is separate from the
+    # ordinary `if findings:` path; two ordinary-path mutants are not proof of the whole function. Bound to
+    # the parser-missing CLI fixture (which shadows markdown_it in the child so the raise actually fires).
+    ("cli: the parser-missing (except MarkerError) path exits nonzero",
+     _sub('        print(f"   FAIL  skill-enum: {e}")\n        return 1',
+          '        print(f"   FAIL  skill-enum: {e}")\n        return 0'),
+     ("main",), "RED", "CLI --check with markdown-it MISSING"),
+    ("cli: the per-finding FAIL diagnostic is emitted",
+     _sub('    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n',
+          '    for f in []:\n        print(f"   FAIL  skill-enum: {f}")\n'),
+     ("main",), "RED", "CLI --check on a DRIFTED doc"),
+    ("cli: the clean banner states its advertised scope clauses",
+     _sub('f"drift-catcher, see CONTRIBUTING for scope) ---"', 'f"see CONTRIBUTING) ---"'),
+     ("main",), "RED", "CLI --check on a PRISTINE repo"),
+    # BLOCKER-2 / MAJOR-3: _md's fail-closed raise now has a CURATED mutant (it was exempted on the claim
+    # that the sweep proved it). The golden absent-parser fixture asserts the MarkerError TYPE + message,
+    # so returning a parser instead of raising reddens that assertion specifically.
+    ("source: _md fails closed when the parser is absent",
+     _sub('    if MarkdownIt is None:\n        raise MarkerError(',
+          '    if MarkdownIt is None and False:\n        raise MarkerError('),
+     ("_md",), "RED", "absent parser (MarkdownIt=None)"),
+    # MAJOR-5: _inline_text renders BOTH break kinds as a space; only the softbreak half was fixtured, so
+    # a two-trailing-space (hardbreak) run went unflagged when the arm was dropped.
+    ("competing: hard breaks separate names (hardbreak arm)",
+     _sub('elif c.type in ("softbreak", "hardbreak"):', 'elif c.type in ("softbreak",):'),
+     ("_inline_text",), "RED", "HARD-break-separated run"),
+    # MAJOR-6: the producers' declared FILTERING semantics (not just their file dependency).
+    ("source: load_order skips blank lines",
+     _sub('if ln.strip() and not ln.strip().startswith("#")]',
+          'if not ln.strip().startswith("#")]'),
+     ("load_order",), "RED", "load_order skips comments/blank lines"),
+    ("source: load_order skips # comments",
+     _sub('if ln.strip() and not ln.strip().startswith("#")]', 'if ln.strip()]'),
+     ("load_order",), "RED", "load_order skips comments/blank lines"),
+    ("source: canonical_skills requires a SKILL.md",
+     _sub('if p.is_dir() and (p / "SKILL.md").is_file()}', 'if p.is_dir()}'),
+     ("canonical_skills",), "RED", "canonical_skills ignores a skills/ dir without SKILL.md"),
 ]
 
 # Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is
 # EXPLICITLY exempted here with a reason, so the exemption is reviewable rather than hidden (round-12 F8:
 # every function on the verdict path must be a stub target OR a reasoned exemption).
 NON_GUARD = {
-    "_inline_text": "accumulates rendered text; a revert is proven transitively by every check that reads "
-                    "it (e.g. stubbing it empties all text, reddening the baseline) — data, not a verdict. "
-                    "It appends to a local `out` but RETURNS ''.join(out), so the finding-branch sweep's "
-                    "semantic inventory (gate-reviews/0019) correctly excludes those DATA appends",
     "_read": "reads a governed doc; a missing/unreadable doc is caught by check()'s per-site 'not found' "
              "guard (its own stubs), not here",
     "_canon_markers": "constructs a site's (begin,end) marker strings from its id — pure formatting",
-    "_md": "fail-closed on a MISSING parser: its `raise MarkerError` branch is proven by the golden "
-           "absent-parser fixture, which now catches ANY exception and asserts the MarkerError type+message "
-           "(gate-reviews/0019), so neutering the raise reddens as an ASSERTION (was a suite-aborting crash "
-           "the sweep wrongly accepted). The function as a whole is not source-stubbed — stubbing _md=None "
-           "crashes downstream, which is not an assertion catch",
     "render_tree": "wraps _tree_body in a fenced block for the WRITER (write); check() compares _tree_body "
                    "DIRECTLY (its own stub), so the gate verdict does not depend on render_tree",
     "write": "dev-convenience: fills the three pure blocks in place from skills-order. NOT a verdict — the "
@@ -763,7 +888,36 @@ def main() -> int:
               f"findings accumulator but are NOT inventoried (a wrapped return? add to the sweep or, if "
               f"the append is data, to DATA_APPEND_FNS)")
         return 2
-    print("   ok — inventory is semantic (data appends excluded, ALL verdict-append functions included)")
+    # STATEMENT-LEVEL, not owner-level (gate-reviews/0020 MAJOR-3). Owner membership alone was
+    # denominator-shrinkable: losing ONE of several appends inside a function, or deleting the collector's
+    # whole `ast.Raise` arm, left every owner present and the oracle green while the denominator fell.
+    # Three independent comparisons close that:
+    #  (1) the COLLECTOR itself, probed on a synthetic source whose answer is known by construction;
+    #  (2) the MarkerError raises, derived independently, compared by COUNT and owners;
+    #  (3) per-owner append CARDINALITY, derived independently, compared exactly.
+    ok_probe, probe_detail = _synthetic_inventory_probe()
+    if not ok_probe:
+        print(f"   INVENTORY ORACLE BROKEN: synthetic collector probe failed — {probe_detail}")
+        return 2
+    swept_raises = sorted(_owner_of(orig, int(lab.split("@L")[1]))
+                          for lab, _ in _finding_branches(orig) if "raise MarkerError" in lab)
+    real_raises = _raise_owners(orig)
+    if swept_raises != real_raises:
+        print(f"   INVENTORY ORACLE BROKEN: the sweep inventories MarkerError raises {swept_raises} but "
+              f"the source has {real_raises} (the ast.Raise arm was weakened or removed)")
+        return 2
+    swept_appends = {k: v for k, v in _branch_labels_by_owner(orig).items()}
+    real_appends = _independent_append_count(orig)
+    # subtract the raise contribution so the two dicts compare like for like
+    for owner in real_raises:
+        swept_appends[owner] = swept_appends.get(owner, 0) - 1
+    swept_appends = {k: v for k, v in swept_appends.items() if v}
+    if swept_appends != real_appends:
+        print(f"   INVENTORY ORACLE BROKEN: per-owner verdict-append counts disagree — sweep "
+              f"{swept_appends} vs independent {real_appends} (a branch was dropped from the inventory)")
+        return 2
+    print(f"   ok — inventory is statement-complete: collector probe passed; {len(real_raises)} "
+          f"MarkerError raise(s) and {sum(real_appends.values())} verdict append(s) independently matched")
     branches = _finding_branches(orig)
     sweep_fail = []
     for label, patch in branches:
