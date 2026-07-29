@@ -318,8 +318,8 @@ full), so the lighter bar is never granted by omission, and the verdict still ca
   skill's `CHANGELOG.md`. `check-version.py` requires the root changelog to name the current `VERSION`
   (it ignores a `## [Unreleased]` section, which is the right home for changes staged before the next
   version is cut).
-- **Commits.** Conventional commits (`feat(scope): …`, `fix(scope): …`, `docs(scope): …`), with the
-  `Co-Authored-By` trailer where it applies. Land everything via a branch + PR; never push `main`.
+- **Commits.** Conventional commits (`feat(scope): …`, `fix(scope): …`, `docs(scope): …`). Land
+  everything via a branch + PR; never push `main`.
 - **No `--no-verify`, no bypassing CI or the gate-review.** If a check is wrong, fix the check (with a
   gate-review, since the check is gate-layer) — don't route around it.
 
