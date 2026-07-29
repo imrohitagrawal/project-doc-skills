@@ -211,12 +211,19 @@ def _finding_branches(src: str):
     spans = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
+                and node.func.attr in MUTATING_METHODS and isinstance(node.func.value, ast.Name) \
                 and node.func.value.id in FINDING_ACCUMS:
             fn = enclosing(node.lineno)
-            if fn is not None and node.func.value.id in returns[fn]:   # returned by name = a verdict list
+            if fn is not None and node.func.value.id in returns[fn] \
+                    and _is_list_accumulator(fn, node.func.value.id):   # a returned LIST = verdicts
                 spans.append((node.lineno, node.end_lineno,
-                              f"{node.func.value.id}.append @L{node.lineno}"))
+                              f"{node.func.value.id}.{node.func.attr} @L{node.lineno}"))
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) \
+                and node.target.id in FINDING_ACCUMS:
+            fn = enclosing(node.lineno)
+            if fn is not None and node.target.id in returns[fn]:       # `findings += [...]`
+                spans.append((node.lineno, node.end_lineno,
+                              f"{node.target.id}.augassign @L{node.lineno}"))
         elif isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
             spans.append((node.lineno, node.end_lineno, f"raise MarkerError @L{node.lineno}"))
     out = []
@@ -241,6 +248,69 @@ def _branch_functions(src: str) -> set[str]:
     return {enclosing(int(lab.split("@L")[1])) for lab, _ in _finding_branches(src)}
 
 
+# Every list method that can ADD a finding to a verdict accumulator. The inventory covers all of them, and
+# _unknown_accumulator_mutations() below FAILS CLOSED on any method outside this set ∪ READ_ONLY_METHODS —
+# 0021 (round-17 MAJOR-2): a review showed a semantics-preserving `errs.append(m)` -> `errs.extend([m])`
+# refactor silently dropped the inventory 21 -> 20 while every oracle stayed green, because the collector
+# recognised only `.append`. Enumerating the mutators is not enough on its own (the next refactor could use
+# a method nobody listed), so the unknown-method guard is the load-bearing half.
+MUTATING_METHODS = ("append", "extend", "insert", "__iadd__")
+READ_ONLY_METHODS = ("count", "index", "copy", "__contains__", "__len__", "__iter__", "join")
+
+
+def _unknown_accumulator_mutations(src: str) -> list[str]:
+    """Any method called on a RETURNED findings accumulator that is neither a known mutator (inventoried)
+    nor a known read-only op. Non-empty means the inventory may be blind to a real finding-emission, so the
+    battery must refuse to claim statement-completeness (fail closed)."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    returns = {fn: _returned_names(fn) for fn in funcs}
+
+    def enclosing(line: int):
+        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
+        return max(cands, key=lambda fn: fn.lineno) if cands else None
+    bad: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) \
+                and node.func.value.id in ("findings", "errs", "out"):
+            fn = enclosing(node.lineno)
+            if fn is None or node.func.value.id not in returns[fn] \
+                    or not _is_list_accumulator(fn, node.func.value.id):
+                continue
+            if node.func.attr not in MUTATING_METHODS and node.func.attr not in READ_ONLY_METHODS:
+                bad.append(f"{node.func.value.id}.{node.func.attr}() @L{node.lineno} in {fn.name}()")
+    return bad
+
+
+def _is_list_accumulator(fn: ast.FunctionDef, name: str) -> bool:
+    """True iff `name` is initialised in `fn` as a LIST — the codebase's findings-accumulator shape
+    (`findings: list[str] = []`). This is what separates a real verdict accumulator from a same-named
+    non-finding collection: `_allowed_marker_comments` builds `out: set[str] = set()` (a set of allowed
+    marker strings, not findings) and mutates it with `.update()`. Discriminating by the INITIALISER,
+    rather than exempting the name by hand, keeps the rule derived from the source (0021)."""
+    for node in _walk_own_scope(fn):
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                and node.target.id == name:
+            return isinstance(node.value, ast.List)
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id == name:
+                    return isinstance(node.value, ast.List)
+    return False
+
+
+def _walk_own_scope(fn: ast.FunctionDef):
+    """Yield every node inside `fn` WITHOUT descending into nested function definitions, so a statement is
+    attributed to its innermost owner exactly once (0021, round-17 MAJOR-2)."""
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, ast.FunctionDef):
+            stack.extend(ast.iter_child_nodes(node))
+
+
 def _owner_of(src: str, line: int) -> str:
     """The innermost function enclosing `line` (by max lineno) — shared by the inventory oracles."""
     tree = ast.parse(src)
@@ -257,7 +327,7 @@ def _raise_owners(src: str) -> list[str]:
     tree = ast.parse(src)
     owners: list[str] = []
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
-        for node in ast.walk(fn):
+        for node in _walk_own_scope(fn):     # innermost owner only (0021)
             if isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
                 owners.append(fn.name)
     return sorted(owners)
@@ -288,11 +358,17 @@ def _independent_append_count(src: str) -> dict[str, int]:
     for fn in funcs:
         returned = _returned_names(fn)
         n = 0
-        for node in ast.walk(fn):
+        for node in _walk_own_scope(fn):     # 0021: do NOT descend into nested defs — a nested helper was
+            # walked once as itself and again inside every enclosing function, while the collector assigns
+            # each statement to its INNERMOST owner only (a latent false-positive in the comparison).
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                    and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
+                    and node.func.attr in MUTATING_METHODS and isinstance(node.func.value, ast.Name) \
                     and node.func.value.id in ("findings", "errs", "out") \
-                    and node.func.value.id in returned:
+                    and node.func.value.id in returned \
+                    and _is_list_accumulator(fn, node.func.value.id):
+                n += 1
+            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) \
+                    and node.target.id in ("findings", "errs", "out") and node.target.id in returned:
                 n += 1
         if n:
             out[fn.name] = n
@@ -313,6 +389,7 @@ def verdicts():
     findings = []
     findings.append("one")
     findings.append("two")
+    findings.extend(["three"])
     return findings
 
 
@@ -326,15 +403,16 @@ def raiser():
     raise MarkerError("boom")
 '''
     labels = [lab for lab, _ in _finding_branches(synthetic)]
-    appends = [l for l in labels if ".append" in l]
+    appends = [l for l in labels if ".append" in l or ".extend" in l]
     raises = [l for l in labels if "raise MarkerError" in l]
-    if len(appends) != 2:
-        return False, f"expected exactly 2 verdict appends, collector returned {len(appends)}: {appends}"
+    if len(appends) != 3:
+        return False, (f"expected exactly 3 verdict emissions (2 append + 1 extend), collector returned "
+                       f"{len(appends)}: {appends}")
     if len(raises) != 1:
         return False, f"expected exactly 1 MarkerError raise, collector returned {len(raises)}: {raises}"
-    if len(labels) != 3:
-        return False, f"expected exactly 3 branches (2 appends + 1 raise), got {len(labels)}: {labels}"
-    return True, "collector returns exactly the 2 verdict appends + 1 raise (data append excluded)"
+    if len(labels) != 4:
+        return False, f"expected exactly 4 branches (2 append + 1 extend + 1 raise), got {len(labels)}: {labels}"
+    return True, "collector returns the 2 appends + 1 extend + 1 raise (data append excluded)"
 
 
 def _appends_to_finding_accum(src: str) -> set[str]:
@@ -612,6 +690,39 @@ GUARDS: list[tuple] = [
     ("source: canonical_skills requires a SKILL.md",
      _sub('if p.is_dir() and (p / "SKILL.md").is_file()}', 'if p.is_dir()}'),
      ("canonical_skills",), "RED", "canonical_skills ignores a skills/ dir without SKILL.md"),
+    # ============================ 0021 (round-17 GPT BLOCK) ============================
+    # BLOCKER-1: the clean banner is a USER-VISIBLE SUCCESS STRING — this repository exists because "a
+    # success message asserted more than the code verified". The round-16 oracle checked only that three
+    # clause SUBSTRINGS appeared somewhere in the line, so a wrong COUNT, a NEGATED clause and a DUPLICATED
+    # clause all passed (a review reproduced all three). The fixture now compares the banner EXACTLY, and
+    # these mutants prove that comparison bites on each shape. Two of them (crash-in-diagnostic, phantom
+    # FAIL) were verified ad hoc last round and named in a commit message WITHOUT being committed — an
+    # over-claim of exactly the kind this battery exists to prevent. They are committed now.
+    ("cli banner: the skill COUNT is real (not a constant)",
+     _sub("    n = len(canonical_skills(root))", "    n = 0"),
+     ("main",), "RED", "the EXACT clean banner"),
+    ("cli banner: no clause is NEGATED",
+     _sub('f"--- skill-enumerations: clean ({n} skills; every marked enumeration matches skills-order in "',
+          'f"--- skill-enumerations: clean ({n} skills; NOT every marked enumeration matches skills-order in "'),
+     ("main",), "RED", "the EXACT clean banner"),
+    ("cli banner: no clause is DUPLICATED",
+     _sub('f"drift-catcher, see CONTRIBUTING for scope) ---")',
+          'f"drift-catcher, see CONTRIBUTING for scope; drift-catcher, see CONTRIBUTING for scope) ---")'),
+     ("main",), "RED", "the EXACT clean banner"),
+    ("cli: no phantom FAIL line on the clean path",
+     _sub("    n = len(canonical_skills(root))",
+          '    print("   FAIL  skill-enum: phantom")\n    n = len(canonical_skills(root))'),
+     ("main",), "RED", "the EXACT clean banner"),
+    ("cli: no traceback after an otherwise valid drift diagnostic",
+     _sub('    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n',
+          '    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n'
+          '        raise RuntimeError("crash after emitting the diagnostic")\n'),
+     ("main",), "RED", "CLI --check on a DRIFTED doc"),
+    # MAJOR-3: the loader's filtering must stay WHITESPACE-NORMALISED. Dropping the two `.strip()` calls
+    # keeps both predicates yet reads an INDENTED comment and a WHITESPACE-ONLY line as skill names.
+    ("source: load_order filtering is whitespace-normalised",
+     _sub('if ln.strip() and not ln.strip().startswith("#")]', 'if ln and not ln.startswith("#")]'),
+     ("load_order",), "RED", "load_order skips comments/blank lines"),
 ]
 
 # Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is
@@ -895,6 +1006,12 @@ def main() -> int:
     #  (1) the COLLECTOR itself, probed on a synthetic source whose answer is known by construction;
     #  (2) the MarkerError raises, derived independently, compared by COUNT and owners;
     #  (3) per-owner append CARDINALITY, derived independently, compared exactly.
+    unknown = _unknown_accumulator_mutations(orig)
+    if unknown:
+        print(f"   INVENTORY ORACLE BROKEN: unrecognised mutation(s) of a returned findings accumulator "
+              f"{unknown} — the inventory may be blind to a real emission; add the method to "
+              f"MUTATING_METHODS (and give it a sweep patch) or to READ_ONLY_METHODS")
+        return 2
     ok_probe, probe_detail = _synthetic_inventory_probe()
     if not ok_probe:
         print(f"   INVENTORY ORACLE BROKEN: synthetic collector probe failed — {probe_detail}")

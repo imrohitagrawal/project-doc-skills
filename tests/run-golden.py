@@ -706,22 +706,34 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     BROKEN_RUN = ("learning-track → architecture-and-decisions → project-faq → usage-guide → "
                   "operations-runbook → onboarding-companion → doc-critic → publish-mirror")
 
-    class ScratchResult(list):
-        """What a scratch run produced: the findings list PLUS whether check() raised.
+    class ScratchResult:
+        """What a scratch run produced: `findings` (a plain list) and `exc` (the exception check() raised,
+        or None). COMPOSITION, not list inheritance (0021, round-17 MAJOR-4).
 
-        0020 (round-16 MAJOR-4): the previous design represented an exception AS an ordinary finding
-        string, so every `len(f) >= 1` / `any("x" in f)` assertion could be satisfied by a CRASH — a
-        mutated checker that blew up was scored as "the decoy was caught". Seven inline assertions still
-        read the sentinel that way, and a substring assertion could match text inside the exception
-        message. Representing the exception SEPARATELY makes that structurally impossible: an exception
-        never enters the findings list, so no assertion can mistake one for a finding.
+        The round-16 version subclassed `list`, and the claim that this made crash-as-finding
+        "unrepresentable" was FALSE — a review reproduced it: `bool(result)` was true for a crash,
+        iteration exposed the crash marker as if it were a finding, and inherited `==` ignored `.exc`
+        entirely, so `ScratchResult([], exc) == []` was True. The old bad state was still reachable through
+        the ordinary list protocol; only a call-site CONVENTION prevented it. That is a weaker guarantee
+        than was advertised, and the advertisement was the defect.
 
-        It subclasses list so the negative fixtures (`== []`) keep their plain, readable form AND stay
-        correct — a crash yields a NON-empty marker list, so `== []` still fails. Every POSITIVE assertion
-        goes through was_caught()/was_caught_msg(), which require `exc is None`."""
+        With composition the list protocol is simply absent: `was_clean(result)`, `len(result)`, `if result:`
+        and `for f in result:` are all TypeErrors/False rather than quietly wrong answers, so every read
+        MUST go through was_caught() / was_caught_msg() / was_clean(), each of which inspects `exc`."""
+        __slots__ = ("findings", "exc")
+
         def __init__(self, findings, exc=None):
-            super().__init__(findings)
+            self.findings = list(findings)
             self.exc = exc
+
+        def __repr__(self):
+            return f"ScratchResult(findings={self.findings!r}, exc={self.exc!r})"
+
+        def detail(self, limit=70):
+            """Human-readable detail for a res.check() line (never used as an assertion)."""
+            if self.exc is not None:
+                return f"[CRASH] {type(self.exc).__name__}: {self.exc}"[:limit]
+            return ("; ".join(self.findings) or "clean")[:limit]
 
     def scratch(mutate):
         tmp = Path(tempfile.mkdtemp(prefix="genenum-"))
@@ -740,7 +752,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             # short-circuits). Capture it SEPARATELY (never as a finding) so it reddens an ASSERTION here
             # instead of aborting the whole suite, and so no assertion can read a crash as a catch. The
             # revert battery's finding-branch sweep requires a RED (assertion) bite, not a crash.
-            f, exc = [f"[CRASH] check() raised {type(e).__name__}: {e}"], e
+            f, exc = [], e
         shutil.rmtree(tmp, ignore_errors=True)
         return ScratchResult(f, exc)
 
@@ -748,19 +760,40 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         """True iff the fixture was caught by a REAL finding: check() did not raise, and it returned at
         least one finding. EVERY positive (decoy/drift must be CAUGHT) assertion goes through this —
         a crash is never a catch (0020)."""
-        return getattr(result, "exc", None) is None and len(result) >= 1
+        return result.exc is None and len(result.findings) >= 1
 
     def was_caught_msg(result, needle):
         """True iff was_caught() AND some finding contains `needle` — the message-specific form. The
         `exc is None` guard is what stops an exception TEXT that happens to contain the needle (e.g. a
         skill name in a traceback message) from satisfying a substring assertion (0020)."""
-        return was_caught(result) and any(needle in f for f in result)
+        return was_caught(result) and any(needle in f for f in result.findings)
+
+    def was_clean(result):
+        """True iff the doc is genuinely CLEAN: check() did not raise AND returned no findings. Every
+        NEGATIVE (must-stay-clean) assertion goes through this. 0021: negatives previously read
+        `was_clean(result)`, whose crash-rejection depended entirely on scratch() stuffing a sentinel STRING
+        into the list — so the moment anyone 'cleaned that up' to an empty list, every negative fixture
+        would have read a crash as clean. Now `exc` is consulted directly and no sentinel is needed."""
+        return result.exc is None and result.findings == []
+
+    # HARNESS SELF-TEST (0021): the accessors must reject a crash in BOTH directions. Without this, the
+    # crash-safety of every fixture below rests on an unproven claim — the exact over-claim a review
+    # reproduced when ScratchResult still subclassed list.
+    _crash = ScratchResult([], RuntimeError("synthetic"))
+    _found = ScratchResult(["a real finding"], None)
+    _clean = ScratchResult([], None)
+    res.check(not was_caught(_crash) and not was_clean(_crash)
+              and was_caught(_found) and not was_clean(_found)
+              and was_clean(_clean) and not was_caught(_clean),
+              "scratch harness: a CRASH is neither 'caught' nor 'clean' (and real results classify)",
+              f"crash=({was_caught(_crash)},{was_clean(_crash)}) found=({was_caught(_found)},"
+              f"{was_clean(_found)}) clean=({was_caught(_clean)},{was_clean(_clean)})")
 
     def repl(rel, a, b):
         return lambda t: (t / rel).write_text((t / rel).read_text(encoding="utf-8").replace(a, b),
                                               encoding="utf-8")
 
-    res.check(scratch(None) == [], "real-docs scratch: baseline is clean", "; ".join(scratch(None)) or "clean")
+    res.check(was_clean(scratch(None)), "real-docs scratch: baseline is clean", scratch(None).detail())
 
     ol_decoy = "\n".join(f"{i}. {n}" for i, n in enumerate(
         ["publish-mirror", "doc-critic", "onboarding-companion", "operations-runbook",
@@ -876,7 +909,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     for name, mut in cases:
         f = scratch(mut)
         res.check(was_caught(f), f"real-docs scratch: {name} -> caught",
-                  (f[0][:66] if f else "NOT CAUGHT (clean!)"))
+                  f.detail(66))
 
     # 0013 NEGATIVE cases — false positives the round-9 review reproduced must stay CLEAN. Each is ordinary,
     # legitimate content that a pre-fix over-broad guard flagged; the assertion is that the doc is clean, so
@@ -887,14 +920,14 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         (t / "README.md").read_text(encoding="utf-8").rstrip()
         + "\n\nFor this workflow, architecture-and-decisions → project-faq is the normal handoff.\n",
         encoding="utf-8"))
-    res.check(fp_handoff == [], "two-skill handoff prose is NOT flagged as a competing enumeration",
-              "; ".join(fp_handoff)[:70] or "clean")
+    res.check(was_clean(fp_handoff), "two-skill handoff prose is NOT flagged as a competing enumeration",
+              fp_handoff.detail(70))
     #  (c) FINDING #4 FP: a singleton skill reference in a non-first table column is a legitimate
     #      cross-reference, not a header/other-column decoy (only a near-complete run is).
     fp_cell = scratch(repl("README.md", LT,
         "| **learning-track** | tutorial + explanation; reviewed by doc-critic | public | ~9 |"))
-    res.check(fp_cell == [], "singleton skill reference in a description cell is NOT flagged as a decoy",
-              "; ".join(fp_cell)[:70] or "clean")
+    res.check(was_clean(fp_cell), "singleton skill reference in a description cell is NOT flagged as a decoy",
+              fp_cell.detail(70))
 
     # ============================ 0014 (round-10 GPT BLOCKERs) ============================
     # The round-10 review reproduced four class-level escapes that per-instance fixtures had not exercised.
@@ -920,11 +953,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     del_imp = scratch(_delete_block("README.md", "<!-- skills:improve-order:begin -->"))
     res.check(was_caught_msg(del_imp, "improve-order"),
               "improve-order block DELETED entirely -> fails closed (PURE-loop MarkerError handler)",
-              (del_imp[0][:66] if del_imp else "NOT CAUGHT (clean!)"))
+              del_imp.detail(66))
     del_tab = scratch(_delete_block("README.md", "<!-- skills:table:begin -->"))
     res.check(was_caught_msg(del_tab, "'table'"),
               "table block DELETED entirely -> fails closed (TABLE-loop MarkerError handler)",
-              (del_tab[0][:66] if del_tab else "NOT CAUGHT (clean!)"))
+              del_tab.detail(66))
     # --- 0017: anchoring is ADJACENCY-ONLY (the 0014 uniqueness rule was dropped — it false-positived on an
     #     innocent repeat of an anchor phrase). For EACH of the five sites: RELOCATING the block away from
     #     its lead-in is caught (the block is no longer immediately preceded by its anchor); a legit REPEAT
@@ -962,10 +995,10 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     for site, fname, anchor, bm in ANCHOR_SITES:
         moved = scratch(_relocate(fname, anchor, bm))
         res.check(was_caught(moved), f"anchor '{site}': moving the block away from its lead-in is CAUGHT",
-                  (moved[0][:60] if moved else "NOT CAUGHT (clean!)"))
+                  moved.detail(60))
         repeat = scratch(_repeat_anchor(fname, anchor))
-        res.check(repeat == [], f"anchor '{site}': a legit repeat of the anchor phrase (block in place) is CLEAN",
-                  "; ".join(repeat)[:70] or "clean")
+        res.check(was_clean(repeat), f"anchor '{site}': a legit repeat of the anchor phrase (block in place) is CLEAN",
+                  repeat.detail(70))
 
     # --- 0017: a lead-in reformatted as a BLOCKQUOTE or LIST (anchor intact, still immediately adjacent)
     #     must NOT false-positive the anchor check. _preceding_visible reads the immediately-preceding
@@ -999,19 +1032,19 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     stray_list = "\n".join(f"- {nm}" for nm in ORDER8)
     caught = scratch(repl("README.md", "## Build", "Restated order:\n\n" + stray_list + "\n\n## Build"))
     res.check(was_caught(caught), "stray native Markdown list of all skills is CAUGHT (list aggregation)",
-              (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
+              caught.detail(60))
     # 0017: a run one-name-per-line in a SINGLE paragraph (soft breaks) is caught — _inline_text renders a
     # softbreak as a space (the break->space branch), so the names stay separated and match at boundaries.
     # A mutation sweep found this branch had no fixture; reverting it concatenates the names and misses them.
     softbreak_run = "\n".join(ORDER8)
     caught_sb = scratch(repl("README.md", "## Build", softbreak_run + "\n\n## Build"))
     res.check(was_caught(caught_sb), "a soft-break-separated run (one name per line, one paragraph) is CAUGHT",
-              (caught_sb[0][:60] if caught_sb else "NOT CAUGHT (clean!)"))
+              caught_sb.detail(60))
     # a native list of TWO skills is a legitimate cross-reference, still CLEAN (below threshold).
     ok = scratch(repl("README.md", "## Build",
                       "See also:\n\n- learning-track\n- project-faq\n\n## Build"))
-    res.check(ok == [], "a two-item skill list is NOT flagged (list aggregation respects the threshold)",
-              "; ".join(ok)[:70] or "clean")
+    res.check(was_clean(ok), "a two-item skill list is NOT flagged (list aggregation respects the threshold)",
+              ok.detail(70))
     # --- 0017: the competing scan reads INDENTED code blocks (`code_block` tokens), not just ``` fences.
     #     Every prior fixture used a fence, so the code_block arm was load-bearing but unproven (dropping it
     #     left the suite green — the _table_names guard-a class). Two fixtures isolate it:
@@ -1019,14 +1052,14 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     indented = "\n".join("    " + nm for nm in ORDER8)   # 4-space indent -> a single code_block token
     caught_ind = scratch(repl("README.md", "## Build", "Restated order:\n\n" + indented + "\n\n## Build"))
     res.check(was_caught(caught_ind), "stray INDENTED (code_block) list of all skills is CAUGHT (phase-1 code_block arm)",
-              (caught_ind[0][:60] if caught_ind else "NOT CAUGHT (clean!)"))
+              caught_ind.detail(60))
     #     (b) phase-2: a blockquote with 4 names in a paragraph AND 4 in an indented code block — neither
     #     unit reaches threshold, so only the container aggregation (which must include code_block) catches it.
     bq = ("> " + ", ".join(ORDER8[:4]) + "\n>\n" + "\n".join(">     " + nm for nm in ORDER8[4:]))
     caught_bq = scratch(repl("README.md", "## Build", bq + "\n\n## Build"))
     res.check(was_caught(caught_bq),
               "blockquote split across a paragraph + indented code block is CAUGHT (phase-2 code_block arm)",
-              (caught_bq[0][:60] if caught_bq else "NOT CAUGHT (clean!)"))
+              caught_bq.detail(60))
 
     # --- 0016: a decoy enumeration in a NON-FIRST table column is deliberately NOT checked — any such
     #     check false-positives on a legitimate cross-reference column (a "Handoff" / "Reviewed by" column
@@ -1041,19 +1074,19 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                 lines[i] = f"| **{m.group(1)}** | hands off to {ORDER8[(ri+1) % 8]} |{m.group(3)}"
                 ri += 1
         (t / "README.md").write_text("\n".join(lines), encoding="utf-8")
-    res.check(scratch(_handoff_col) == [],
+    res.check(was_clean(scratch(_handoff_col)),
               "table: a legit cross-reference column naming skills is NOT flagged (stray-names dropped)")
 
     # --- 0014: _competing_run boundaries — look-alike names that merely CONTAIN a skill name as a
     #     substring ("project-faq-notes") are NOT the skills, so a full run of look-alikes stays CLEAN.
     suffixed = "\n".join(f"- {nm}-notes" for nm in ORDER8)
     ok = scratch(repl("README.md", "## Build", "Unrelated notes index:\n\n" + suffixed + "\n\n## Build"))
-    res.check(ok == [], "suffix look-alikes ('name-notes') are NOT a competing run (locks the _R boundary)",
-              "; ".join(ok)[:70] or "clean")
+    res.check(was_clean(ok), "suffix look-alikes ('name-notes') are NOT a competing run (locks the _R boundary)",
+              ok.detail(70))
     prefixed = "\n".join(f"- draft-{nm}" for nm in ORDER8)
     ok = scratch(repl("README.md", "## Build", "Unrelated drafts index:\n\n" + prefixed + "\n\n## Build"))
-    res.check(ok == [], "prefix look-alikes ('draft-name') are NOT a competing run (locks the _L boundary)",
-              "; ".join(ok)[:70] or "clean")
+    res.check(was_clean(ok), "prefix look-alikes ('draft-name') are NOT a competing run (locks the _L boundary)",
+              ok.detail(70))
 
     # ============================ 0015 (round-11 GPT BLOCKERs) ============================
     def _app(fname, extra):
@@ -1086,7 +1119,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(was_caught(scratch(_app("README.md", homoglyph))),
               "competing: Cyrillic-homoglyph names are CAUGHT (confusables fold in _norm)")
     # a two-skill blockquote is a legit cross-reference -> CLEAN (below threshold).
-    res.check(scratch(_app("README.md", "> learning-track\n>\n> project-faq")) == [],
+    res.check(was_clean(scratch(_app("README.md", "> learning-track\n>\n> project-faq"))),
               "competing: a two-skill blockquote is NOT flagged")
 
 
@@ -1104,7 +1137,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     for label, fname, extra in ROUTES:
         caught = scratch(_app(fname, extra))
         res.check(was_caught(caught), f"competing route '{label}' is CAUGHT",
-                  (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
+                  caught.detail(60))
     # FP-SAFETY (the reason aggregation is PER container, not whole-document): legitimate prose that names
     # several skills across SEPARATE lists — the shape a red-team pass flagged as a false positive under
     # whole-file list aggregation — must stay CLEAN.
@@ -1114,19 +1147,19 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         "- How-tos from `usage-guide`\n\nSome prose about the process.\n\n## More types\n\n"
         "- Runbooks from `operations-runbook`\n- Onboarding from `onboarding-companion`\n"
         "- Review from `doc-critic`\n- Publishing from `publish-mirror`"))
-    res.check(legit == [], "legit prose naming skills across SEPARATE lists is NOT flagged (per-container)",
-              "; ".join(legit)[:70] or "clean")
+    res.check(was_clean(legit), "legit prose naming skills across SEPARATE lists is NOT flagged (per-container)",
+              legit.detail(70))
 
     # a genuine 2-row reference table (an OUTSIDE table) is NOT a competing table -> CLEAN.
     ref = scratch(_app("README.md", "| Skill | Note |\n|---|---|\n| learning-track | a |\n| doc-critic | b |"))
-    res.check(ref == [], "a 2-row reference table is NOT flagged as competing",
-              "; ".join(ref)[:70] or "clean")
+    res.check(was_clean(ref), "a 2-row reference table is NOT flagged as competing",
+              ref.detail(70))
 
     # --- a missing skills-order fails closed via load_order's own message.
     no_order = scratch(lambda t: (t / "skills-order").unlink())
     res.check(was_caught_msg(no_order, "skills-order not found"),
               "missing skills-order -> load_order fails closed with its own message",
-              (no_order[0][:60] if no_order else "clean!"))
+              no_order.detail(60))
 
     # a missing governed doc fails closed at each PURE and TABLE site with its own message. A missing PROMPT
     # trips its pick-list (pure) and attach-table (table) not-found; a missing README trips improve-order /
@@ -1135,7 +1168,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     missing = scratch(lambda t: (t / "per-skill-review-prompt.md").unlink())
     res.check(was_caught_msg(missing, "not found (needed for site 'pick-list')"),
               "missing PROMPT -> the pick-list (pure) site fails closed with its own not-found message",
-              (missing[0][:60] if missing else "clean!"))
+              missing.detail(60))
     res.check(was_caught_msg(missing, "not found (needed for site 'attach-table')"),
               "missing PROMPT -> the attach-table (table) site fails closed with its own not-found message")
     delreadme = scratch(lambda t: (t / "README.md").unlink())
@@ -1149,7 +1182,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     empty = scratch(lambda t: (shutil.rmtree(t / "skills"), (t / "skills").mkdir()))
     res.check(was_caught_msg(empty, "no skills found"),
               "empty skills/ -> check() fails closed with its own message (isolated)",
-              (empty[0][:60] if empty else "clean!"))
+              empty.detail(60))
 
     # ============================ 0019 (round-15 GPT BLOCK) ============================
     # A different-vendor cold pass reproduced six coverage gaps; each fixture below reddens the exact
@@ -1185,11 +1218,18 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     # FAIL line, so a phantom "FAIL" printed beside the clean banner passed. Parse COMPLETE lines instead.
     FAIL_PREFIX = "FAIL  skill-enum:"
     BANNER_PREFIX = "--- skill-enumerations: clean ("
-    # The banner's advertised clauses — the user-visible claims main() makes. Pinned so a future edit that
-    # weakens or drops a clause must update this fixture (a success-string over-claim guard).
-    BANNER_CLAUSES = ["every marked enumeration matches skills-order in the parsed Markdown",
-                      "governed docs contain no raw HTML except the comment markers",
-                      "drift-catcher, see CONTRIBUTING for scope"]
+    # The EXACT banner main() must print on a pristine repo, constructed here from this fixture's OWN
+    # inventory (len(ORDER8)), never from the generator — so a corrupted count cannot agree with itself.
+    # 0021 (round-17 BLOCKER-1): the previous form checked `all(clause in banner)`, which proves only that
+    # three byte-strings appear SOMEWHERE in the line. A review reproduced three survivors: `n = 0`
+    # ("clean (0 skills; …)"), a NEGATED clause ("NOT every marked enumeration matches …"), and a
+    # DUPLICATED clause. Exact equality admits none of them — wrong count, inserted negation, added or
+    # repeated text all differ from this string. This repository exists because "a success message
+    # asserted more than the code verified" (CONTRIBUTING), so the success string is pinned exactly.
+    EXPECTED_BANNER = (
+        f"--- skill-enumerations: clean ({len(ORDER8)} skills; every marked enumeration matches "
+        f"skills-order in the parsed Markdown; governed docs contain no raw HTML except the comment "
+        f"markers — drift-catcher, see CONTRIBUTING for scope) ---")
 
     def _cli_lines(out):
         lines = out.splitlines()
@@ -1203,13 +1243,14 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(rc == 1 and len(fails) >= 1 and not banners and not tb,
               "CLI --check on a DRIFTED doc: exit 1 + a real 'FAIL  skill-enum:' line + no banner + no traceback",
               f"exit {rc}; fail_lines={len(fails)}; banner_lines={len(banners)}; traceback={tb}")
-    # (b) PRISTINE: exit 0, NO FAIL line, no traceback, exactly one banner carrying every advertised clause.
+    # (b) PRISTINE: exit 0, NO FAIL line, no traceback, and EXACTLY the expected banner (see above).
     rc0, out0 = _cli_check(None)
     fails0, banners0, tb0 = _cli_lines(out0)
-    clauses_ok = len(banners0) == 1 and all(c in banners0[0] for c in BANNER_CLAUSES)
-    res.check(rc0 == 0 and not fails0 and not tb0 and clauses_ok,
-              "CLI --check on a PRISTINE repo: exit 0 + NO FAIL line + no traceback + one full clean banner",
-              f"exit {rc0}; fail_lines={len(fails0)}; banner_lines={len(banners0)}; clauses_ok={clauses_ok}")
+    banner_exact = len(banners0) == 1 and banners0[0].strip() == EXPECTED_BANNER
+    res.check(rc0 == 0 and not fails0 and not tb0 and banner_exact,
+              "CLI --check on a PRISTINE repo: exit 0 + NO FAIL line + no traceback + the EXACT clean banner",
+              f"exit {rc0}; fail_lines={len(fails0)}; banner_lines={len(banners0)}; exact={banner_exact}"
+              + ("" if banner_exact or not banners0 else f"; got={banners0[0].strip()[:70]!r}"))
     # (c) PARSER MISSING: main()'s `except MarkerError` verdict path — exit 1, the specific fail-closed
     #     message, no clean banner, no traceback. Reverting that arm's `return 1` to 0 reddens here.
     rcp, outp = _cli_check(None, shadow_import_error=True)
@@ -1227,7 +1268,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     caught_hb = scratch(repl("README.md", "## Build", hardbreak_run + "\n\n## Build"))
     res.check(was_caught(caught_hb),
               "a HARD-break-separated run (two trailing spaces per line) is CAUGHT (hardbreak arm)",
-              (caught_hb[0][:60] if caught_hb else "NOT CAUGHT (clean!)"))
+              caught_hb.detail(60))
 
     # --- 0020 MAJOR-6: the producers' declared FILTERING semantics were unlocked — only their file
     #     dependency was. load_order promises to skip blank lines and '#' comments; canonical_skills
@@ -1240,10 +1281,21 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     for nm in ORDER8:
         (lo2 / "skills" / nm).mkdir()
         (lo2 / "skills" / nm / "SKILL.md").write_text("x", encoding="utf-8")
+    # 0021 (round-17 MAJOR-3): the round-16 fixture used only COLUMN-ZERO comments and GENUINELY EMPTY
+    # blank lines, so a regression to `if ln and not ln.startswith("#")` — dropping the whitespace
+    # normalisation while keeping both predicates — stayed green, yet would read an INDENTED comment and a
+    # WHITESPACE-ONLY line as skill names. The fixture now carries both shapes, so the contract
+    # ("skip blank lines and # comments", whitespace-normalised) is locked rather than one formatting of it.
     (lo2 / "skills-order").write_text(
-        "# a leading comment\n\n" + ORDER8[0] + "\n\n"          # blank lines around an entry
+        "# a leading comment\n"
+        "   # an INDENTED comment (spaces)\n"
+        "\t# an INDENTED comment (tab)\n"
+        "\n"                                                     # genuinely empty line
+        "   \n"                                                  # WHITESPACE-ONLY line
+        "\t\n"                                                   # TAB-ONLY line
+        + ORDER8[0] + "\n\n"
         + "  " + ORDER8[1] + "  \n"                              # leading/trailing whitespace
-        + "\n".join(ORDER8[2:]) + "\n\n# a trailing comment\n", encoding="utf-8")
+        + "\n".join(ORDER8[2:]) + "\n   \n# a trailing comment\n", encoding="utf-8")
     got2, errs2 = g.load_order(lo2, set(ORDER8))
     res.check(got2 == ORDER8 and errs2 == [],
               "load_order skips comments/blank lines and strips whitespace (exact order, no empty entry)",
@@ -1257,9 +1309,9 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         d.mkdir()
         (d / "README.md").write_text("a helper directory, not a skill\n", encoding="utf-8")
     non_skill = scratch(_add_non_skill_dir)
-    res.check(non_skill == [],
+    res.check(was_clean(non_skill),
               "canonical_skills ignores a skills/ dir without SKILL.md (helper dir -> still CLEAN)",
-              "; ".join(non_skill)[:70] or "clean")
+              non_skill.detail(70))
 
     # --- MAJOR-3: the source-of-truth PRODUCERS (load_order, canonical_skills) were only checked against
     #     today's output; their dependency on the source FILES was not locked.
@@ -1269,7 +1321,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                               "architecture-and-decisions\nlearning-track"))
     res.check(was_caught(order_swap),
               "load_order reads skills-order: swapping two order lines (docs unchanged) is CAUGHT",
-              (order_swap[0][:56] if order_swap else "NOT CAUGHT (clean!)"))
+              order_swap.detail(56))
     #       unit: the returned order is EXACTLY the file's order (a hardcoded list would ignore the file).
     lo_tmp = Path(tempfile.mkdtemp(prefix="loadorder-"))
     (lo_tmp / "skills").mkdir()
@@ -1293,11 +1345,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     new_skill = scratch(_add_undeclared_skill)
     res.check(was_caught_msg(new_skill, "fixture-new-skill"),
               "canonical_skills reads skills/: a new skill dir absent from skills-order is reported (missing)",
-              (new_skill[0][:56] if new_skill else "NOT CAUGHT (clean!)"))
+              new_skill.detail(56))
     extra_dir = scratch(lambda t: shutil.rmtree(t / "skills" / "doc-critic"))
     res.check(was_caught_msg(extra_dir, "doc-critic"),
               "canonical_skills reads skills/: removing a skill dir (order entry kept) is reported (extra)",
-              (extra_dir[0][:56] if extra_dir else "NOT CAUGHT (clean!)"))
+              extra_dir.detail(56))
 
     # --- MAJOR-4a: the raw-HTML ban scans BOTH governed files, but every raw-HTML fixture above mutates
     #     only README, so dropping PROMPT from the ban loop stayed green. Data-drive the four raw-HTML
@@ -1313,7 +1365,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             caught = scratch(_append(fname, decoy))
             res.check(was_caught(caught),
                       f"raw-HTML ban: {label} in {fname} is CAUGHT (document-wide, both files)",
-                      (caught[0][:56] if caught else "NOT CAUGHT (clean!)"))
+                      caught.detail(56))
 
     # --- MAJOR-4b: the marker allowlist is derived from the FIVE current site ids; the count sites were
     #     retired this round, so a standalone RETIRED marker comment must now be REJECTED as raw HTML. No
@@ -1323,7 +1375,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         caught = scratch(_append("README.md", retired))
         res.check(was_caught(caught),
                   f"retired marker {retired} is REJECTED as raw HTML (not in the current allowlist)",
-                  (caught[0][:56] if caught else "NOT CAUGHT (clean!)"))
+                  caught.detail(56))
 
     # --- MAJOR-5: the anchor contract permits a HEADING lead-in and promises NORMALIZED matching, but no
     #     fixture exercised the heading arm or either _norm call site in _preceding_visible — dropping
