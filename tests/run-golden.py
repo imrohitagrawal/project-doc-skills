@@ -621,7 +621,8 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     g = _load("genenum", GEN)
     order = ["alpha", "beta", "gamma"]
 
-    # 1. Renderers + validate_order + count phrases (incl. the bolded form the raw \w+ regex missed).
+    # 1. Renderers + validate_order (the scalar count phrases were dropped in gate-reviews/0018; this
+    #    section locks the renderers and the order-permutation validator only).
     res.check(g.render_improve_order(order) == "**alpha → beta → gamma.**", "render improve-order")
     res.check(g.render_pick_list(order) == "`alpha · beta · gamma`", "render pick-list")
     res.check(g.render_tree(order) == "```\nskills/\n├─ alpha/\n├─ beta/\n└─ gamma/\n```", "render tree")
@@ -671,16 +672,22 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
               "_norm: fullwidth (NFKC compatibility) letters fold to ASCII")
 
     # FAIL-CLOSED unit-lock (backs a battery guard a source mutation alone cannot prove end to end): an
-    # ABSENT parser must fail closed with its own message rather than silently pass.
+    # ABSENT parser must fail closed with its OWN MarkerError message. 0019: catch ANY exception and assert
+    # the type+message, NOT just `except MarkerError`. If _md's `raise MarkerError` is reverted to a no-op,
+    # _md() returns `None("commonmark")` -> TypeError; a bare `except MarkerError` would let that escape and
+    # ABORT the whole suite (a crash), which the revert battery's finding-branch sweep must NOT count as a
+    # bite. Catching Exception turns that no-op revert into a reddening ASSERTION here (crash -> RED).
     saved_md = g.MarkdownIt
     try:
         g.MarkdownIt = None
-        raised = False
+        err = None
         try:
             g.check(ROOT)
-        except g.MarkerError:
-            raised = True
-        res.check(raised, "absent parser (MarkdownIt=None) -> check() fails closed with MarkerError")
+        except Exception as e:   # noqa: BLE001 — deliberately broad; see the comment above
+            err = e
+        ok = isinstance(err, g.MarkerError) and "markdown-it-py is not installed" in str(err)
+        res.check(ok, "absent parser (MarkdownIt=None) -> check() fails closed with MarkerError",
+                  f"raised {type(err).__name__}" if err is not None else "did not raise")
     finally:
         g.MarkdownIt = saved_md
 
@@ -707,9 +714,26 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         if mutate:
             mutate(tmp)
         gg = _load("gg", tmp / "generate-skill-enumerations.py")
-        f = gg.check(tmp)
+        try:
+            f = gg.check(tmp)
+        except Exception as e:   # noqa: BLE001 — 0019: a mutated generator whose fail-closed raise was
+            # reverted can leave a downstream IndexError (an absent-marker input no longer short-circuits);
+            # surface it as a FINDING so it reddens an ASSERTION here instead of aborting the whole suite.
+            # The revert battery's finding-branch sweep requires a RED (assertion) bite, not a crash, so a
+            # suite-aborting exception would otherwise be miscounted as 'covered'. check() never raises on
+            # the pristine generator, so this changes nothing for the live suite.
+            f = [f"check() raised {type(e).__name__}: {e}"]
         shutil.rmtree(tmp, ignore_errors=True)
         return f
+
+    def genuine(findings):
+        """A decoy/drift fixture is CAUGHT only by a real finding — NOT by the crash sentinel scratch()
+        emits when a mutated generator raises (0019, a red-team finding). Without this, the broad
+        `except` above would let a future edit that turns a proper catch into an unhandled exception pass a
+        bare `len(f) >= 1` assertion silently — the "goes green when it shouldn't" anti-pattern this suite
+        exists to prevent. Substring-guarded (`any("x" in f)`) and negative (`== []`) fixtures already
+        reject the sentinel; this closes the bare-count ones."""
+        return len(findings) >= 1 and not any(str(x).startswith("check() raised") for x in findings)
 
     def repl(rel, a, b):
         return lambda t: (t / rel).write_text((t / rel).read_text(encoding="utf-8").replace(a, b),
@@ -830,7 +854,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     ]
     for name, mut in cases:
         f = scratch(mut)
-        res.check(len(f) >= 1, f"real-docs scratch: {name} -> caught",
+        res.check(genuine(f), f"real-docs scratch: {name} -> caught",
                   (f[0][:66] if f else "NOT CAUGHT (clean!)"))
 
     # 0013 NEGATIVE cases — false positives the round-9 review reproduced must stay CLEAN. Each is ordinary,
@@ -873,11 +897,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             (t / fname).write_text(txt[:b] + txt[e:], encoding="utf-8")
         return m
     del_imp = scratch(_delete_block("README.md", "<!-- skills:improve-order:begin -->"))
-    res.check(len(del_imp) >= 1 and any("improve-order" in f for f in del_imp),
+    res.check(genuine(del_imp) and any("improve-order" in f for f in del_imp),
               "improve-order block DELETED entirely -> fails closed (PURE-loop MarkerError handler)",
               (del_imp[0][:66] if del_imp else "NOT CAUGHT (clean!)"))
     del_tab = scratch(_delete_block("README.md", "<!-- skills:table:begin -->"))
-    res.check(len(del_tab) >= 1 and any("'table'" in f for f in del_tab),
+    res.check(genuine(del_tab) and any("'table'" in f for f in del_tab),
               "table block DELETED entirely -> fails closed (TABLE-loop MarkerError handler)",
               (del_tab[0][:66] if del_tab else "NOT CAUGHT (clean!)"))
     # --- 0017: anchoring is ADJACENCY-ONLY (the 0014 uniqueness rule was dropped — it false-positived on an
@@ -916,7 +940,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             + f"\n\n## Notes\n\nFor context, {anchor} — see the section above.\n", encoding="utf-8")
     for site, fname, anchor, bm in ANCHOR_SITES:
         moved = scratch(_relocate(fname, anchor, bm))
-        res.check(len(moved) >= 1, f"anchor '{site}': moving the block away from its lead-in is CAUGHT",
+        res.check(genuine(moved), f"anchor '{site}': moving the block away from its lead-in is CAUGHT",
                   (moved[0][:60] if moved else "NOT CAUGHT (clean!)"))
         repeat = scratch(_repeat_anchor(fname, anchor))
         res.check(repeat == [], f"anchor '{site}': a legit repeat of the anchor phrase (block in place) is CLEAN",
@@ -953,14 +977,14 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #     must be AGGREGATED across items — no single item reaches threshold, so a per-token check misses it.
     stray_list = "\n".join(f"- {nm}" for nm in ORDER8)
     caught = scratch(repl("README.md", "## Build", "Restated order:\n\n" + stray_list + "\n\n## Build"))
-    res.check(len(caught) >= 1, "stray native Markdown list of all skills is CAUGHT (list aggregation)",
+    res.check(genuine(caught), "stray native Markdown list of all skills is CAUGHT (list aggregation)",
               (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
     # 0017: a run one-name-per-line in a SINGLE paragraph (soft breaks) is caught — _inline_text renders a
     # softbreak as a space (the break->space branch), so the names stay separated and match at boundaries.
     # A mutation sweep found this branch had no fixture; reverting it concatenates the names and misses them.
     softbreak_run = "\n".join(ORDER8)
     caught_sb = scratch(repl("README.md", "## Build", softbreak_run + "\n\n## Build"))
-    res.check(len(caught_sb) >= 1, "a soft-break-separated run (one name per line, one paragraph) is CAUGHT",
+    res.check(genuine(caught_sb), "a soft-break-separated run (one name per line, one paragraph) is CAUGHT",
               (caught_sb[0][:60] if caught_sb else "NOT CAUGHT (clean!)"))
     # a native list of TWO skills is a legitimate cross-reference, still CLEAN (below threshold).
     ok = scratch(repl("README.md", "## Build",
@@ -973,13 +997,13 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #     (a) phase-1: a top-level 4-space indented block of all 8 names is one code_block -> CAUGHT.
     indented = "\n".join("    " + nm for nm in ORDER8)   # 4-space indent -> a single code_block token
     caught_ind = scratch(repl("README.md", "## Build", "Restated order:\n\n" + indented + "\n\n## Build"))
-    res.check(len(caught_ind) >= 1, "stray INDENTED (code_block) list of all skills is CAUGHT (phase-1 code_block arm)",
+    res.check(genuine(caught_ind), "stray INDENTED (code_block) list of all skills is CAUGHT (phase-1 code_block arm)",
               (caught_ind[0][:60] if caught_ind else "NOT CAUGHT (clean!)"))
     #     (b) phase-2: a blockquote with 4 names in a paragraph AND 4 in an indented code block — neither
     #     unit reaches threshold, so only the container aggregation (which must include code_block) catches it.
     bq = ("> " + ", ".join(ORDER8[:4]) + "\n>\n" + "\n".join(">     " + nm for nm in ORDER8[4:]))
     caught_bq = scratch(repl("README.md", "## Build", bq + "\n\n## Build"))
-    res.check(len(caught_bq) >= 1,
+    res.check(genuine(caught_bq),
               "blockquote split across a paragraph + indented code block is CAUGHT (phase-2 code_block arm)",
               (caught_bq[0][:60] if caught_bq else "NOT CAUGHT (clean!)"))
 
@@ -1058,7 +1082,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     ]
     for label, fname, extra in ROUTES:
         caught = scratch(_app(fname, extra))
-        res.check(len(caught) >= 1, f"competing route '{label}' is CAUGHT",
+        res.check(genuine(caught), f"competing route '{label}' is CAUGHT",
                   (caught[0][:60] if caught else "NOT CAUGHT (clean!)"))
     # FP-SAFETY (the reason aggregation is PER container, not whole-document): legitimate prose that names
     # several skills across SEPARATE lists — the shape a red-team pass flagged as a false positive under
@@ -1105,6 +1129,114 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     res.check(any("no skills found" in x for x in empty),
               "empty skills/ -> check() fails closed with its own message (isolated)",
               (empty[0][:60] if empty else "clean!"))
+
+    # ============================ 0019 (round-15 GPT BLOCK) ============================
+    # A different-vendor cold pass reproduced six coverage gaps; each fixture below reddens the exact
+    # revert it names, and its matching revert-battery mutant is bound to it by name (expect_fx).
+
+    # --- BLOCKER-1: the CLI VERDICT PATH. main()'s `if findings:` (and its `return 1`) is the ONLY thing
+    #     between a drifted doc and a clean-banner exit 0. The scratch fixtures call check() directly and
+    #     never exercise main, so reverting `if findings:` passed unseen. Drive the REAL binary end-to-end
+    #     on a DRIFTED repo and assert all three: nonzero exit, a FAIL diagnostic, and NO clean banner.
+    def _cli_check(mutate):
+        tmp = Path(tempfile.mkdtemp(prefix="genenum-cli-"))
+        for rel in ["README.md", "per-skill-review-prompt.md", "skills-order",
+                    "generate-skill-enumerations.py"]:
+            shutil.copy(ROOT / rel, tmp / rel)
+        shutil.copytree(ROOT / "skills", tmp / "skills")
+        if mutate:
+            mutate(tmp)
+        p = subprocess.run([sys.executable, str(tmp / "generate-skill-enumerations.py"),
+                            str(tmp), "--check"], capture_output=True, text=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return p.returncode, (p.stdout + p.stderr)
+    rc, out = _cli_check(repl("README.md", "→ publish-mirror.**", ".**"))
+    low = out.lower()
+    res.check(rc != 0 and "fail" in low and "clean (" not in low,
+              "CLI --check on a DRIFTED doc: nonzero exit + FAIL diagnostic + NO clean banner",
+              f"exit {rc}; clean_banner={'clean (' in low}; fail={'fail' in low}")
+    rc0, out0 = _cli_check(None)
+    res.check(rc0 == 0 and "clean (" in out0.lower(),
+              "CLI --check on a PRISTINE scratch repo: exit 0 + clean banner", f"exit {rc0}")
+
+    # --- MAJOR-3: the source-of-truth PRODUCERS (load_order, canonical_skills) were only checked against
+    #     today's output; their dependency on the source FILES was not locked.
+    #   (a) load_order READS skills-order: swap two order lines (docs unchanged) -> the regenerated
+    #       enumerations no longer match the docs -> CAUGHT. Bites a mutant that hardcodes the order.
+    order_swap = scratch(repl("skills-order", "learning-track\narchitecture-and-decisions",
+                              "architecture-and-decisions\nlearning-track"))
+    res.check(genuine(order_swap),
+              "load_order reads skills-order: swapping two order lines (docs unchanged) is CAUGHT",
+              (order_swap[0][:56] if order_swap else "NOT CAUGHT (clean!)"))
+    #       unit: the returned order is EXACTLY the file's order (a hardcoded list would ignore the file).
+    lo_tmp = Path(tempfile.mkdtemp(prefix="loadorder-"))
+    (lo_tmp / "skills").mkdir()
+    for nm in ORDER8:
+        (lo_tmp / "skills" / nm).mkdir()
+        (lo_tmp / "skills" / nm / "SKILL.md").write_text("x", encoding="utf-8")
+    reordered = list(reversed(ORDER8))
+    (lo_tmp / "skills-order").write_text("\n".join(reordered) + "\n", encoding="utf-8")
+    got_order, got_errs = g.load_order(lo_tmp, set(ORDER8))
+    res.check(got_order == reordered and got_errs == [],
+              "load_order returns skills-order's exact order (not a hardcoded list)",
+              f"{got_order[:2]}… errs={got_errs}")
+    shutil.rmtree(lo_tmp, ignore_errors=True)
+    #   (b) canonical_skills READS skills/: a new skill DIR absent from skills-order is reported (missing),
+    #       and removing a dir while keeping its order entry is reported (extra). validate_order cannot
+    #       discover a dir canonical_skills silently omits, so this is NOT covered by validate_order's stub.
+    def _add_undeclared_skill(t):
+        d = t / "skills" / "fixture-new-skill"
+        d.mkdir()
+        (d / "SKILL.md").write_text("# fixture-new-skill\n", encoding="utf-8")
+    new_skill = scratch(_add_undeclared_skill)
+    res.check(any("fixture-new-skill" in f for f in new_skill),
+              "canonical_skills reads skills/: a new skill dir absent from skills-order is reported (missing)",
+              (new_skill[0][:56] if new_skill else "NOT CAUGHT (clean!)"))
+    extra_dir = scratch(lambda t: shutil.rmtree(t / "skills" / "doc-critic"))
+    res.check(any("doc-critic" in f for f in extra_dir),
+              "canonical_skills reads skills/: removing a skill dir (order entry kept) is reported (extra)",
+              (extra_dir[0][:56] if extra_dir else "NOT CAUGHT (clean!)"))
+
+    # --- MAJOR-4a: the raw-HTML ban scans BOTH governed files, but every raw-HTML fixture above mutates
+    #     only README, so dropping PROMPT from the ban loop stayed green. Data-drive the four raw-HTML
+    #     classes over BOTH files so the document-wide ban is proven per-file.
+    RAW_DECOYS = [
+        ("raw <div> block", "<div>ordinary note</div>"),
+        ("inline <span> HTML", "A note with an <span>inline</span> tag."),
+        ("inline image", "A note with an image ![alt text](diagram.png) inline."),
+        ("arbitrary HTML comment", "<!-- a maintainer note -->"),
+    ]
+    for fname in ("README.md", "per-skill-review-prompt.md"):
+        for label, decoy in RAW_DECOYS:
+            caught = scratch(_append(fname, decoy))
+            res.check(genuine(caught),
+                      f"raw-HTML ban: {label} in {fname} is CAUGHT (document-wide, both files)",
+                      (caught[0][:56] if caught else "NOT CAUGHT (clean!)"))
+
+    # --- MAJOR-4b: the marker allowlist is derived from the FIVE current site ids; the count sites were
+    #     retired this round, so a standalone RETIRED marker comment must now be REJECTED as raw HTML. No
+    #     fixture locked this, so re-adding those ids to the allowlist stayed green.
+    for retired in ("<!-- skills:count-suite:begin -->", "<!-- skills:count-suite:end -->",
+                    "<!-- skills:count-nskill:begin -->", "<!-- skills:count-nskill:end -->"):
+        caught = scratch(_append("README.md", retired))
+        res.check(genuine(caught),
+                  f"retired marker {retired} is REJECTED as raw HTML (not in the current allowlist)",
+                  (caught[0][:56] if caught else "NOT CAUGHT (clean!)"))
+
+    # --- MAJOR-5: the anchor contract permits a HEADING lead-in and promises NORMALIZED matching, but no
+    #     fixture exercised the heading arm or either _norm call site in _preceding_visible — dropping
+    #     "heading_close" or a _norm wrapper stayed green. Lock the heading arm and normalized paragraph +
+    #     container lead-ins (uppercase casefold + a soft-hyphen Cf char + a Cyrillic homoglyph).
+    res.check(_anchor_found(f"## Improve them {A_IMP}"),
+              "anchor: a HEADING lead-in is recognized (heading arm)")
+    A_NORM = A_IMP.upper().replace("O", "О")             # casefold + Cyrillic-О (U+041E) homoglyph
+    A_NORM = A_NORM.replace("ОRDER", "ОR­DER", 1)   # + a soft hyphen (Cf) inside "ORDER"
+    res.check(g._norm(A_NORM) == g._norm(A_IMP),
+              "anchor: the normalized lead-in variant folds to the plain anchor (fixture sanity)")
+    res.check(_anchor_found(f"Improve them {A_NORM}:"),
+              "anchor: a NORMALIZED paragraph lead-in (uppercase + Cf + homoglyph) is recognized (paragraph _norm)")
+    res.check(_anchor_found(f"> Improve them {A_NORM}:"),
+              "anchor: a NORMALIZED blockquote lead-in is recognized (container _norm)")
 
     # 3. Self-inclusion + live docs pass the CLI.
     grc = _load("grc_si", GATE_REVIEW_CHECK)

@@ -164,34 +164,99 @@ def _sub(old: str, new: str):
     return apply
 
 
+def _returned_names(fn: ast.FunctionDef) -> set[str]:
+    """The local names a function hands back as its verdict: a bare `return NAME` or a NAME element of a
+    returned tuple (e.g. load_order's `return [], errs` -> {errs}). Used to keep the finding-branch
+    inventory SEMANTIC — an accumulator counts only if the function RETURNS it."""
+    names: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Return) and node.value is not None:
+            v = node.value
+            if isinstance(v, ast.Name):
+                names.add(v.id)
+            elif isinstance(v, ast.Tuple):
+                names.update(e.id for e in v.elts if isinstance(e, ast.Name))
+    return names
+
+
 def _finding_branches(src: str):
-    """Every finding-EMITTING statement in the generator — findings/errs/out `.append(...)` and
-    `raise MarkerError(...)` — as (label, patch) where the patch neuters that ONE statement with `pass`.
-    The curated GUARDS above prove each NAMED branch bites; this sweep proves EXHAUSTIVELY that NO
-    finding-branch is a silent no-op-revert (the guard-a class). It is committed (gate-reviews/0018) so this
-    is a durable part of the battery, not an unrepeatable pre-ship run a GPT review flagged."""
+    """Every finding-EMITTING statement in the generator — a `raise MarkerError(...)`, or an
+    `accumulator.append(...)` where the ENCLOSING function RETURNS that accumulator as its verdict — as
+    (label, patch) where the patch neuters that ONE statement with `pass`. The curated GUARDS above prove
+    each NAMED branch bites; this sweep proves EXHAUSTIVELY that NO finding-branch is a silent no-op-revert
+    (the guard-a class). It is committed (gate-reviews/0018) so this is a durable part of the battery.
+
+    SEMANTIC inventory (gate-reviews/0019). An append counts ONLY when BOTH hold: (i) the accumulator is one
+    of the codebase's FINDINGS accumulators — named `findings` / `errs` / `out` (the exact set
+    `_finding_producers` keys on), which hold verdict STRINGS; AND (ii) the enclosing function RETURNS that
+    accumulator by name. Condition (ii) excludes `_inline_text`, which appends to a local `out` but RETURNS
+    `"".join(out)` (a string, not the list) — its two DATA appends are not finding-branches, and neutering
+    them reddens golden for an unrelated reason (all rendered text emptied). Condition (i) excludes returned
+    DATA lists that are not findings — `_table_names` returns `names`, `_table_cells` returns `rows` — which
+    (ii) alone would wrongly admit. Together they leave the denominator holding real verdicts only, which the
+    sweep's RED requirement (below) needs to stay honest. Raises of MarkerError are always verdicts and are
+    always included. NOTE: this sweep covers append + raise statements, which can be safely neutered to
+    `pass`; a finding-emitting RETURN (`return findings` / `if errs: return errs` / the empty-skills return
+    literal) cannot be pass-neutered without returning None and crashing its callers, so those are covered
+    by curated GUARDS with explicit benign-value reverts, not by this sweep (gate-reviews/0019)."""
     tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    returns = {fn: _returned_names(fn) for fn in funcs}
+    FINDING_ACCUMS = ("findings", "errs", "out")
+
+    def enclosing(line: int) -> ast.FunctionDef | None:
+        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
+        return max(cands, key=lambda fn: fn.lineno) if cands else None   # innermost
+
     spans = []
-    class V(ast.NodeVisitor):
-        def visit_Call(self, node):
-            f = node.func
-            if (isinstance(f, ast.Attribute) and f.attr == "append"
-                    and isinstance(f.value, ast.Name) and f.value.id in ("findings", "errs", "out")):
-                spans.append((node.lineno, node.end_lineno, f"{f.value.id}.append @L{node.lineno}"))
-            self.generic_visit(node)
-        def visit_Raise(self, node):
-            if "MarkerError" in (ast.get_source_segment(src, node) or ""):
-                spans.append((node.lineno, node.end_lineno, f"raise MarkerError @L{node.lineno}"))
-            self.generic_visit(node)
-    V().visit(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
+                and node.func.value.id in FINDING_ACCUMS:
+            fn = enclosing(node.lineno)
+            if fn is not None and node.func.value.id in returns[fn]:   # returned by name = a verdict list
+                spans.append((node.lineno, node.end_lineno,
+                              f"{node.func.value.id}.append @L{node.lineno}"))
+        elif isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
+            spans.append((node.lineno, node.end_lineno, f"raise MarkerError @L{node.lineno}"))
     out = []
-    for lo, hi, label in spans:
+    for lo, hi, label in sorted(spans):
         def patch(s, lo=lo, hi=hi):
             ls = s.split("\n")
             indent = len(ls[lo - 1]) - len(ls[lo - 1].lstrip())
             return "\n".join(ls[:lo - 1] + [" " * indent + "pass  # MUTATED"] + ls[hi:])
         out.append((label, patch))
     return out
+
+
+def _branch_functions(src: str) -> set[str]:
+    """The set of function names that OWN at least one inventoried finding-branch — for the oracle
+    self-test that _inline_text (data appends) is excluded and check() (verdict appends) is included."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+
+    def enclosing(line: int):
+        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
+        return max(cands, key=lambda fn: fn.lineno).name if cands else "?"
+    return {enclosing(int(lab.split("@L")[1])) for lab, _ in _finding_branches(src)}
+
+
+def _appends_to_finding_accum(src: str) -> set[str]:
+    """Every function that appends to a findings accumulator (a Name in {findings, errs, out}) — the
+    SUPERSET of the sweep's verdict-append functions PLUS the data-append exceptions (_inline_text appends
+    to `out`). The oracle asserts each of these is EITHER inventoried by the sweep OR an explicit
+    DATA_APPEND exception, so a return-wrapping refactor that quietly drops a verdict function from the
+    sweep (condition (ii) unmet — a red-team finding, gate-reviews/0019) is caught."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+    hits: set[str] = set()
+    for fn in funcs:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
+                    and node.func.value.id in ("findings", "errs", "out"):
+                hits.add(fn.name)
+    return hits
 
 
 # (name, stub, covers, expectation, expect_fx). `covers` must be EXACTLY the syntactic units the stub
@@ -350,6 +415,69 @@ GUARDS: list[tuple] = [
     ("renderer: pick-list bytes", _stub("render_pick_list", '"decoy"'), ("render_pick_list",), "RED",
      BASELINE_FX),
     ("renderer: tree body bytes", _stub("_tree_body", '"decoy"'), ("_tree_body",), "RED", BASELINE_FX),
+    # ============================ 0019 (round-15 GPT BLOCK) ============================
+    # Each mutant is bound (expect_fx) to the golden fixture that must redden and touches EXACTLY its
+    # declared unit (verified by _units_touched). Every break-test below was reproduced at HEAD.
+    # BLOCKER-2 completeness: the finding-branch SWEEP safely pass-neuters only appends + raises (a
+    # finding-emitting RETURN cannot be pass-neutered without returning None and crashing its callers), so
+    # the two finding-RETURN branches that lack a curated stub are covered here (the empty-skills return
+    # literal is covered by the `if not canonical:` guard above). Each reverts the RETURN to a benign value.
+    ("check: validation errors are forwarded (if errs: return errs)",
+     _sub("    if errs:\n        return errs\n", "    if errs:\n        pass\n"),
+     ("check",), "RED", "a new skill dir absent from skills-order is reported"),
+    ("check: the final verdict returns the findings (not always-clean)",
+     _sub("    return findings\n", "    return []\n"),
+     ("check",), "RED", "drift improve-order"),
+    # BLOCKER-1: the CLI VERDICT PATH (main). `if findings:` and its `return 1` are all that separate a
+    # drifted doc from a clean-banner exit 0; the scratch (check()-direct) fixtures never exercised main.
+    ("cli: findings gate the exit code + banner",
+     _sub("    if findings:\n", "    if False and findings:\n"), ("main",), "RED",
+     "CLI --check on a DRIFTED doc"),
+    ("cli: the findings branch exits nonzero",
+     _sub("        return 1\n    n = len(canonical_skills(root))",
+          "        return 0\n    n = len(canonical_skills(root))"), ("main",), "RED",
+     "CLI --check on a DRIFTED doc"),
+    # MAJOR-3: the source-of-truth PRODUCERS must READ their files, not just reproduce today's output.
+    ("source: load_order READS skills-order (not a hardcoded order)",
+     _sub('    order = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines()\n'
+          '             if ln.strip() and not ln.strip().startswith("#")]',
+          '    order = ["learning-track", "architecture-and-decisions", "project-faq", "usage-guide", '
+          '"operations-runbook", "onboarding-companion", "doc-critic", "publish-mirror"]'),
+     ("load_order",), "RED", "swapping two order lines"),
+    ("source: canonical_skills READS skills/ (a new dir must surface)",
+     _sub('    return {p.name for p in sk.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()}',
+          '    return {p.name for p in sk.iterdir() if p.is_dir() and (p / "SKILL.md").is_file() '
+          'and p.name != "fixture-new-skill"}'),
+     ("canonical_skills",), "RED", "a new skill dir absent from skills-order is reported"),
+    # MAJOR-4a: the raw-HTML ban scans BOTH governed files. Dropping PROMPT stayed green (every decoy was
+    # in README). Bound to the PROMPT-side data-driven fixtures.
+    ("raw HTML: ban scans BOTH governed files (not just README)",
+     _sub("    for fname in (README, PROMPT):\n        if fname in tokens:\n"
+          "            stray = _stray_html_block(tokens[fname])",
+          "    for fname in (README,):\n        if fname in tokens:\n"
+          "            stray = _stray_html_block(tokens[fname])"),
+     ("check",), "RED", "in per-skill-review-prompt.md is CAUGHT"),
+    # MAJOR-4b: the marker allowlist is EXACTLY the five CURRENT site ids; re-adding the retired count ids
+    # must not be silently accepted. Bound to the retired-marker fixtures.
+    ("marker allowlist: exactly the five CURRENT site ids (retired ids rejected)",
+     _sub("    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES]:",
+          "    for site_id in [s[0] for s in PURE_SITES] + [s[0] for s in TABLE_SITES] "
+          "+ ['count-suite', 'count-nskill']:"),
+     ("_allowed_marker_comments",), "RED", "retired marker <!-- skills:count-suite:begin -->"),
+    # MAJOR-5: _preceding_visible's HEADING arm and its two _norm call sites were unproven (only paragraph /
+    # blockquote / list lead-ins, all lowercase-ASCII, were exercised). Three isolated mutants, each bound
+    # to its heading / normalized lead-in fixture.
+    ("anchor: heading lead-in arm",
+     _sub('prev.type in ("paragraph_close", "heading_close")', 'prev.type in ("paragraph_close",)'),
+     ("_preceding_visible",), "RED", "a HEADING lead-in is recognized"),
+    ("anchor: _norm on the paragraph/heading arm",
+     _sub("return _norm(_inline_text(tokens[begin_idx - 2]))",
+          "return _inline_text(tokens[begin_idx - 2])"),
+     ("_preceding_visible",), "RED", "NORMALIZED paragraph lead-in"),
+    ("anchor: _norm on the container arm",
+     _sub('return _norm(" ".join(_inline_text(t) for t in tokens[start:begin_idx] if t.type == "inline"))',
+          'return " ".join(_inline_text(t) for t in tokens[start:begin_idx] if t.type == "inline")'),
+     ("_preceding_visible",), "RED", "NORMALIZED blockquote lead-in"),
 ]
 
 # Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is
@@ -357,18 +485,21 @@ GUARDS: list[tuple] = [
 # every function on the verdict path must be a stub target OR a reasoned exemption).
 NON_GUARD = {
     "_inline_text": "accumulates rendered text; a revert is proven transitively by every check that reads "
-                    "it (e.g. stubbing it empties all text, reddening the baseline) — data, not a verdict",
+                    "it (e.g. stubbing it empties all text, reddening the baseline) — data, not a verdict. "
+                    "It appends to a local `out` but RETURNS ''.join(out), so the finding-branch sweep's "
+                    "semantic inventory (gate-reviews/0019) correctly excludes those DATA appends",
     "_read": "reads a governed doc; a missing/unreadable doc is caught by check()'s per-site 'not found' "
              "guard (its own stubs), not here",
     "_canon_markers": "constructs a site's (begin,end) marker strings from its id — pure formatting",
-    "_allowed_marker_comments": "returns the marker allowlist derived from the site registries; its "
-                                "content is exercised by the marker-identity stub on _marker_only_html_block",
-    "canonical_skills": "derives the skill SET from skills/; an empty result is caught by check()'s "
-                        "fail-closed guard and a wrong set by validate_order — both separately stubbed",
-    "_md": "fail-closed on a MISSING parser is proven by a golden fixture (MarkdownIt=None), NOT by a "
-           "source mutation — stubbing _md=None crashes downstream, which the battery correctly refuses "
-           "to count as a bite (a crash is not an assertion catch)",
-    "main": "CLI exit-code plumbing; the verdict comes from check()",
+    "_md": "fail-closed on a MISSING parser: its `raise MarkerError` branch is proven by the golden "
+           "absent-parser fixture, which now catches ANY exception and asserts the MarkerError type+message "
+           "(gate-reviews/0019), so neutering the raise reddens as an ASSERTION (was a suite-aborting crash "
+           "the sweep wrongly accepted). The function as a whole is not source-stubbed — stubbing _md=None "
+           "crashes downstream, which is not an assertion catch",
+    "render_tree": "wraps _tree_body in a fenced block for the WRITER (write); check() compares _tree_body "
+                   "DIRECTLY (its own stub), so the gate verdict does not depend on render_tree",
+    "write": "dev-convenience: fills the three pure blocks in place from skills-order. NOT a verdict — the "
+             "gate is check(), which re-verifies whatever write produced. Reachable only from main",
 }
 
 
@@ -512,9 +643,11 @@ def main() -> int:
     gen_src = (ROOT / GEN).read_text(encoding="utf-8")
     producers = _finding_producers(gen_src)
     # Roots: check() plus the renderers it invokes INDIRECTLY through the PURE_SITES registry (a bare
-    # `renderer(order)` call the static call graph cannot resolve to a name) — they are load-bearing
-    # entry points too, so seed them explicitly.
-    load_bearing = _reachable_from(gen_src, {"check", "render_improve_order", "render_pick_list"})
+    # `renderer(order)` call the static call graph cannot resolve to a name), AND main() — the CLI verdict
+    # path (exit code + clean banner) is a guard of its own (gate-reviews/0019 BLOCKER-1), so it belongs in
+    # the measured set, not exempted as "plumbing". main pulls in write()/render_tree, exempted above as
+    # dev-convenience (check() re-verifies their output).
+    load_bearing = _reachable_from(gen_src, {"check", "render_improve_order", "render_pick_list", "main"})
     claimed = {fn for entry in GUARDS for fn in entry[2]}
     owed = sorted(load_bearing - claimed - set(NON_GUARD))
     for fn, why in sorted(NON_GUARD.items()):
@@ -600,19 +733,52 @@ def main() -> int:
         else:
             print(f"   [BITES] {name}" + (f" — reddens '{expect_fx}'" if args.verbose else ""))
 
-    print("\n4. finding-branch sweep — EVERY findings/errs/out.append + raise-MarkerError reverted to a "
-          "no-op must redden golden (no silent gap the curated stubs above missed)")
+    print("\n4. finding-branch sweep — EVERY MarkerError raise + verdict-accumulator append (SEMANTIC "
+          "inventory: an append whose accumulator the function RETURNS) reverted to a no-op must redden "
+          "golden, and reddening means an assertion FAILURE (RED) — not a crash/timeout (gate-reviews/0019)")
+    # Inventory ORACLE self-test: the inventory must be SEMANTIC. _inline_text appends to a local `out` but
+    # returns "".join(out), so its DATA appends must be EXCLUDED; check() returns `findings`, so its verdict
+    # appends must be INCLUDED. A vacuous inventory that swept data appends would 'cover' them by emptying
+    # all rendered text (an unrelated red), and under the RED requirement below that stray red would pass.
+    branch_fns = _branch_functions(orig)
+    #  - _inline_text appends to `out` but returns "".join(out) (a string) -> EXCLUDED (condition ii);
+    #  - _table_cells returns `rows` (a DATA list, not a findings accumulator) -> EXCLUDED (condition i);
+    #  - check() appends to `findings` and returns it -> INCLUDED.
+    for data_fn in ("_inline_text", "_table_cells"):
+        if data_fn in branch_fns:
+            print(f"   INVENTORY ORACLE BROKEN: {data_fn}'s DATA appends were inventoried as finding-branches")
+            return 2
+    if "check" not in branch_fns:
+        print("   INVENTORY ORACLE BROKEN: check()'s verdict appends were NOT inventoried")
+        return 2
+    # INCLUSION for EVERY verdict-append function, not just check(): every function that appends to a
+    # findings/errs/out accumulator must be inventoried by the sweep OR be an explicit DATA_APPEND
+    # exception. Without this, a return-wrapping refactor (`return sorted(out)`) on validate_order /
+    # load_order / _competing_findings would silently drop its branches (condition (ii) unmet) while the
+    # oracle stayed green — a red-team finding (gate-reviews/0019).
+    DATA_APPEND_FNS = {"_inline_text"}   # appends to `out` but returns "".join(out) — data, not a verdict
+    dropped = _appends_to_finding_accum(orig) - branch_fns - DATA_APPEND_FNS
+    if dropped:
+        print(f"   INVENTORY ORACLE BROKEN: verdict-append function(s) {sorted(dropped)} append to a "
+              f"findings accumulator but are NOT inventoried (a wrapped return? add to the sweep or, if "
+              f"the append is data, to DATA_APPEND_FNS)")
+        return 2
+    print("   ok — inventory is semantic (data appends excluded, ALL verdict-append functions included)")
     branches = _finding_branches(orig)
     sweep_fail = []
     for label, patch in branches:
-        verdict, _detail, _fp, _failed = _run(patch)
-        if verdict == "GREEN":
-            sweep_fail.append((label, "revert left golden GREEN — this finding-branch has no biting fixture"))
-            print(f"   [UNCOVERED] {label}")
+        verdict, detail, _fp, _failed = _run(patch)
+        if verdict != "RED":
+            # GREEN = no biting fixture; CRASH / HARNESS / PATCH-MISS = the revert does not produce a clean
+            # reddening ASSERTION (a crash is not an assertion catch — gate-reviews/0019 BLOCKER-2), so the
+            # branch is NOT proven caught.
+            tag = "UNCOVERED" if verdict == "GREEN" else verdict
+            sweep_fail.append((label, f"revert produced {verdict} (not RED): {detail[:60]}"))
+            print(f"   [{tag}] {label}")
         elif args.verbose:
-            print(f"   [{'reddens' if verdict == 'RED' else verdict}] {label}")
+            print(f"   [reddens] {label}")
     if not sweep_fail:
-        print(f"   ok — all {len(branches)} finding-branches redden golden on revert")
+        print(f"   ok — all {len(branches)} finding-branches redden golden (RED) on revert")
 
     proven = len(GUARDS) - len(failures) - len(redundant)
     print(f"\n--- revert battery: {proven}/{len(GUARDS) - len(redundant)} stubs bite; "
