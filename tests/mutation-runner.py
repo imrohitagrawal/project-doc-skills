@@ -41,6 +41,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = "tests/run-golden.py"
+CHECKER = "gate-review-check.py"
 TIMEOUT_S = 300
 MIN_ASSERTIONS = 200      # the unpatched suite must run at least this many; guards a degraded-green suite
 
@@ -54,7 +55,28 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         '    if head:\n'
         '        return head[0]\n'
         '    m = _VERDICT_PAREN_RE.fullmatch(cell) or _VERDICT_CELL_RE.fullmatch(cell)',
-        ["unconsumed cell 'BLOCK PASS pending'", "MULTI-LINE verdict cell"],
+        ["unconsumed-suffix cell", "MULTI-LINE verdict cell"],
+    ),
+    (
+        "B3-closure: a claimed passing review is not checked against its own table row",
+        GOLDEN,
+        '            if mc is m_review and _verdict_kind(verdicts.get(kp, "")) != "pass":',
+        '            if False:',
+        ["over a BLOCK row is CAUGHT"],
+    ),
+    (
+        "M4-sweep: the round table is found by any integer-leading row again, not by its header",
+        GOLDEN,
+        '    h = _ROUND_HEADER_RE.search(record)\n'
+        '    if not h:\n'
+        '        return None\n',
+        '    h = _ROUND_HEADER_RE.search(record)\n'
+        '    if not h:\n'
+        '        class _Z:\n'
+        '            def end(self):\n'
+        '                return 0\n'
+        '        h = _Z()\n',
+        ["non-round table is NOT read as round history"],
     ),
     (
         "0024-pending: the PASS-state pending invariant goes back to the exact literal",
@@ -68,7 +90,7 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         GOLDEN,
         '    if unknown:',
         '    if False:',
-        ["unconsumed cell 'blocked'", "homoglyph verdict cell under Verdict: PASS"],
+        ["unrecognised verdict cell"],
     ),
     (
         "0024-selfcount: the author-count arm goes back to a substring test",
@@ -78,11 +100,54 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         ["counts as an INDEPENDENT round"],
     ),
     (
+        "R3-hws: the verdict-line matcher narrows its leading class back to ASCII-only whitespace",
+        CHECKER,
+        '_HWS = r"[^\\S\\r\\n]"',
+        '_HWS = r"[ \\t]"',
+        ["NBSP-indented must NOT clear", "EM-SPACE-indented must NOT clear"],
+    ),
+    (
+        "R3-comments: a commented-out verdict becomes a declaration again",
+        CHECKER,
+        '    matches = VERDICT_LINE_RE.findall(HTML_COMMENT_RE.sub("", text))',
+        '    matches = VERDICT_LINE_RE.findall(text)',
+        ["'PASS <!-- BLOCK -->' clears (the comment does not render)"],
+    ),
+    (
+        "R3-across: a record that is not a clean PASS stops gating the PR",
+        CHECKER,
+        '        if verdict != "PASS":\n            unreadable = True',
+        '        if verdict != "PASS":\n            pass',
+        ["ANNOTATED BLOCK blocks even with a clean PASS", "NO verdict line blocks even with a clean PASS"],
+    ),
+    (
         "R2-membership: _verdict_kind returns a non-member instead of None (homoglyph escape)",
         GOLDEN,
         '    kind = word.casefold()\n    return kind if kind in _VERDICT_KINDS else None',
         '    return word.casefold()',
         ["classifies as NOTHING", "homoglyph verdict cell under Verdict: PASS"],
+    ),
+    (
+        "R2-tornrow: an unparseable line inside the round table is silently dropped again",
+        GOLDEN,
+        '            probs.append(f"a line inside the round-history table is not a parseable round row: "\n'
+        '                         f"{stripped[:80]!r}")',
+        '            pass',
+        ["unparseable line inside the round table is CAUGHT"],
+    ),
+    (
+        "R2-sweep: the live-record sweep stops asserting it covers more than one record",
+        GOLDEN,
+        '        if _round_rows(text) is None:\n            continue',
+        '        if True:\n            continue',
+        ["record sweep actually covers"],
+    ),
+    (
+        "R3-delegate: the in-suite checker stops reporting a malformed final verdict declaration",
+        GOLDEN,
+        '    if decls and final_verdict is None:',
+        '    if False:',
+        ["'Verdict: PASS pending' is CAUGHT", "ANNOTATED final BLOCK does not fall back"],
     ),
 ]
 
