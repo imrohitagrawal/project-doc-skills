@@ -39,7 +39,7 @@ setup steps, the repo layout, or the conventions change** (the ISO `Last reviewe
 verifier's staleness check exist for exactly that, since setup and conventions are the most
 drift-prone content in any project).
 
-**How it sequences with the other six skills (it is a consumer).** This skill turns a *can-run-it*
+**How it sequences with the other seven skills (it is a consumer).** This skill turns a *can-run-it*
 contributor into a *can-change-it-safely* one, and **points outward** instead of duplicating:
 - **architecture-and-decisions** — the "why" and the design deep-dive. The reading path links to it;
   it is not restated here.
@@ -49,6 +49,11 @@ contributor into a *can-change-it-safely* one, and **points outward** instead of
   here; running the live system is there.
 - **learning-track** — the multi-audience concepts course ("teach me the field and how this works").
   This companion gets one new contributor productive on **this** repo; it is not that course.
+- **project-faq** — the look-up Q&A reference for "how does my project do X and why". This companion is a
+  guided path with a fixed arc; a one-off factual question belongs there.
+- **doc-critic** — the independent critic gate over what was produced: contradictions across the pages,
+  claims the code does not support, and whether the beginner floor really holds. It reviews the documents,
+  never the skills, and gates publishing on unresolved blockers; run it before the publish step.
 - **publish-mirror** — the separate, later publish step (Workflow step 6).
 
 ---
