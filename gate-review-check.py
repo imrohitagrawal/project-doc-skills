@@ -92,8 +92,17 @@ PROMPT_VERSION_RE = re.compile(r"gate-review-prompt\.md\s+v\d+\.\d+\.\d+", re.IG
 COVERAGE_LINE_RE = re.compile(r"^\s*[-*]?\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*(\d+)",
                               re.IGNORECASE | re.MULTILINE)
 # The EFFECTIVE verdict is the LAST "Verdict: <token>" line, so a PASS quoted in prose mid-document
-# cannot satisfy a record whose actual conclusion is BLOCK. The token must be exactly PASS/BLOCK/FAIL.
-VERDICT_LINE_RE = re.compile(r"^\s*[-*]?\s*verdict:\s*([A-Za-z][A-Za-z-]*)", re.IGNORECASE | re.MULTILINE)
+# cannot satisfy a record whose actual conclusion is BLOCK. The token must be exactly PASS/BLOCK/FAIL —
+# and 0024 round 2 made that sentence TRUE: this pattern used to capture `([A-Za-z][A-Za-z-]*)` with no
+# end anchor, so it read `PASS` out of `Verdict: PASS pending`, `Verdict: PASS garbage`,
+# `Verdict: PASS <!-- BLOCK -->` and `Verdict: PASS [BLOCK](x)`, and decide_verdicts() then cleared the
+# REQUIRED status check because the captured token was exactly "PASS". A record whose final line literally
+# said "PASS pending" could merge a gate-layer change. The line is now matched WHOLE against the three
+# legal tokens, so an unconsumed suffix is not a verdict at all (no match -> effective_verdict None ->
+# "no well-formed verdict", which fails closed). An unrecognised token like PASS-WITH-NITS still fails,
+# as before. gate-reviews/TEMPLATE.md's bracketed "[PASS or BLOCK]" still cannot match, by design.
+VERDICT_LINE_RE = re.compile(r"^[ \t]*[-*]?[ \t]*verdict:[ \t]*(PASS|BLOCK|FAIL)[ \t]*$",
+                             re.IGNORECASE | re.MULTILINE)
 ANY_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
 # The four mandated lens sections PLUS a Findings section — five required headings in total. Matched at
 # TOP level only ('#'/'##'), so a '###' decoy subsection carrying a trigger word cannot hijack the
