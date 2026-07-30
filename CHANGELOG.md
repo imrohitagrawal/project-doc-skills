@@ -84,19 +84,21 @@ in-flight skill-count PR.
   review required — for code (`*.py`/`*.sh`/`*.yml`), the `.github/` subtree, the behavioral governance
   docs, **and gated markdown under `tests/` / `.github/` / `shared/ci/`** (the class the old denylist
   wrongly admitted — sampled exhaustively over those subtrees).
-  The seam was previously covered only by a one-off CLI demo; no-op reverts turn it red (hard-coding
-  `allow_light=True` → 10 reds; dropping the disk read → 2 reds; reverting the allow-list → the
-  gated-markdown rows red).
+  The seam was previously covered only by a one-off CLI demo; each no-op revert turns it red — hard-coding
+  `allow_light=True`, dropping the disk read, and reverting the allow-list (the gated-markdown rows) each
+  redden the seam. Assertion counts are not restated: they move whenever the suite grows.
 - **`tests/run-golden.py`** (`manifest byte-stability` section) — locks the item-2 invariant: two
   `write_manifest` runs on identical content are byte-identical, and the manifest carries no
   build-commit / timestamp field. A future edit re-adding a volatile field would turn this red.
 
 ### Changed — skill-enumeration gate: generate from skills-order, verify against parsed Markdown (#7)
-- **`generate-skill-enumerations.py`** replaces **`lint-skill-count.py`** (now deleted). Each of the five
-  skill enumerations (README skill table, repo tree, improve-order list; per-skill-review-prompt
-  pick-list and attachment table) is GENERATED from a new **`skills-order`** source of truth and verified
-  against the **parsed Markdown** (markdown-it-py), so accidental drift and casual markup decoys are
-  caught at the location a reader reads.
+- **`generate-skill-enumerations.py`** replaces **`lint-skill-count.py`** (now deleted). All five skill
+  enumerations are VERIFIED against the **parsed Markdown** (markdown-it-py) from a new **`skills-order`**
+  source of truth, so accidental drift and casual markup decoys are caught at the location a reader reads.
+  The three pure sites (repo tree, improve-order list, per-skill-review-prompt pick-list) are additionally
+  GENERATED in place; the two tables (README skill table, attachment table) are hand-maintained and
+  verified by rendered first-cell text, so a regenerate run cannot repair them — it fills the pure blocks
+  only.
 - **Scope, stated honestly.** This is a **drift-catcher + casual-decoy guard**, not a proof of "no
   reader-visible decoy". Three gate-reviews (`gate-reviews/0005`–`0007`) each closed a vector and found a
   new one one layer up (regex → bytes → token nesting → DOM nesting), converging on the lesson that fully
@@ -104,8 +106,9 @@ in-flight skill-count PR.
   — deliberately out of scope for internal tooling whose real risk is accidental drift. What ships:
   - accidental drift caught 5/5 (pure sites match the generated run in the parse tree; tables match by
     rendered first-cell text); empty/missing `skills/` **fails closed**;
-  - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, a
-    competing/relocated run, and a table header/other-column decoy;
+  - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, and
+    a competing/relocated run — including a competing SECOND table whose cells hold a near-complete run,
+    in its header or any column;
   - **raw HTML banned document-wide in the governed docs**, with this suite's exact begin/end marker
     comments as the sole exception — enforced as an **identity allowlist** (`_marker_only_html_block`),
     not "any HTML comment", so the claim is literally true. A non-comment raw-HTML block anywhere, or an
@@ -113,19 +116,23 @@ in-flight skill-count PR.
     (`<details>` folds, GFM tagfilter, image alt-text) cheaply and *by enforcement*, not by inference.
   - **prose count numbers are NOT checked.** The scalar count check that drove rounds 6–14 was **dropped
     at round 14** (`gate-reviews/0018`) as a bottomless well of BOTH false positives and masks over five
-    rounds, worth little on top of the five generated enumeration sites; the suite's headline count
+    rounds, worth little on top of the five verified enumeration sites; the suite's headline count
     sentences are now plain, ungated prose, so a **stale prose count number is not caught**.
-  The accepted residuals (markdown-it-py vs cmark-gfm parse edge cases; cross-file competing runs;
-  anything the ban does not cover) are named in CONTRIBUTING "Skill-enumeration gate: scope". Governed
-  docs also ban Markdown images — a deliberate content restriction, disclosed there.
+  The accepted residuals — a competing run split across SEPARATE top-level containers; a decoy in a
+  NON-FIRST column or the header of the MARKED table (dropped as a false-positive source,
+  `gate-reviews/0016`); markdown-it-py vs cmark-gfm parse edge cases; anything the ban does not cover —
+  are named in CONTRIBUTING "Skill-enumeration gate: scope". Both governed files are scanned in full, so
+  the former cross-file gap is closed. Governed docs also ban Markdown images — a deliberate content
+  restriction, disclosed there.
 - **`tests/revert-battery.py`** — every claimed guard is now *proven* to bite on revert rather than
   asserted: the script stubs each guard on a full-repo copy and requires `tests/run-golden.py` to go red,
   and it **verifies its own harness first** (an earlier hand-rolled battery reported "11/11 biting" while
   its incomplete scratch copy made the suite abort before asserting anything — so every stub looked like
   it bit). CONTRIBUTING requirement (ii) now mandates running it before requesting a review. The battery
   prints its own counts and derives its coverage inventory from the source — a finding-producing function
-  no stub claims is reported OWED and fails the run — so no guard count is restated here; a number copied
-  into prose is exactly the drift this suite exists to catch.
+  no stub claims is reported OWED and fails the run — so no guard count is restated here; the battery's own
+  output is the only place that number is true. (Nothing gates a prose count in this file, which is exactly
+  why one should not be written down.)
 - **`skills-order`** — validated as an exact permutation of `skills/` (fail closed). The tree moved to its
   own fenced block; the two tables are wrapped whole (header + body).
 - **New dependency: `markdown-it-py`** (CI installs it alongside `pyyaml`). The gate is root scaffolding,
