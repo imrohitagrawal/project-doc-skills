@@ -1,226 +1,193 @@
-# Gate-review verdict — PR "fix(tests): close the verdict-cell world in the record checker"
+# Gate-review verdict — PR "fix(gate): make the verdict grammar a recogniser"
 
 - Prompt: gate-review-prompt.md v1.0.0
 - Tier: full
 - PR / branch: `fix/verdict-cell-closed-set`
 - Diff range: `main..fix/verdict-cell-closed-set`
-- Gate-layer paths changed: `tests/run-golden.py`, `gate-review-check.py`   (the list
-  `gate-review-check.py` printed)
-- Reviewers / instruments: round 1 — an independent different-vendor (GPT) cold pass, code-grounded
-  against a provenance bundle (HEAD sha + per-file sha256 + verbatim source). Round 2 — independent
-  fresh-context subagent lenses; the owner ended different-vendor reviews after round 1.
+- Gate-layer paths changed: `gate-review-check.py`, `tests/mutation-runner.py`, `tests/run-golden.py`
+  (the three paths `gate-review-check.py` prints at this head)
+- Reviewers / instruments: round 1 — an independent different-vendor (GPT) cold pass against a provenance
+  bundle (HEAD sha + per-file sha256 + verbatim source). Round 2 — six independent fresh-context lenses
+  (cell grammar; enforcement bypass; coverage-vs-advertising; prospectiveness; regression; proof quality),
+  each blind to the author's context, followed by a per-finding adversarial adjudicator whose default
+  position was that the finding is wrong: 38 candidates raised, 32 survived refutation.
 - Independence limit honestly stated: round 1 was weight-decorrelated but had no repository checkout
-  beyond the bundled files, so it could not run the full suite (it said so, and did not claim the
-  author's 229/229). Round 2 is **context isolation only, not weight decorrelation** — the lenses are
-  fresh contexts of the same model that wrote the change, which is a real and stated limit.
+  beyond the bundled files, so it could not run the full suite and did not claim to. Round 2 is **context
+  isolation only, not weight decorrelation** — fresh contexts of the same model that wrote the change.
+  The owner ended different-vendor reviews after round 1, so this is now the permanent ceiling of every
+  future round on this repository and every record should keep saying so.
 
 ## Record convention
 
-One record per work package, updated in place across rounds; `Round N carries ID 0023+N` for this
-record (round 1 = ID 0024), continuing the flat review-ID sequence after the 0005 record's rounds
-consumed IDs 0005–0023.
+One record per work package, updated in place across rounds; `Round N carries ID 0023+N` for this record
+(round 1 = ID 0024), continuing the flat review-ID sequence after the 0005 record's rounds consumed IDs
+0005–0023.
 
 | # | head | verdict | blocking finding | resolution |
 |---|---|---|---|---|
-| 1 | 129578e | BLOCK | Independent GPT cold pass. **B1:** `_verdict_kind` was a first-token PREFIX PARSER, not a recogniser — it deleted `*`/`_`/backtick from ANY position, dropped one trailing parenthetical, split on whitespace and returned `head[0]` without checking the rest was consumed, so `BLOCK PASS pending`, `BLOCK garbage`, `self BLOCK`, `BLOCK <!-- pending -->` and `B*L*O*C*K` all classified while ordinary `[BLOCK](url)`/`<strong>BLOCK</strong>`/`~~BLOCK~~` were rejected; the "unrecognised cell is itself a finding" claim was false whenever the first word was recognised, and a live-shaped record carrying `BLOCK PASS pending` passed clean. **B2:** `gate-review-check.py:96`'s `VERDICT_LINE_RE` was not end-anchored, so the REQUIRED status check cleared a record whose final line read `Verdict: PASS pending` — a direct gate bypass. **B3:** the PASS arm treated both closure sentinels identically, so `review (round N) returned PASS` was accepted over a table row N saying BLOCK. **M4:** `GATE_RECORD` was hardcoded to the 0005 record, which policy declares append-only — the strengthened invariants applied only to the record least likely to change. **m5:** revert F published a 12-failure count without recording the exact mutation. | complete-cell `re.fullmatch` grammar (recogniser, not prefix parser); `VERDICT_LINE_RE` and the in-suite final-verdict parser both matched WHOLE against `PASS\|BLOCK\|FAIL`; the two PASS closure sentinels split and checked differently; `_record_problems` generalised over every record with a round table, found by its canonical HEADER; a committed, target-aware mutation runner replacing the hand-run reverts |
-| 2 | pending | pending | pending | pending |
+| 1 | 129578e | BLOCK | Independent GPT cold pass. **B1:** `_verdict_kind` was a first-token PREFIX PARSER — it deleted `*`/`_`/backtick from ANY position, dropped one trailing parenthetical, split on whitespace and returned the first recognised word without checking the rest was consumed, so `BLOCK PASS pending`, `BLOCK garbage`, `self BLOCK` and `B*L*O*C*K` all classified while `[BLOCK](url)`, `<strong>BLOCK</strong>` and `~~BLOCK~~` were rejected; "an unrecognised cell is itself a finding" was false whenever the first word was recognised. **B2:** `VERDICT_LINE_RE` was not end-anchored, so the REQUIRED status check cleared `Verdict: PASS pending`. **B3:** the PASS arm accepted `review (round N) returned PASS` over a table row saying BLOCK. **M4:** `GATE_RECORD` was hardcoded to the append-only 0005 record. **m5:** revert F published a failure count without its mutation. | complete-cell `re.fullmatch` grammar; both verdict-line parsers matched whole; the two closure sentinels split and checked differently; `_record_problems` generalised over every record; a committed target-aware mutation runner |
+| 2 | 003694e | BLOCK | Six independent fresh-context lenses + per-finding adversarial adjudication. **B6, introduced BY the round-1 fix:** anchoring the strict token INTO `VERDICT_LINE_RE` made an annotated verdict line INVISIBLE rather than fatal, and `effective_verdict`'s last-line-wins rule then fell back to an EARLIER line — a record ending `Verdict: BLOCK (2 blockers outstanding)` after an earlier `Verdict: PASS` CLEARED the required check. The fix was worse than the defect it closed. **M7:** `_verdict_kind` returned `word.casefold()` with no membership test, and `re.IGNORECASE` folds U+0131 DOTLESS I onto `i`, so `pendıng` returned a non-member, non-`None` value that defeated the unrecognised-cell arm and the pending arm at once. **M8:** `_round_rows` silently DISCARDED an unparseable line inside the table, so invariants ran over fewer rows than the reader sees. **M9:** the new sweep had no mutation proving it bites and chose a narrower record population than the required check. **M10:** this record's own census, `Coverage: N/M`, revert table and gate-path list were round-1 text left stale by the round-2 commit. | loose line match + strict token validation in BOTH parsers, failing closed in both signs; membership test restored; an unparseable table line is now a finding; the sweep proven by mutation and aligned to `gate-reviews/*.md`; this record regenerated from the current head |
+| 3 | pending | pending | pending | pending |
 
 ## Replay the real failure
 
-The failure this checker exists to catch is a record whose round TABLE and verdict PROSE contradict each
-other. It has already happened twice (rounds 16 and 17 both said `pending` in the table while the prose
-said BLOCK), which is why `_record_problems` exists at all. Round 19 then extended it to the PASS state,
-because `Verdict: PASS` over a still-pending newest row returned no problems — the one edit the checker
-exists to protect.
+The failure this checker exists to catch is a verdict record whose round TABLE and verdict PROSE
+contradict each other. It has happened twice for real — rounds 16 and 17 of the 0005 record both said
+`pending` in the table while the prose said BLOCK — which is why `_record_problems` exists, and round 19
+extended it to the PASS state because `Verdict: PASS` over a still-pending newest row returned nothing.
 
 **The actual stale state, reproduced.** The PASS-state invariant compared against the exact literal
-`pending`:
+`pending`, so an annotated cell escaped it: `_record_problems` on a record whose newest row reads
+`pending (round 20 running)` under `Verdict: PASS` returned `[]`.
 
-```python
-pend = [r for r, v in verdicts.items() if v.lower() == "pending"]
-```
+Fixing that opened two further holes, both found by review rather than by the author, and both now closed:
+the replacement grammar was a prefix parser (round 1, B1), and the replacement line anchor made an
+annotated verdict line invisible so the required check cleared a BLOCKing record (round 2, B6).
 
-So an ANNOTATED cell escapes. Feeding `_record_problems` a record whose newest row reads
-`pending (round 20 running)` under `Verdict: PASS` returns `[]` — no findings. A record that is
-self-contradictory in exactly the documented way passes clean.
+**Population and coverage.** The unit is "a place where a verdict — a table cell or a final line — is
+turned into a decision". At this head there are eight, and every one now goes through a whole-match
+recogniser:
 
-The same narrowness existed in the OPPOSITE sign, one arm down: `verdicts[r].lower() != "pending"` made
-the BLOCK-state "a non-pending row follows it" check FIRE on a row that is in fact pending — a false
-positive on the same edit. And two further cell comparisons had the identical defect:
-`verdicts.get(k) != "BLOCK"` (so `**BLOCK**` reads as a contradiction) and `"self" in v.lower()` (so
-`BLOCK (self-reported)` was counted as an author round while the prose arm simultaneously refused it).
+| Site | Consumes |
+|---|---|
+| `tests/run-golden.py:787` unrecognised-cell finding | `_verdict_kind` |
+| `tests/run-golden.py:793` PASS-state pending invariant | `_verdict_kind` |
+| `tests/run-golden.py:852` "review (round N) returned PASS" vs its row | `_verdict_kind` |
+| `tests/run-golden.py:860` prose/table BLOCK cross-check | `_verdict_kind` |
+| `tests/run-golden.py:862` BLOCK-state non-pending arm | `_verdict_kind` |
+| `tests/run-golden.py:879` CONTRIBUTING author-round count | `_verdict_kind` |
+| `tests/run-golden.py` in-suite final-verdict parser | loose line + strict token |
+| `gate-review-check.py` required-check final-verdict parser | loose line + strict token |
 
-**Census of every site where a verdict CELL is compared**, before and after:
+Coverage: 8/8 verdict-interpretation sites
 
-| Line (after) | Site | Was | Now |
-|---|---|---|---|
-| 673 | PASS-state pending invariant | `v.lower() == "pending"` | `_verdict_kind(v) == "pending"` |
-| 718 | BLOCK-state non-pending arm | `verdicts[r].lower() != "pending"` | `_verdict_kind(...) != "pending"` |
-| 716 | prose/table cross-check | `verdicts.get(k) != "BLOCK"` | `_verdict_kind(...) != "block"` |
-| 728 | CONTRIBUTING author-count | `"self" in v.lower()` | `_verdict_kind(v) == "self"` |
-
-Coverage: 4/4 verdict-cell comparison sites
-
-No site is left comparing a raw cell against a literal
-(`grep -nE 'verdicts.*(==|!=)\s*"'` returns only the four normalised forms above). The fix is one shared
-predicate rather than four edits, so the arms cannot drift apart again — which is how the two signs came
-to disagree in the first place.
-
-**Why a closed set rather than a wider match.** Loosening to `startswith("pending")` fixes the reported
-instance and leaves the class open: the next unrecognised spelling escapes exactly as this one did, and
-rounds 16, 17 and 18 each repeated a variant of "a spelling nobody thought of slipped past". So an
-unrecognised cell is now ITSELF a finding (`_VERDICT_KINDS = {block, pass, pending, self}`), which fails
-closed. The live record's cells were enumerated first to be sure the set accepts every value that
-legitimately appears: `BLOCK` ×18 and `(self)` ×1, final `Verdict: PASS` — both classify, and the
-author-round count stays 1, so CONTRIBUTING's `19 / 18 / 1` cross-check is unchanged.
-
-`(self)` is the trap in the normaliser: a naive "strip anything in parentheses" maps it to the empty
-string and would break both its classification and the live count. So a WHOLLY-parenthesised cell keeps
-its content, and only a TRAILING annotation is dropped.
+No site compares a raw cell or a raw verdict token against a literal, and none accepts unconsumed text.
 
 ## Coverage vs advertising
 
-The docstring claimed the suite reddens on "more than one pending row, a pending row that is not the
-newest round" and, in the PASS state, "no pending rows anywhere". With the literal comparison those
-sentences were true only for the unannotated spelling — the docstring described a stronger check than the
-code implemented. That gap is what this change closes; the docstring now matches, and the new
-unrecognised-cell finding is stated in the code comment at `_VERDICT_KINDS`.
+The claim under test is "the world is closed: a cell that does not normalise into this set is ITSELF a
+finding". At round 1 that was false — a recognised first word admitted any suffix. At round 2 it was still
+false for one input class: a homoglyph matched the pattern but casefolded to a non-member, so the function
+returned neither a member nor `None`. Both are closed now: the grammar matches the WHOLE cell, and the
+return value is filtered through `_VERDICT_KINDS`, which is the single source the pattern is built from.
 
-Nothing in this change adds a new success/clean/PASS message, so there is no new way for the suite to
-print agreement over a stale reality. The one status string touched is the problem list itself, which
-grows a case rather than losing one.
+The required check's own comment claimed its token "must be exactly PASS/BLOCK/FAIL" while its regex had
+no end anchor. That sentence is now true — and true in the SAFE direction, because the strictness lives in
+a separate token test rather than in the line matcher, so a malformed line is seen and rejected instead of
+skipped in favour of a friendlier line above it.
 
-**Self-check on this section's own honesty:** the change does NOT make the record checker complete. It
-still validates only `gate-reviews/0005-*.md` (`GATE_RECORD`, `tests/run-golden.py:75`); no other record
-file, including THIS one, is machine-checked for table/prose consistency. That was true before and stays
-true. See Findings MINOR-2.
+**What this change still does NOT do, stated plainly:**
+
+- It does not normalise Unicode confusables beyond what `re.IGNORECASE` folds. A homoglyph cell is now
+  REJECTED rather than misread, which is the fail-closed direction, but no confusable-folding is
+  performed. `CONTRIBUTING.md` records the full confusables table as out of scope for this suite, and
+  adding it here alone would put this checker out of step with `generate-skill-enumerations.py`.
+- It validates no record CONTENT beyond the round table, the closure prose and the final verdict.
+- The generic sweep covers every `gate-reviews/*.md` carrying a round-history table — today the 0005
+  record and this one. Records without a round table are skipped by design, which is why `0001`–`0004`
+  are not swept. But `gate-reviews/TEMPLATE.md` produces no round table either, so a record created by
+  copying the template is NOT covered until someone adds a table by hand. That is a real limit of the
+  template, recorded as MINOR-11 rather than quietly accepted.
 
 ## Self-description drift
 
-This change alters no count or list of checks, lints, steps, skills or paths. It adds one helper and one
-finding to an existing function.
+This change alters no count or list of checks, lints, steps, skills or paths.
 
-Two self-description defects in the SAME function were fixed in the same edit, because adding a record
-file would otherwise have falsified one of them:
+Two self-description defects in the checker's own docstring were fixed, because adding a record file would
+otherwise have falsified one of them:
 
-- `tests/run-golden.py:625` stated the review-ID range as a literal `0005-0022`. The live documented and
-  enforced range is `0005`–`0023` (CONTRIBUTING.md:197; 19 rounds, round N carries ID 0004+N). The literal
-  is now GONE rather than corrected: the range end is derived from the table at `:746-748`, so there is no
-  second number to go stale at round 20.
-- `tests/run-golden.py:627-628` asserted "there are no files 0006+". Adding
-  `gate-reviews/0024-verdict-cell-closed-set.md` makes that false, so shipping it unchanged would have
-  introduced fresh self-description drift inside the very function whose job is catching it. The sentence
-  now says what is actually true: there is no separate record file per ROUND of the 0005 record, and a
-  later work package does add its own file under the next free ID.
+- the review-ID range was stated as a literal `0005-0022`; the live enforced range is `0005`–`0023`. The
+  literal is GONE rather than corrected — the range end is derived from the table, so no second number can
+  go stale at round 20.
+- the docstring asserted "there are no files 0006+", which this record makes false. It now says what is
+  true: there is no separate record FILE per ROUND of the 0005 record.
 
-`CONTRIBUTING.md:197` is deliberately NOT touched. Two independent regexes read that one sentence
-(`:744` for the `19 / 18 / 1` digit triple, `:746` for the en-dashed `` `0005`–`00NN` `` range), and the
-range is cross-checked against the ROUND COUNT inside record 0005, not against the file inventory — so
-bumping it to `0024` would redden the suite with "CONTRIBUTING's review-ID range ends at 0024 but the
-record has 19 rounds". Verified: `CONTRIBUTING.md` is absent from this PR's changed-file list.
+`CONTRIBUTING.md:197` is deliberately untouched: two independent regexes read that one sentence, and the
+range is cross-checked against record 0005's ROUND COUNT rather than the file inventory, so bumping it to
+`0024` would redden the suite. Confirmed absent from this PR's changed-file list.
 
-Grep for hard-coded counts in the changed file found none introduced; the new self-tests carry no
-suite-wide totals.
+Round 2 additionally found that this record's OWN evidence had gone stale against the code it describes —
+the census line numbers, the `Coverage: N/M`, the revert table and the gate-layer path list were all
+round-1 text carried into a round-2 commit that had moved every one of them. That is precisely the drift
+class this record is supposed to police, occurring in the record itself. The document has therefore been
+REGENERATED from the current head rather than patched, and every number above was re-derived.
 
 ## Fixture requirement
 
-Every arm ships a fixture, and each was proven to redden by reverting that arm ALONE on a scratch copy of
-the branch and requiring an assertion FAILURE (never a crash) in its DECLARED fixture:
+Every guard ships a fixture, and every fixture is proven to bite by `tests/mutation-runner.py`, which
+carries each mutation as an EXACT before/after string, requires it to apply at exactly one site, requires
+the suite to RUN (a crash is never a bite), and requires it to redden the fixtures it DECLARES rather than
+merely some fixture:
 
 ```
-A: pending arm back to the exact literal            -> 228/229, 1 failed
-     [FAIL] checker: PASS over an ANNOTATED pending newest row is CAUGHT (0024; the literal escaped)
-B: BLOCK-state non-pending arm back to the literal  -> 228/229, 1 failed
-     [FAIL] checker: an ANNOTATED pending row does NOT false-positive the BLOCK-state arm (0024)
-C: prose cross-check back to the raw == BLOCK       -> 226/229, 3 failed
-     [FAIL] ... a bold-marked BLOCK cell still classifies as BLOCK (0024)
-     [FAIL] ... a code-span-marked BLOCK cell still classifies as BLOCK (0024)
-     [FAIL] ... an annotated `BLOCK (self-...)` counts as an INDEPENDENT round (0024)
-D: drop the unrecognised-cell finding entirely      -> 225/229, 4 failed
-     [FAIL] ... an unrecognised verdict cell 'blocked' / 'PASS-ish' / 'n/a' / '-' is CAUGHT (fail closed)
-E: author-count arm back to the substring self      -> 228/229, 1 failed
-     [FAIL] ... an annotated `BLOCK (self-...)` counts as an INDEPENDENT round, not an author one
-F: _verdict_kind returns its input unnormalised     -> 217/229, 12 failed
+--- mutation runner: 11/11 mutations bite their declared fixtures ---
 ```
 
-Both DIRECTIONS are locked, not just the catch: the annotated-pending row must be CAUGHT in the PASS
-state (A) and must NOT false-positive in the BLOCK state (B); emphasis-marked cells must still classify
-(C); and `(self)` must keep both its classification and its author-round contribution (E). The
-fail-closed half has its own fixtures over four unrecognised spellings (D).
+The runner earned its place three times over by failing on the author's own work rather than passing
+quietly:
 
-**A `tests/revert-battery.py` GUARDS entry is NOT representable for this change — proven, not assumed.**
-The battery patches only `dst / GEN` (`tests/revert-battery.py:135`, `GEN =
-"generate-skill-enumerations.py"`), its coverage and provenance passes parse only that file, and all 30
-distinct `covers` units resolve inside it. `_record_problems` appears 0 times in the generator and 15
-times in `tests/run-golden.py`. A stub aimed at these lines returns the source unchanged, i.e.
-`PATCH-MISS "the stub did not apply — the source moved"` plus a provenance `MIS-CLAIM`. So the proof
-mechanism is the in-file synthetic self-test battery above, which is the same mechanism the existing
-CONTRIBUTING cross-checks use (`:726`, `:756`).
+- it proved an explicit `if "\n" in cell` guard was DEAD CODE — deletable with the suite still green,
+  because the grammar's horizontal-whitespace classes already reject a newline. It claimed coverage it did
+  not provide, so it is gone;
+- it reported two mutations as MIS-TARGETED because their declared fixture names were wrong, rather than
+  counting them as bites;
+- and it caught the round-2 mirror-hole fixture as GREEN, proving the author's first regression test for
+  BLOCKER-6 exercised the in-suite twin and never touched the required check it was written for.
 
-**Consequence a reviewer should weigh, stated rather than left to be discovered:** `run-golden.py`'s own
-checks are outside the mutation-proven denominator entirely. The `72/72 stubs bite` figure the battery
-prints covers the generator, not this checker. The reverts above were run by hand, by the author, and are
-not re-run by CI.
+A `tests/revert-battery.py` GUARDS entry remains unrepresentable for these checks: the battery patches
+only `dst / GEN` (`GEN = "generate-skill-enumerations.py"`) and parses only that file, so a stub aimed at
+`run-golden.py` returns the source unchanged — `PATCH-MISS` plus a provenance `MIS-CLAIM`. The round-1
+reviewer independently confirmed this and raised no finding against it. The consequence is worth stating
+rather than leaving to be discovered: **`run-golden.py`'s own checks sit outside the battery's
+mutation-proven denominator entirely**, and the battery's `72/72` covers the generator, not this checker.
+That gap is what the mutation runner exists to fill, and unlike the round-1 hand-run reverts it is
+committed, deterministic and re-runnable by anyone.
 
 ## Findings
 
-- **BLOCKER-1 (round 1, GPT) — the "closed set" was a first-token prefix parser.** `_verdict_kind`
-  deleted every `*`, `_` and backtick from ANY position, optionally dropped one trailing parenthetical,
-  split on whitespace and returned `head[0]` — never checking the rest of the cell was consumed. So
-  `BLOCK PASS pending`, `PASS pending`, `self BLOCK`, `BLOCK garbage`, `BLOCK\npending`,
-  `BLOCK <!-- pending -->` and `B*L*O*C*K` all classified, while ordinary `[BLOCK](url)`,
-  `<strong>BLOCK</strong>` and `~~BLOCK~~` were rejected — neither a closed set nor a coherent grammar.
-  The advertised "an unrecognised cell is ITSELF a finding" was false whenever the FIRST word happened to
-  be recognised, and the reviewer drove a live-shaped record carrying `BLOCK PASS pending` through the
-  real section for a clean `23/23`. **RESOLVED** at round 2: `_verdict_kind` is now a recogniser —
-  `re.fullmatch` against a complete-cell grammar (one verdict word; at most one correctly-paired OUTER
-  emphasis wrapper; the wholly-parenthesised `(self)`; at most one non-nested trailing parenthetical;
-  no newline; nothing unconsumed). 12 accept + 25 reject cases are pinned, including every cell above.
-- **BLOCKER-2 (round 1, GPT) — the REQUIRED status check accepted `Verdict: PASS pending`.**
-  `gate-review-check.py:96`'s `VERDICT_LINE_RE` captured `([A-Za-z][A-Za-z-]*)` with no end anchor, so
-  `effective_verdict` read `PASS` out of `PASS pending`, `PASS garbage`, `PASS <!-- BLOCK -->` and
-  `PASS [BLOCK](x)`, and `decide_verdicts` then cleared the gate. A record whose final line literally said
-  `PASS pending` could merge a gate-layer change — the same unconsumed-suffix class the change claimed to
-  close, in the enforcement mechanism itself, and the file's own comment already claimed the token "must
-  be exactly PASS/BLOCK/FAIL". **RESOLVED** at round 2: matched whole against `PASS|BLOCK|FAIL`. All five
-  live PASS records still parse; `TEMPLATE.md`'s bracketed placeholder still cannot match, by design.
-  The in-suite twin at `tests/run-golden.py` (`^Verdict:\s*(\w+)`) had the identical defect and now uses
-  the same grammar, so the two cannot disagree about a record's conclusion.
-- **BLOCKER-3 (round 1, GPT) — "review (round N) returned PASS" could contradict a BLOCK row.** The PASS
-  arm parsed both closure sentinels with one alternation and then treated them identically, checking only
-  that N was the newest round. **RESOLVED** at round 2: the forms make different claims and are checked
-  differently — an owner decision may close over a BLOCK row (the live 0005 record does exactly that), a
-  claimed passing review may not, and row N must itself classify as `pass`.
-- **MAJOR-4 (round 1, GPT) — the strengthened invariant was non-prospective.** `GATE_RECORD` was
-  hardcoded to `gate-reviews/0005-*.md`, which CONTRIBUTING declares append-only history — so the new
-  verdict-cell rules applied only to the one record policy says should not normally change, and to no
-  record that will actually be created or extended. **RESOLVED** at round 2: `_record_problems` splits
-  into a GENERIC round-table/prose validator (`contrib=None`) and the 0005-specific CONTRIBUTING
-  count/range validator, and the suite sweeps every `gate-reviews/[0-9][0-9][0-9][0-9]-*.md` carrying a
-  round history. The round table is located by its canonical HEADER rather than "any row whose first cell
-  is an integer" — necessary, because THIS record's census table has source line numbers (673, 716, 718,
-  728) in column one and would otherwise have been read as rounds. The sweep asserts it covers more than
-  one record, so it cannot silently degrade to the old single-file behaviour.
-- **MINOR-5 (round 1, GPT) — revert F was not independently reproducible.** The record published
-  "12 failed" without recording the exact mutation; three reasonable readings of "returns its input
-  unnormalised" give 11, 12 and 13. **RESOLVED** at round 2: the hand-run reverts are replaced by
-  `tests/mutation-runner.py`, a committed target-aware runner that carries each mutation as an exact
-  before/after string and asserts the named fixtures redden.
+Round-1 findings, all RESOLVED (reproductions in the round-1 row): **BLOCKER-1** prefix parser ·
+**BLOCKER-2** the required check accepted `Verdict: PASS pending` · **BLOCKER-3** a claimed passing review
+over a BLOCK row · **MAJOR-4** non-prospective · **MINOR-5** unreproducible revert.
 
-Also checked and found clean at round 1: the live record and CONTRIBUTING still agree; `(self)` keeps its
-classification and its author-round contribution; the A–E revert deltas reproduced exactly as recorded;
-and the argument that a current-form `revert-battery.py` GUARDS entry is unrepresentable for a
-`run-golden.py` check was independently confirmed, with no finding raised against it.
+Round-2 findings:
+
+- **BLOCKER-6 — the round-1 fix opened a mirror hole. RESOLVED.** Anchoring the strict token into
+  `VERDICT_LINE_RE` made an annotated verdict line invisible rather than fatal; last-line-wins then fell
+  back to an earlier line, so a record ending `Verdict: BLOCK (2 blockers outstanding)` after an earlier
+  `Verdict: PASS` cleared the required check (`effective_verdict` → `PASS`, `decide_verdicts` → `True`).
+  Fixed by finding the line loosely and judging the token strictly; three fixtures pin it — annotated
+  BLOCK after PASS, annotated BLOCK alone, and a well-formed later PASS still winning.
+- **MAJOR-7 — `_verdict_kind` could return a non-member. RESOLVED.** No membership test followed the
+  casefold, and `re.IGNORECASE` folds U+0131/U+0130 onto `i`, so `pendıng` returned `'pendıng'`,
+  defeating the unrecognised-cell arm (not `None`) and the pending arm (not `"pending"`) at once. Fixed by
+  filtering through `_VERDICT_KINDS`; four homoglyph unit fixtures plus a full-record fixture.
+- **MAJOR-8 — an unparseable row inside the round table was silently dropped. RESOLVED.** Every
+  downstream invariant then ran over a shorter table than the reader sees. It is now a finding, fixtured
+  with a GFM-legal space-indented row.
+- **MAJOR-9 — the sweep was unproven and mis-scoped. RESOLVED.** It had no mutation-runner entry, so
+  nothing proved it bites, and it used a narrower glob than the required check's record predicate. It now
+  sweeps every `gate-reviews/*.md` carrying a round history, and a mutation that makes it skip every
+  record reddens the floor assertion.
+- **MAJOR-10 — this record's own evidence was stale. RESOLVED** by regenerating it from the current head.
+- **MINOR-11 — `gate-reviews/TEMPLATE.md` produces no round-history table**, so a record created by
+  copying the template is not covered by the generic sweep until a table is added by hand. NOT fixed here:
+  changing the template changes what every future reviewer is instructed to write, which is a governance
+  edit deserving its own round rather than a rider on this one.
+- **NIT-12 — the closed set was written twice**, as a frozenset and as a regex alternation twenty lines
+  apart with nothing binding them. RESOLVED: the pattern is built from the frozenset, so there is one
+  source.
+- **NIT-13 — a duplicated assertion** re-evaluated an identical call seventy lines below the original.
+  RESOLVED: removed.
 
 ---
 
 ## Why this record is nevertheless BLOCK
 
-The most recent independent review (round 1) returned BLOCK with three BLOCKERs, one MAJOR and one MINOR.
-Every one is reproduced, fixed and fixtured at round 2, and the round-2 row above is still `pending`
-because an independent round-2 review has not yet returned. Per the prompt's own rule, `PASS` may not be
-written while the newest round is unresolved, and the author may not self-certify the fixes to the
-author's own change. The required `gate-review` check therefore stays RED — the correct state for a
-gate-layer change whose current round is open, not a defect to route around.
+The most recent independent review (round 2) returned BLOCK: one BLOCKER that the round-1 fix itself
+introduced, four MAJORs and two smaller findings. Every one is reproduced, fixed and fixtured above, and
+the round-3 row is `pending` because an independent round-3 review has not yet returned. The author may
+not certify the author's own fixes, and the prompt forbids `PASS` while the newest round is unresolved.
+The required `gate-review` check therefore stays RED — the correct state for a gate-layer change whose
+current round is open, not a defect to route around.
 
 Verdict: BLOCK

@@ -477,6 +477,18 @@ def gate_review_check(res: Results, verbose: bool) -> None:
         ("Verdict: 'PASS [BLOCK](x)' blocks (unanchored-suffix bypass)",
          [("s4.md", base.format(cov="5/5", body="", find="none", v="PASS [BLOCK](x)"))], False, True),
         # ... and the legitimate spellings must still clear, so the anchor is not merely stricter.
+        # 0024 round 2 (BLOCKER): anchoring the strict token into the LINE matcher made an annotated
+        # verdict line INVISIBLE rather than fatal, so "the last verdict line wins" fell back to an
+        # EARLIER, friendlier line. A record ending `Verdict: BLOCK (2 outstanding)` after an earlier
+        # `Verdict: PASS` then CLEARED the required check. Both signs must fail closed.
+        ("an ANNOTATED final BLOCK after an earlier PASS must NOT clear (mirror hole)",
+         [("m1.md", base.format(cov="5/5", body="", find="none", v="PASS")
+                   + "\nmore review text\n\nVerdict: BLOCK (2 blockers outstanding)\n")], False, True),
+        ("an ANNOTATED final BLOCK alone must NOT clear",
+         [("m2.md", base.format(cov="5/5", body="", find="none", v="BLOCK (2 outstanding)"))], False, True),
+        # ...and a well-formed later PASS must still win, so the rule itself is unchanged.
+        ("a well-formed final PASS after an earlier BLOCK still clears",
+         [("m3.md", base.format(cov="5/5", body="", find="none", v="BLOCK") + "\nVerdict: PASS\n")], True, True),
         ("Verdict: lowercase 'pass' still clears",
          [("s5.md", base.format(cov="5/5", body="", find="none", v="pass"))], True, True),
         ("Verdict: 'PASS' with trailing spaces still clears",
@@ -654,7 +666,7 @@ _VERDICT_KINDS = frozenset({"block", "pass", "pending", "self"})
 # multiple or nested parentheticals, a newline, HTML, or link syntax. Rejecting link/HTML/strikethrough
 # spellings is deliberate: this is a narrow grammar for a hand-written control column, and a verdict
 # nobody can write plainly is one nobody should write at all.
-_VERDICT_WORD = r"(?:block|pass|pending|self)"
+_VERDICT_WORD = "(?:" + "|".join(sorted(_VERDICT_KINDS)) + ")"   # ONE source: built from the set
 _VERDICT_ANNOT = r"(?:[ \t]*\((?:[^()\n]*)\))?"        # at most one, non-nested, single-line
 _VERDICT_CELL_RE = re.compile(
     rf"[ \t]*(?:(?P<wrap>\*\*|__|\*|_|`)(?P<wrapped>{_VERDICT_WORD})(?P=wrap)|(?P<plain>{_VERDICT_WORD}))"
@@ -679,8 +691,15 @@ def _verdict_kind(cell: str) -> str | None:
     if not m:
         return None
     g = m.groupdict()
-    word = g.get("paren") or g.get("wrapped") or g.get("plain")
-    return word.casefold() if word else None
+    word = g["paren"] if g.get("paren") else (g.get("wrapped") or g.get("plain"))
+    # The membership test is NOT redundant with the grammar. `re.IGNORECASE` folds U+0131 DOTLESS I and
+    # U+0130 CAPITAL I WITH DOT ABOVE onto `i`, so `pendıng` MATCHES — but neither codepoint casefolds to
+    # `i`, so the result was `'pendıng'`: not a member, and not None. That defeated BOTH consumers at once
+    # (the unrecognised-cell arm did not fire because it was not None; the pending arm did not fire because
+    # it was not "pending"), which is exactly the escape this function exists to prevent. Returning only a
+    # member makes the docstring and the fail-closed claim true.
+    kind = word.casefold()
+    return kind if kind in _VERDICT_KINDS else None
 
 
 # 0024 round 2: the round-history table is identified by its canonical HEADER, not by "any table row whose
@@ -690,24 +709,50 @@ def _verdict_kind(cell: str) -> str | None:
 # hardcoded record. Keying on the header makes "has a round history" an explicit, checkable property.
 _ROUND_HEADER_RE = re.compile(r"(?mi)^\|[ \t]*#[ \t]*\|[ \t]*head[ \t]*\|[ \t]*verdict[ \t]*\|")
 _ROUND_ROW_RE = re.compile(r"^\|[ \t]*(\d+)[ \t]*\|[ \t]*([^|]*?)[ \t]*\|[ \t]*([^|]*?)[ \t]*\|")
+_SEPARATOR_ROW_RE = re.compile(r"^\|[\s:|-]*\|$")
 
 
-def _round_rows(record: str) -> list[tuple[int, str, str]] | None:
-    """The record's round-history rows as (round, head, verdict), or None if it has no round table.
+def _round_rows(record: str) -> tuple[list[tuple[int, str, str]], list[str]] | None:
+    """The record's round rows as (round, head, verdict) plus any problems, or None if it has no round
+    table at all.
 
-    None and [] mean different things: None is "this document is not a round-history record at all"
-    (skipped by the sweep), while [] is "it declares a round table but has no rows" (a problem)."""
+    None means "this document is not a round-history record" and the sweep skips it. Anything else is a
+    round-history record, including one that declares the table and then has no usable rows.
+
+    0024 round 2: an unparseable line INSIDE the table used to be discarded in silence — the loop only
+    stopped on a non-table line, so a row that starts with `|` but does not match (an indented row, a row
+    whose first cell is not an integer, a row with too few cells) simply vanished from the round history
+    and every downstream invariant was computed over a table the reader does not see. Silently reading
+    less than the document says is the whole failure class this checker exists to catch, so an
+    unparseable table line is now a finding."""
     h = _ROUND_HEADER_RE.search(record)
     if not h:
         return None
+    # The header pattern ends mid-line (it only pins the first three columns), so scan from the START OF
+    # THE NEXT LINE — not from the match end, which would hand the header's own tail to the row parser.
+    nl = record.find("\n", h.end())
+    body = "" if nl == -1 else record[nl + 1:]
     rows: list[tuple[int, str, str]] = []
-    for line in record[h.end():].split("\n"):
+    probs: list[str] = []
+    started = False
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            if started:
+                break                  # a blank line ends a Markdown table
+            continue
+        if not stripped.startswith("|"):
+            break                      # the table ended; a later table is not round history
+        started = True
+        if _SEPARATOR_ROW_RE.match(stripped):
+            continue
         mm = _ROUND_ROW_RE.match(line)
         if mm:
             rows.append((int(mm.group(1)), mm.group(2).strip(), mm.group(3).strip()))
-        elif rows and not line.lstrip().startswith("|"):
-            break                      # the table ended; a later table is not round history
-    return rows
+        else:
+            probs.append(f"a line inside the round-history table is not a parseable round row: "
+                         f"{stripped[:80]!r}")
+    return rows, probs
 
 
 def _record_problems(record: str, contrib: str | None = None) -> list[str]:
@@ -728,10 +773,12 @@ def _record_problems(record: str, contrib: str | None = None) -> list[str]:
     written down here to go stale. What does not exist is a separate record FILE per ROUND of the 0005
     record; a later work package does add its own record file under the next free ID, so a
     gate-reviews/00NN-*.md above 0005 is expected and is not a numbering error."""
-    probs: list[str] = []
-    rows = _round_rows(record)
+    parsed = _round_rows(record)
+    if parsed is None:
+        return ["no round-history table found in the record"]
+    rows, probs = parsed
     if not rows:
-        return ["no round-history rows found in the record"]
+        return probs + ["the record declares a round-history table but has no parseable round rows"]
     rounds = sorted(r for r, _, _ in rows)
     n = rounds[-1]
     if rounds != list(range(1, n + 1)):
@@ -755,17 +802,20 @@ def _record_problems(record: str, contrib: str | None = None) -> list[str]:
     # the sentinel sentences were reworded or deleted — precisely the edit path where the table/prose
     # contradiction recurred twice. While the record's FINAL verdict line is BLOCK, both sentinel
     # sentences MUST be present and parseable, or the record is inconsistent by definition.
-    # 0024 round 2: this had the same unconsumed-suffix defect as the cells and as
-    # gate-review-check.py's VERDICT_LINE_RE — `(\w+)` read PASS out of `Verdict: PASS pending`. Matched
-    # WHOLE against the legal tokens now, and deliberately the same grammar the required check uses, so
-    # the two cannot disagree about what a record's conclusion is. An unparseable final line leaves
-    # final_verdict None, which reaches the else-branch below and is reported.
+    # 0024 round 2: this had the same unconsumed-suffix defect as the cells — `(\w+)` read PASS out of
+    # `Verdict: PASS pending`. It is now found LOOSELY and judged STRICTLY, the same two-step
+    # gate-review-check.py uses: anchoring the strict token into the line matcher made an annotated line
+    # INVISIBLE instead of fatal, and "last line wins" then fell back to an earlier one. Only the LAST
+    # verdict-declaring line counts, and if its token is not exactly PASS/BLOCK/FAIL the record is a
+    # problem — never silently skipped in favour of a friendlier line further up.
+    decls = re.findall(r"(?mi)^[ \t]*[-*]?[ \t]*verdict:[ \t]*(.*?)[ \t]*$", record)
     final_verdict = None
-    for fv in re.finditer(r"(?m)^[ \t]*verdict:[ \t]*(PASS|BLOCK|FAIL)[ \t]*$", record, re.IGNORECASE):
-        final_verdict = fv.group(1).upper()
-    if re.search(r"(?mi)^[ \t]*verdict:", record) and final_verdict is None:
-        probs.append("the record has a 'Verdict:' line but no well-formed one "
-                     "(must read exactly PASS, BLOCK or FAIL, alone on the line)")
+    if decls:
+        tok = re.match(r"\A(PASS|BLOCK|FAIL)\Z", decls[-1].strip(), re.IGNORECASE)
+        final_verdict = tok.group(1).upper() if tok else None
+        if final_verdict is None:
+            probs.append(f"the record's last 'Verdict:' line reads {decls[-1]!r} — it must be exactly "
+                         f"PASS, BLOCK or FAIL, alone on the line")
     if final_verdict == "BLOCK":
         if not m:
             probs.append("final verdict is BLOCK but the sentinel sentence 'most recent independent "
@@ -950,9 +1000,6 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
     res.check(_record_problems(rev_pass_ok, good_con) == [],
               "checker: 'review (round N) returned PASS' over a PASS row passes (0024)",
               "; ".join(_record_problems(rev_pass_ok, good_con)) or "clean")
-    res.check(_record_problems(pass_rec, good_con) == [],
-              "checker: an OWNER decision may still close over a BLOCK row (0024; the live 0005 shape)",
-              "; ".join(_record_problems(pass_rec, good_con)) or "clean")
     # 0024 round 2 (BLOCKER-1): the grammar is a RECOGNISER — the whole cell must match. The first
     # attempt returned the first recognised word and ignored the rest, so these all classified.
     for cell in ("BLOCK PASS pending", "BLOCK garbage", "self BLOCK", "BLOCK <!-- pending -->",
@@ -963,16 +1010,37 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
                   f"checker: unconsumed-suffix cell {cell!r} is CAUGHT (0024; the prefix parser took it)")
     res.check(_verdict_kind("BLOCK\npending") is None,
               "checker: a MULTI-LINE verdict cell is rejected (0024)")
+    # 0024 round 2: `re.IGNORECASE` folds U+0131 DOTLESS I onto `i`, so `pendıng` MATCHES the grammar —
+    # but it does not casefold to `i`, so without the membership test the function returned 'pendıng':
+    # neither a member nor None, defeating the unrecognised-cell arm and the pending arm at once.
+    for homoglyph in ("pend\u0131ng", "pend\u0130ng", "**pend\u0131ng**", "pend\u0131ng (round 3)"):
+        res.check(_verdict_kind(homoglyph) is None,
+                  f"checker: homoglyph cell {homoglyph!r} classifies as NOTHING, not as a non-member (0024)")
+    homo_rec = pass_rec.replace("| 2 | bbb | BLOCK |", "| 2 | bbb | pend\u0131ng |")
+    res.check(any("unrecognised verdict cell" in x for x in _record_problems(homo_rec, good_con)),
+              "checker: a homoglyph verdict cell under Verdict: PASS is CAUGHT (0024, fail closed)")
+    # 0024 round 2: an unparseable line INSIDE the round table used to vanish silently, so every invariant
+    # was computed over fewer rows than the reader sees.
+    torn = good_rec.replace("| 2 | bbb | BLOCK | x | y |", " | 2 | bbb | BLOCK | x | y |")
+    res.check(any("not a parseable round row" in x for x in _record_problems(torn, good_con)),
+              "checker: an unparseable line inside the round table is CAUGHT, not dropped (0024)")
     # 0024 round 2: the final-verdict line is matched whole, with the same grammar the required check
     # uses — `Verdict: PASS pending` used to read as PASS here and in gate-review-check.py alike.
-    res.check(any("no well-formed one" in x for x in _record_problems(
+    res.check(any("alone on the line" in x for x in _record_problems(
                   pass_rec.replace("Verdict: PASS", "Verdict: PASS pending"), good_con)),
               "checker: a final line 'Verdict: PASS pending' is CAUGHT (0024)")
+    # 0024 round 2 (BLOCKER): the first attempt anchored the strict token INTO the line matcher, which made
+    # an annotated line invisible rather than fatal — "last verdict wins" then fell back to an earlier,
+    # friendlier line. A record ending `Verdict: BLOCK (2 outstanding)` after an earlier PASS must NOT read
+    # as PASS, here or in the required check.
+    mirror = (pass_rec.replace("Verdict: PASS", "Verdict: PASS\n\nmore text\n\nVerdict: BLOCK (2 outstanding)"))
+    res.check(any("alone on the line" in x for x in _record_problems(mirror, good_con)),
+              "checker: an ANNOTATED final BLOCK does not fall back to an earlier PASS (0024)")
     # 0024 round 2 (MAJOR-4): the round table is found by its HEADER, so a record's OTHER tables are not
     # mistaken for round history — this record's own census table has line numbers in column one.
     res.check(_round_rows("| line | site | was |\n|---|---|---|\n| 673 | a | b |\n") is None,
               "checker: a non-round table is NOT read as round history (0024)")
-    res.check([r for r, _, _ in (_round_rows(good_rec) or [])] == [1, 2],
+    res.check([r for r, _, _ in (_round_rows(good_rec) or ([], []))[0]] == [1, 2],
               "checker: a canonical round table IS found by its header (0024)")
     # The LIVE files must be consistent.
     live = _record_problems(GATE_RECORD.read_text(encoding="utf-8"), CONTRIB.read_text(encoding="utf-8"))
@@ -980,7 +1048,7 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
     # 0024 round 2 (MAJOR-4): and EVERY record carrying a round history must satisfy the generic half —
     # not just the one hardcoded file, which policy also declares append-only.
     swept = 0
-    for rec_path in sorted((ROOT / "gate-reviews").glob("[0-9][0-9][0-9][0-9]-*.md")):
+    for rec_path in sorted((ROOT / "gate-reviews").glob("*.md")):
         text = rec_path.read_text(encoding="utf-8")
         if _round_rows(text) is None:
             continue

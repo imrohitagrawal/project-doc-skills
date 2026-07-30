@@ -58,15 +58,6 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         ["unconsumed-suffix cell", "MULTI-LINE verdict cell"],
     ),
     (
-        "B2-unanchored: VERDICT_LINE_RE drops its end anchor (the required-check bypass)",
-        CHECKER,
-        'VERDICT_LINE_RE = re.compile(r"^[ \\t]*[-*]?[ \\t]*verdict:[ \\t]*(PASS|BLOCK|FAIL)[ \\t]*$",\n'
-        '                             re.IGNORECASE | re.MULTILINE)',
-        'VERDICT_LINE_RE = re.compile(r"^\\s*[-*]?\\s*verdict:\\s*([A-Za-z][A-Za-z-]*)",\n'
-        '                             re.IGNORECASE | re.MULTILINE)',
-        ["unanchored-suffix bypass"],
-    ),
-    (
         "B3-closure: a claimed passing review is not checked against its own table row",
         GOLDEN,
         '            if mc is m_review and _verdict_kind(verdicts.get(kp, "")) != "pass":',
@@ -109,13 +100,42 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         ["counts as an INDEPENDENT round"],
     ),
     (
-        "0024-verdictline: the in-suite final-verdict parser drops its anchor",
+        "R2-mirror: the required check anchors the strict token into the LINE matcher again",
+        CHECKER,
+        'VERDICT_LINE_RE = re.compile(r"^[ \\t]*[-*]?[ \\t]*verdict:[ \\t]*(.*?)[ \\t]*$", re.IGNORECASE | re.MULTILINE)',
+        'VERDICT_LINE_RE = re.compile(r"^[ \\t]*[-*]?[ \\t]*verdict:[ \\t]*(PASS|BLOCK|FAIL)[ \\t]*$", re.IGNORECASE | re.MULTILINE)',
+        ["ANNOTATED final BLOCK after an earlier PASS must NOT clear"],
+    ),
+    (
+        "R2-membership: _verdict_kind returns a non-member instead of None (homoglyph escape)",
         GOLDEN,
-        r'    for fv in re.finditer(r"(?m)^[ \t]*verdict:[ \t]*(PASS|BLOCK|FAIL)[ \t]*$", record, re.IGNORECASE):'
-        '\n        final_verdict = fv.group(1).upper()',
-        r'    for fv in re.finditer(r"(?m)^Verdict:\s*(\w+)", record):'
-        '\n        final_verdict = fv.group(1)',
-        ["Verdict: PASS pending' is CAUGHT"],
+        '    kind = word.casefold()\n    return kind if kind in _VERDICT_KINDS else None',
+        '    return word.casefold()',
+        ["classifies as NOTHING", "homoglyph verdict cell under Verdict: PASS"],
+    ),
+    (
+        "R2-tornrow: an unparseable line inside the round table is silently dropped again",
+        GOLDEN,
+        '            probs.append(f"a line inside the round-history table is not a parseable round row: "\n'
+        '                         f"{stripped[:80]!r}")',
+        '            pass',
+        ["unparseable line inside the round table is CAUGHT"],
+    ),
+    (
+        "R2-sweep: the live-record sweep stops asserting it covers more than one record",
+        GOLDEN,
+        '        if _round_rows(text) is None:\n            continue',
+        '        if True:\n            continue',
+        ["record sweep actually covers"],
+    ),
+    (
+        "0024-verdictline: the in-suite final-verdict parser stops rejecting a malformed last line",
+        GOLDEN,
+        '        if final_verdict is None:\n'
+        '            probs.append(f"the record\'s last \'Verdict:\' line reads {decls[-1]!r} — it must be exactly "\n'
+        '                         f"PASS, BLOCK or FAIL, alone on the line")',
+        '        pass',
+        ["'Verdict: PASS pending' is CAUGHT", "ANNOTATED final BLOCK does not fall back"],
     ),
 ]
 

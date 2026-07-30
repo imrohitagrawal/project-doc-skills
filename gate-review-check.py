@@ -101,8 +101,14 @@ COVERAGE_LINE_RE = re.compile(r"^\s*[-*]?\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*
 # legal tokens, so an unconsumed suffix is not a verdict at all (no match -> effective_verdict None ->
 # "no well-formed verdict", which fails closed). An unrecognised token like PASS-WITH-NITS still fails,
 # as before. gate-reviews/TEMPLATE.md's bracketed "[PASS or BLOCK]" still cannot match, by design.
-VERDICT_LINE_RE = re.compile(r"^[ \t]*[-*]?[ \t]*verdict:[ \t]*(PASS|BLOCK|FAIL)[ \t]*$",
-                             re.IGNORECASE | re.MULTILINE)
+# TWO patterns, deliberately: a LOOSE one that finds every line DECLARING a verdict, and a STRICT one the
+# token must then satisfy. Anchoring the strict form directly into the line matcher (the first attempt at
+# this fix) was worse than the defect it closed: an annotated line simply stopped matching, so it became
+# INVISIBLE rather than fatal, and "the last verdict line wins" then fell back to an EARLIER line. A record
+# ending `Verdict: BLOCK (2 blockers outstanding)` after an earlier `Verdict: PASS` cleared the required
+# check. Finding the line loosely and judging the token separately fails CLOSED in both signs.
+VERDICT_LINE_RE = re.compile(r"^[ \t]*[-*]?[ \t]*verdict:[ \t]*(.*?)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+VERDICT_TOKEN_RE = re.compile(r"\A(PASS|BLOCK|FAIL)\Z", re.IGNORECASE)
 ANY_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
 # The four mandated lens sections PLUS a Findings section — five required headings in total. Matched at
 # TOP level only ('#'/'##'), so a '###' decoy subsection carrying a trigger word cannot hijack the
@@ -197,7 +203,13 @@ def effective_verdict(text: str) -> str | None:
     """The LAST 'Verdict: <token>' in the file, upper-cased (the effective conclusion), or None.
     Using the last line means a PASS quoted in prose cannot override a real BLOCK conclusion."""
     matches = VERDICT_LINE_RE.findall(text)
-    return matches[-1].upper() if matches else None
+    if not matches:
+        return None
+    # The LAST verdict-declaring line wins, and it must be exactly PASS/BLOCK/FAIL. A malformed last line
+    # (`PASS pending`, `BLOCK (2 outstanding)`, the template's `[PASS or BLOCK]`) yields None, which every
+    # caller treats as "no well-formed verdict" and blocks on — it must never fall through to an earlier line.
+    tok = VERDICT_TOKEN_RE.match(matches[-1].strip())
+    return tok.group(1).upper() if tok else None
 
 
 def effective_tier(text: str) -> str:
