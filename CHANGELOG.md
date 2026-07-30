@@ -105,18 +105,16 @@ in-flight skill-count PR.
   - accidental drift caught 5/5 (pure sites match the generated run in the parse tree; tables match by
     rendered first-cell text); empty/missing `skills/` **fails closed**;
   - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, a
-    competing/relocated run, a table header/other-column decoy, and a bold/italic count phrase;
+    competing/relocated run, and a table header/other-column decoy;
   - **raw HTML banned document-wide in the governed docs**, with this suite's exact begin/end marker
     comments as the sole exception — enforced as an **identity allowlist** (`_marker_only_html_block`),
     not "any HTML comment", so the claim is literally true. A non-comment raw-HTML block anywhere, or an
     inline HTML/Markdown-image token anywhere, is rejected, removing the main adversarial surface
     (`<details>` folds, GFM tagfilter, image alt-text) cheaply and *by enforcement*, not by inference.
-  - **count phrases are checked FAIL-CLOSED** (presence-required + value-exact) over the rendered visible
-    text: every canonical phrase must be present and read exactly the canonical count. The earlier form
-    only reported when a pattern matched *and* parsed a number, so a reworded phrase, a multi-token count
-    ("twenty-one"), or a pattern gone stale after the input became rendered text all silently skipped —
-    and one did ship that way (a pattern carrying literal `**` could never match rendered text; caught by
-    `gate-reviews/0010`). Absence is now a finding, so a count phrase can never go unchecked.
+  - **prose count numbers are NOT checked.** The scalar count check that drove rounds 6–14 was **dropped
+    at round 14** (`gate-reviews/0018`) as a bottomless well of BOTH false positives and masks over five
+    rounds, worth little on top of the five generated enumeration sites; the suite's headline count
+    sentences are now plain, ungated prose, so a **stale prose count number is not caught**.
   The accepted residuals (markdown-it-py vs cmark-gfm parse edge cases; cross-file competing runs;
   anything the ban does not cover) are named in CONTRIBUTING "Skill-enumeration gate: scope". Governed
   docs also ban Markdown images — a deliberate content restriction, disclosed there.
@@ -124,8 +122,10 @@ in-flight skill-count PR.
   asserted: the script stubs each guard on a full-repo copy and requires `tests/run-golden.py` to go red,
   and it **verifies its own harness first** (an earlier hand-rolled battery reported "11/11 biting" while
   its incomplete scratch copy made the suite abort before asserting anything — so every stub looked like
-  it bit). CONTRIBUTING requirement (ii) now mandates running it before requesting a review. Current
-  state: 19/19 guards bite.
+  it bit). CONTRIBUTING requirement (ii) now mandates running it before requesting a review. The battery
+  prints its own counts and derives its coverage inventory from the source — a finding-producing function
+  no stub claims is reported OWED and fails the run — so no guard count is restated here; a number copied
+  into prose is exactly the drift this suite exists to catch.
 - **`skills-order`** — validated as an exact permutation of `skills/` (fail closed). The tree moved to its
   own fenced block; the two tables are wrapped whole (header + body).
 - **New dependency: `markdown-it-py`** (CI installs it alongside `pyyaml`). The gate is root scaffolding,
