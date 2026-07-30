@@ -472,8 +472,15 @@ def gate_review_check(res: Results, verbose: bool) -> None:
          [("s1.md", base.format(cov="5/5", body="", find="none", v="PASS pending"))], False, True),
         ("Verdict: 'PASS garbage' blocks (unanchored-suffix bypass)",
          [("s2.md", base.format(cov="5/5", body="", find="none", v="PASS garbage"))], False, True),
-        ("Verdict: 'PASS <!-- BLOCK -->' blocks (unanchored-suffix bypass)",
-         [("s3.md", base.format(cov="5/5", body="", find="none", v="PASS <!-- BLOCK -->"))], False, True),
+        # 0024 round 3: an HTML comment does NOT render, so the reader of this record sees exactly
+        # "Verdict: PASS". Comments are stripped before the verdict is read, which means a comment can
+        # neither invent a verdict nor hide one — `Verdict: BLOCK <!-- really fine, PASS -->` still reads
+        # BLOCK. The check agrees with the RENDERED document, which is the document a human reviews.
+        ("Verdict: 'PASS <!-- BLOCK -->' clears (the comment does not render)",
+         [("s3.md", base.format(cov="5/5", body="", find="none", v="PASS <!-- BLOCK -->"))], True, True),
+        ("a commented-out PASS cannot override a visible BLOCK",
+         [("s7.md", base.format(cov="5/5", body="", find="none", v="BLOCK")
+                   + "\n<!-- once fixed this becomes Verdict: PASS -->\n")], False, True),
         ("Verdict: 'PASS [BLOCK](x)' blocks (unanchored-suffix bypass)",
          [("s4.md", base.format(cov="5/5", body="", find="none", v="PASS [BLOCK](x)"))], False, True),
         # ... and the legitimate spellings must still clear, so the anchor is not merely stricter.
@@ -489,11 +496,34 @@ def gate_review_check(res: Results, verbose: bool) -> None:
         # ...and a well-formed later PASS must still win, so the rule itself is unchanged.
         ("a well-formed final PASS after an earlier BLOCK still clears",
          [("m3.md", base.format(cov="5/5", body="", find="none", v="BLOCK") + "\nVerdict: PASS\n")], True, True),
+        # 0024 round 3: the DANGEROUS direction is a final BLOCK the matcher cannot see, because
+        # last-declaration-wins then falls back to an earlier PASS. Round 3 found seven spellings that did
+        # exactly that, one of them (NBSP) a REGRESSION this branch introduced against main. Every ordinary
+        # decoration a reviewer might write is pinned here, in the direction that matters.
+        *[(f"a final BLOCK written as {label} must NOT clear (fallback-to-PASS class)",
+           [(f"fb{i}.md", base.format(cov="5/5", body="", find="none", v="PASS")
+                          + f"\nmore text\n\n{line}\n")], False, True)
+          for i, (label, line) in enumerate([
+              ("**bold**", "**Verdict: BLOCK**"), ("a bold label", "**Verdict:** BLOCK"),
+              ("a + bullet", "+ Verdict: BLOCK"), ("a - bullet", "- Verdict: BLOCK"),
+              ("a heading", "## Verdict: BLOCK"), ("a blockquote", "> Verdict: BLOCK"),
+              ("an ordered item", "1. Verdict: BLOCK"), ("NBSP-indented", "\u00a0Verdict: BLOCK"),
+              ("EM-SPACE-indented", "\u2003Verdict: BLOCK"), ("backticked", "`Verdict: BLOCK`")])],
         ("Verdict: lowercase 'pass' still clears",
          [("s5.md", base.format(cov="5/5", body="", find="none", v="pass"))], True, True),
         ("Verdict: 'PASS' with trailing spaces still clears",
          [("s6.md", base.format(cov="5/5", body="", find="none", v="PASS   "))], True, True),
         ("a co-committed BLOCK blocks even with a PASS", [("b.md", prose_block), ("g.md", good)], False, True),
+        # 0024 round 3: a record that is NOT a clean PASS must gate the PR, not merely decline to clear
+        # it. An ANNOTATED blocking record collapses to an unreadable verdict, and a sibling clean PASS
+        # used to clear the gate on its behalf — the fall-back-to-a-friendlier-answer shape, across
+        # records this time. The docstring had promised "a malformed record blocks" throughout.
+        ("a co-committed ANNOTATED BLOCK blocks even with a clean PASS (across-records fallback)",
+         [("ab.md", base.format(cov="5/5", body="", find="none", v="BLOCK (2 blockers outstanding)")),
+          ("g2.md", good)], False, True),
+        ("a co-committed record with NO verdict line blocks even with a clean PASS",
+         [("nv.md", base.format(cov="5/5", body="", find="none", v="PASS").replace("Verdict: PASS", "")),
+          ("g3.md", good)], False, True),
         # CONTRACT UPDATE (#6): the light "clears" cases are now grounded in light_admissible with a
         # real inert path (gate-reviews/README.md) — input + expectation aligned to the stricter policy,
         # not a weakened assertion. The expectation (clears) is unchanged; the input is now the ONLY
@@ -802,20 +832,17 @@ def _record_problems(record: str, contrib: str | None = None) -> list[str]:
     # the sentinel sentences were reworded or deleted — precisely the edit path where the table/prose
     # contradiction recurred twice. While the record's FINAL verdict line is BLOCK, both sentinel
     # sentences MUST be present and parseable, or the record is inconsistent by definition.
-    # 0024 round 2: this had the same unconsumed-suffix defect as the cells — `(\w+)` read PASS out of
-    # `Verdict: PASS pending`. It is now found LOOSELY and judged STRICTLY, the same two-step
-    # gate-review-check.py uses: anchoring the strict token into the line matcher made an annotated line
-    # INVISIBLE instead of fatal, and "last line wins" then fell back to an earlier one. Only the LAST
-    # verdict-declaring line counts, and if its token is not exactly PASS/BLOCK/FAIL the record is a
-    # problem — never silently skipped in favour of a friendlier line further up.
-    decls = re.findall(r"(?mi)^[ \t]*[-*]?[ \t]*verdict:[ \t]*(.*?)[ \t]*$", record)
-    final_verdict = None
-    if decls:
-        tok = re.match(r"\A(PASS|BLOCK|FAIL)\Z", decls[-1].strip(), re.IGNORECASE)
-        final_verdict = tok.group(1).upper() if tok else None
-        if final_verdict is None:
-            probs.append(f"the record's last 'Verdict:' line reads {decls[-1]!r} — it must be exactly "
-                         f"PASS, BLOCK or FAIL, alone on the line")
+    # 0024 round 3: there is now ONE verdict parser, not two. This used to re-implement the required
+    # check's grammar "so the two cannot disagree" — a claim that was false twice over, because a
+    # re-implementation is exactly a thing that CAN disagree. It now CALLS the required check's own
+    # parser, so parity is structural rather than asserted. A `None` result means the record's last
+    # verdict declaration is not exactly PASS/BLOCK/FAIL, which is itself a finding.
+    _grc = _load("grc_rec", GATE_REVIEW_CHECK)
+    decls = _grc.VERDICT_LINE_RE.findall(_grc.HTML_COMMENT_RE.sub("", record))
+    final_verdict = _grc.effective_verdict(record)
+    if decls and final_verdict is None:
+        probs.append(f"the record's last verdict declaration reads {decls[-1]!r} — it must be exactly "
+                     f"PASS, BLOCK or FAIL")
     if final_verdict == "BLOCK":
         if not m:
             probs.append("final verdict is BLOCK but the sentinel sentence 'most recent independent "
@@ -1026,7 +1053,7 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
               "checker: an unparseable line inside the round table is CAUGHT, not dropped (0024)")
     # 0024 round 2: the final-verdict line is matched whole, with the same grammar the required check
     # uses — `Verdict: PASS pending` used to read as PASS here and in gate-review-check.py alike.
-    res.check(any("alone on the line" in x for x in _record_problems(
+    res.check(any("must be exactly" in x for x in _record_problems(
                   pass_rec.replace("Verdict: PASS", "Verdict: PASS pending"), good_con)),
               "checker: a final line 'Verdict: PASS pending' is CAUGHT (0024)")
     # 0024 round 2 (BLOCKER): the first attempt anchored the strict token INTO the line matcher, which made
@@ -1034,7 +1061,7 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
     # friendlier line. A record ending `Verdict: BLOCK (2 outstanding)` after an earlier PASS must NOT read
     # as PASS, here or in the required check.
     mirror = (pass_rec.replace("Verdict: PASS", "Verdict: PASS\n\nmore text\n\nVerdict: BLOCK (2 outstanding)"))
-    res.check(any("alone on the line" in x for x in _record_problems(mirror, good_con)),
+    res.check(any("must be exactly" in x for x in _record_problems(mirror, good_con)),
               "checker: an ANNOTATED final BLOCK does not fall back to an earlier PASS (0024)")
     # 0024 round 2 (MAJOR-4): the round table is found by its HEADER, so a record's OTHER tables are not
     # mistaken for round history — this record's own census table has line numbers in column one.

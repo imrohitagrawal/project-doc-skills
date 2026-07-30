@@ -91,23 +91,35 @@ PROMPT_VERSION_RE = re.compile(r"gate-review-prompt\.md\s+v\d+\.\d+\.\d+", re.IG
 # Missing that silently dropped the template's OWN light path (a different-vendor review caught it).
 COVERAGE_LINE_RE = re.compile(r"^\s*[-*]?\s*coverage\s*[:=]\s*\(?\s*(\d+)\s*/\s*(\d+)",
                               re.IGNORECASE | re.MULTILINE)
-# The EFFECTIVE verdict is the LAST "Verdict: <token>" line, so a PASS quoted in prose mid-document
-# cannot satisfy a record whose actual conclusion is BLOCK. The token must be exactly PASS/BLOCK/FAIL —
-# and 0024 round 2 made that sentence TRUE: this pattern used to capture `([A-Za-z][A-Za-z-]*)` with no
-# end anchor, so it read `PASS` out of `Verdict: PASS pending`, `Verdict: PASS garbage`,
-# `Verdict: PASS <!-- BLOCK -->` and `Verdict: PASS [BLOCK](x)`, and decide_verdicts() then cleared the
-# REQUIRED status check because the captured token was exactly "PASS". A record whose final line literally
-# said "PASS pending" could merge a gate-layer change. The line is now matched WHOLE against the three
-# legal tokens, so an unconsumed suffix is not a verdict at all (no match -> effective_verdict None ->
-# "no well-formed verdict", which fails closed). An unrecognised token like PASS-WITH-NITS still fails,
-# as before. gate-reviews/TEMPLATE.md's bracketed "[PASS or BLOCK]" still cannot match, by design.
-# TWO patterns, deliberately: a LOOSE one that finds every line DECLARING a verdict, and a STRICT one the
-# token must then satisfy. Anchoring the strict form directly into the line matcher (the first attempt at
-# this fix) was worse than the defect it closed: an annotated line simply stopped matching, so it became
-# INVISIBLE rather than fatal, and "the last verdict line wins" then fell back to an EARLIER line. A record
-# ending `Verdict: BLOCK (2 blockers outstanding)` after an earlier `Verdict: PASS` cleared the required
-# check. Finding the line loosely and judging the token separately fails CLOSED in both signs.
-VERDICT_LINE_RE = re.compile(r"^[ \t]*[-*]?[ \t]*verdict:[ \t]*(.*?)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+# THE EFFECTIVE VERDICT. Three review rounds each broke this line, always the same way, so the DESIGN is
+# now what stops it rather than the pattern being cleverer.
+#
+# The rule is "the LAST verdict declaration wins", so a PASS quoted in prose cannot satisfy a record whose
+# conclusion is BLOCK. The trap is that a line the matcher does not SEE is silently skipped, and the rule
+# then falls back to an EARLIER, friendlier line. Every tightening of the matcher therefore widened a
+# fail-OPEN hole:
+#   round 1: `([A-Za-z][A-Za-z-]*)` with no end anchor read PASS out of `Verdict: PASS pending`.
+#   round 2: end-anchoring the token INTO the line pattern made `Verdict: BLOCK (2 outstanding)` invisible,
+#            so an earlier `Verdict: PASS` won and a BLOCKing record cleared the gate.
+#   round 3: narrowing the leading class from `\s*` to `[ \t]*` made a NBSP-indented `Verdict: BLOCK`
+#            invisible — a REGRESSION against main, which saw it.
+#
+# So the two jobs are separated and pointed in opposite directions:
+#   FINDING a declaration is deliberately OVER-INCLUSIVE. Over-inclusion is safe: an extra line can only
+#   ever become the authoritative one and then fail the token test, i.e. it can only cause a BLOCK. It
+#   can never cause a fallback to an earlier PASS, which is the only dangerous direction.
+#   JUDGING the token is exact. Anything that is not precisely PASS/BLOCK/FAIL yields None, and every
+#   caller treats None as "no well-formed verdict" and blocks.
+# HTML comments are stripped first: a commented-out verdict is not a declaration, so a trailing
+# `<!-- once fixed this becomes Verdict: PASS -->` cannot become the last one. That commenting style is
+# exactly what gate-reviews/TEMPLATE.md teaches, so it is a shape reviewers really write.
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_HWS = r"[^\S\r\n]"          # horizontal whitespace, Unicode-aware (NBSP, EN SPACE, ...), never a newline
+VERDICT_LINE_RE = re.compile(
+    rf"^{_HWS}*(?:(?:[-*+>#]+|\d+[.)]){_HWS}*)*"      # bullets, headings, blockquotes, ordered lists
+    rf"[*_`]*{_HWS}*verdict{_HWS}*[*_`]*{_HWS}*:"     # emphasis on either side of the label
+    rf"{_HWS}*[*_`]*{_HWS}*(.*?){_HWS}*$",
+    re.IGNORECASE | re.MULTILINE)
 VERDICT_TOKEN_RE = re.compile(r"\A(PASS|BLOCK|FAIL)\Z", re.IGNORECASE)
 ANY_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
 # The four mandated lens sections PLUS a Findings section — five required headings in total. Matched at
@@ -202,13 +214,13 @@ def _section_text(text: str, heading_re: re.Pattern[str]) -> str:
 def effective_verdict(text: str) -> str | None:
     """The LAST 'Verdict: <token>' in the file, upper-cased (the effective conclusion), or None.
     Using the last line means a PASS quoted in prose cannot override a real BLOCK conclusion."""
-    matches = VERDICT_LINE_RE.findall(text)
+    matches = VERDICT_LINE_RE.findall(HTML_COMMENT_RE.sub("", text))
     if not matches:
         return None
     # The LAST verdict-declaring line wins, and it must be exactly PASS/BLOCK/FAIL. A malformed last line
     # (`PASS pending`, `BLOCK (2 outstanding)`, the template's `[PASS or BLOCK]`) yields None, which every
     # caller treats as "no well-formed verdict" and blocks on — it must never fall through to an earlier line.
-    tok = VERDICT_TOKEN_RE.match(matches[-1].strip())
+    tok = VERDICT_TOKEN_RE.match(matches[-1].strip().strip("*_`~ \t"))
     return tok.group(1).upper() if tok else None
 
 
@@ -291,7 +303,8 @@ def decide_verdicts(records: list[tuple[str, str]], allow_light: bool = True) ->
 
     msgs: list[str] = []
     passing: list[str] = []
-    blocking = False
+    blocking = False        # a review that says stop
+    unreadable = False      # a record we cannot read as a clean PASS — 0024 round 3
     for name, text in records:
         probs = shape_problems(text, allow_light)
         verdict = effective_verdict(text)
@@ -302,14 +315,27 @@ def decide_verdicts(records: list[tuple[str, str]], allow_light: bool = True) ->
             continue
         for pr in probs:
             msgs.append(f"{name}: {pr}")
+        # 0024 round 3: a record that is not a clean PASS must gate the PR, not merely decline to clear
+        # it. The docstring has always promised "a malformed record blocks", and it did not: a record
+        # whose verdict was unreadable simply failed to join `passing`, so a SIBLING record's clean PASS
+        # cleared the gate on its behalf. That is the same fall-back-to-a-friendlier-answer shape as the
+        # last-verdict-wins hole, one level up — across records instead of within one. Reproduced: a
+        # record ending `Verdict: BLOCK (2 blockers outstanding)` collapses to an unreadable verdict and,
+        # co-committed with any clean PASS record, the required check CLEARED.
         if verdict != "PASS":
+            unreadable = True
             msgs.append(f"{name}: effective verdict is {verdict or 'absent'} "
                         f"(must be exactly 'Verdict: PASS')")
-        elif not probs:
+        elif probs:
+            unreadable = True
+        else:
             passing.append(name)
 
     if blocking:
         return False, ["a blocking verdict is present (it gates regardless of any PASS):", *msgs]
+    if unreadable:
+        return False, ["a verdict record is not a well-formed PASS (it gates regardless of any other "
+                       "PASS):", *msgs]
     if passing:
         return True, [f"well-formed PASS verdict present: {passing[0]}"]
     return False, msgs

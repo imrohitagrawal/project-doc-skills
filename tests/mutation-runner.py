@@ -100,11 +100,25 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         ["counts as an INDEPENDENT round"],
     ),
     (
-        "R2-mirror: the required check anchors the strict token into the LINE matcher again",
+        "R3-hws: the verdict-line matcher narrows its leading class back to ASCII-only whitespace",
         CHECKER,
-        'VERDICT_LINE_RE = re.compile(r"^[ \\t]*[-*]?[ \\t]*verdict:[ \\t]*(.*?)[ \\t]*$", re.IGNORECASE | re.MULTILINE)',
-        'VERDICT_LINE_RE = re.compile(r"^[ \\t]*[-*]?[ \\t]*verdict:[ \\t]*(PASS|BLOCK|FAIL)[ \\t]*$", re.IGNORECASE | re.MULTILINE)',
-        ["ANNOTATED final BLOCK after an earlier PASS must NOT clear"],
+        '_HWS = r"[^\\S\\r\\n]"',
+        '_HWS = r"[ \\t]"',
+        ["NBSP-indented must NOT clear", "EM-SPACE-indented must NOT clear"],
+    ),
+    (
+        "R3-comments: a commented-out verdict becomes a declaration again",
+        CHECKER,
+        '    matches = VERDICT_LINE_RE.findall(HTML_COMMENT_RE.sub("", text))',
+        '    matches = VERDICT_LINE_RE.findall(text)',
+        ["'PASS <!-- BLOCK -->' clears (the comment does not render)"],
+    ),
+    (
+        "R3-across: a record that is not a clean PASS stops gating the PR",
+        CHECKER,
+        '        if verdict != "PASS":\n            unreadable = True',
+        '        if verdict != "PASS":\n            pass',
+        ["ANNOTATED BLOCK blocks even with a clean PASS", "NO verdict line blocks even with a clean PASS"],
     ),
     (
         "R2-membership: _verdict_kind returns a non-member instead of None (homoglyph escape)",
@@ -129,12 +143,10 @@ MUTATIONS: list[tuple[str, str, str, str, list[str]]] = [
         ["record sweep actually covers"],
     ),
     (
-        "0024-verdictline: the in-suite final-verdict parser stops rejecting a malformed last line",
+        "R3-delegate: the in-suite checker stops reporting a malformed final verdict declaration",
         GOLDEN,
-        '        if final_verdict is None:\n'
-        '            probs.append(f"the record\'s last \'Verdict:\' line reads {decls[-1]!r} — it must be exactly "\n'
-        '                         f"PASS, BLOCK or FAIL, alone on the line")',
-        '        pass',
+        '    if decls and final_verdict is None:',
+        '    if False:',
         ["'Verdict: PASS pending' is CAUGHT", "ANNOTATED final BLOCK does not fall back"],
     ),
 ]
