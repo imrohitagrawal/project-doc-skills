@@ -29,7 +29,7 @@ or a screen a user can complete a task on) — in practice once the quickstart r
 docs-as-code: it carries a last-reviewed date and is re-checked when those steps change (the verifier
 WARNs once that date goes stale).
 
-**How it sequences with the other six skills** (producers before consumers; one task at a time is the
+**How it sequences with the other seven skills** (producers before consumers; one task at a time is the
 line this skill holds):
 
 - **learning-track** (public concepts course) — teaches *why/how it works*; this guide only shows
@@ -42,6 +42,9 @@ line this skill holds):
   for an end user doing a normal task.
 - **onboarding-companion** (contributor onboarding) — for someone joining to *contribute*; this guide is
   for someone *using* the project.
+- **doc-critic** (the independent critic gate) — reviews the finished guide for steps the code does not
+  support, undefined terms, and broken cross-references, and gates publishing on unresolved blockers; this
+  skill writes the guide, doc-critic judges it. Run it before Workflow step 8.
 - **publish-mirror** (downstream publish step) — when the owner wants the page on a wiki or portal, hand
   off to it (Workflow step 8); never author in the target.
 
