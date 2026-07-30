@@ -31,7 +31,7 @@ practice after the architecture and the main workflow exist — and **refresh it
 project grows, not on every change. (Treat it like docs-as-code: it has a last-reviewed date and is
 re-verified when the facts it cites change.)
 
-**How it sequences with the other six skills** (producers before consumers):
+**How it sequences with the other seven skills** (producers before consumers):
 
 - **learning-track** (public concepts course, teach from zero) — the FAQ is internal Q&A *reference*,
   not a course. Use learning-track to teach a newcomer the field; use this to answer "how does my
@@ -45,6 +45,9 @@ re-verified when the facts it cites change.)
   runbook for run/restore procedures.
 - **onboarding-companion** (contributor onboarding tutorial) — the FAQ's onboarding *tab* is a quick
   buddy; deep contributor onboarding is onboarding-companion's job.
+- **doc-critic** (the independent critic gate) — the FAQ *authors* answers; doc-critic *reviews* what was
+  produced, catching contradictions between answers, claims the code does not support, and broken
+  cross-references, then gates publishing on unresolved blockers. Run it before Step 6.
 - **publish-mirror** (the downstream publish step) — when the owner wants the finished page on a wiki
   or portal, the FAQ hands off to it (Step 6); it never authors in the target.
 
