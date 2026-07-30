@@ -5,9 +5,10 @@
 # A release ships only if every step below passes:
 #
 #   1. ./build-skills.sh        — validate each skill against the platform upload rules, package it
-#                                 deterministically, AND run the three now-active suite lints
-#                                 (render-restatement, placeholders, skill-count — all --strict). Emits
-#                                 dist/MANIFEST.sha256 on a clean full build.
+#                                 deterministically, AND run the three now-active suite checks
+#                                 (render-restatement & placeholder lints --strict; the
+#                                 skill-enumeration check --check). Emits dist/MANIFEST.sha256 on a
+#                                 clean full build.
 #   2. tests/run-golden.py      — the gates that guard the gates: every produced golden-good doc passes
 #                                 verify.py with 0 FAIL, every golden-bad doc is caught by the right
 #                                 gate, and the staleness + readability pins hold.
@@ -41,7 +42,7 @@ run() {   # run "<label>" <command...>; on failure print where the gate stopped 
   fi
 }
 
-run "build (validate + deterministic package + render-restatement, placeholder & skill-count lints + manifest)" \
+run "build (validate + deterministic package + render-restatement & placeholder lints + skill-enumeration check + manifest)" \
     ./build-skills.sh
 
 run "golden fixtures (golden-good 0 FAIL, every golden-bad caught, staleness/readability pins)" \

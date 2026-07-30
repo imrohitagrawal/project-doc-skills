@@ -1,0 +1,12 @@
+# skills-order — the canonical ORDER for every skill enumeration in the docs (the SET comes from
+# skills/; this file is validated as an exact permutation of it). One skill per line, editorial order:
+# producers before consumers (authoring skills, then the review gate, then the publish step).
+# Edit here to add/reorder a skill, then run: python3 generate-skill-enumerations.py
+learning-track
+architecture-and-decisions
+project-faq
+usage-guide
+operations-runbook
+onboarding-companion
+doc-critic
+publish-mirror

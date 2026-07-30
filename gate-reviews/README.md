@@ -11,3 +11,11 @@ carries the replayed-failure coverage number and the findings, which is what res
   record here. CI green is necessary, not sufficient — see `CONTRIBUTING.md`.
 
 `TEMPLATE.md` and this `README.md` are scaffolding, not verdicts; the check ignores them.
+
+**One record per pull request, updated in place — not one file per review round.** `gate-review-check.py`
+is deliberately fail-safe: a `BLOCK` record blocks *even if a `PASS` is added later*, and it reads every
+verdict record the PR touches. So a PR that needs a second round must **update its existing record** (the
+current verdict on the last line, earlier rounds summarised inside it) rather than add a second file —
+otherwise the first `BLOCK` makes that PR permanently unmergeable however good the later review is. PR
+#12 hit exactly this and its per-round files were consolidated into one. The append-only rule in
+`CONTRIBUTING.md` binds a record **once merged**; iterating a record inside its own open PR is expected.

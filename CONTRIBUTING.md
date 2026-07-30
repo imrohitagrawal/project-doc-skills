@@ -127,6 +127,25 @@ any **new or changed gate correctness-check** must arrive with a regression fixt
 gate-review *finds* something, ask "could this have been a fixture rather than a human catch?" — if yes,
 the fix is to add the fixture, not only to note the bug.
 
+**Run the revert battery before requesting a review — do not make the reviewer find this.**
+
+```bash
+python3 tests/revert-battery.py      # exit 0 only if every guard bites
+```
+
+"Ships with a fixture" is not the same as "the fixture bites", and the gap is not theoretical: two review
+rounds went to guards that worked but were unfixtured, and one to a check that had silently become a
+no-op. Worse, an ad-hoc hand-rolled battery once reported "11/11 biting" while its scratch copy was
+incomplete — `tests/run-golden.py` aborted with *"required path missing"* before running a single
+assertion, so **every stub looked like it bit**. That is why the battery is now a committed script that
+**checks its own harness first** and refuses to report if the unpatched suite did not actually run green.
+A verification harness that cannot fail is worse than none.
+
+When you add a guard, add its stub to `GUARDS` in that script; a guard with no stub is a guard nobody is
+proving. Related discipline, same root cause: when you change what a check is *fed* (raw source →
+rendered text, say), audit every pattern and caller that consumes it — a gate that stops matching is a
+gate that stops guarding, and it does so **green**.
+
 This binds the enforcement layer to itself. `gate-review-check.py` is a new gate check, so by the rule
 above it ships **with** its fixture: the `gate-review-check` section of
 [`tests/run-golden.py`](tests/run-golden.py) locks its path classifier and its verdict decision —
@@ -155,13 +174,14 @@ this policy (that would couple the mechanism to unrelated content):
   block, and the ISO last-reviewed stamp (necessary because `verify.py`'s 0-FAIL catches only the © — a
   missing ISO stamp is INFO and there is no credits gate); and the verifier-catch half (the © itself) by
   golden-bad case 1 (the missing-© page).
-- **`lint-skill-count.py` — its `b65041f` (2-of-5) fixture is DEFERRED to the `feat/skill-count-generate`
-  work.** The lint is now on `main` (PR #2), but that exact file is being redesigned there
-  ("generate-don't-lint"); landing the `b65041f` fixture in this PR would collide with the redesign and
-  likely be rewritten, so it lands with (or right after) that work. The fixture must reconstruct the
-  actual stale enumerations `b65041f` fixed (README table + count words + the "improve in this order"
-  list + repo-tree; the per-skill prompt's pick-list + attachment table; `build-skills.sh` "all seven")
-  and assert the lint catches each — measuring real coverage, not a mutation of an already-guarded line.
+- **`lint-skill-count.py` — RETIRED, superseded by `generate-skill-enumerations.py` (#7); the owed
+  `b65041f` fixture is discharged by the replacement.** The new gate GENERATES each enumeration from
+  `skills-order` and verifies it against the PARSED Markdown (markdown-it-py). The `b65041f` real-incident
+  — accidental enumeration drift across the five sites — is locked by its fixtures (`tests/run-golden.py`,
+  `skill_enumerations`): a dropped/reordered skill in any marked block fails at every site. Scope is a
+  **drift-catcher + casual-decoy guard with a governed-doc raw-HTML ban**, NOT an adversarial
+  "no reader-visible decoy" proof — see "Skill-enumeration gate: scope" below and
+  `docs/adr/0001-generate-skill-enumerations.md`.
 - **`gate-review-check.py` — fixture LANDED** (`tests/run-golden.py`, the `gate-review-check` +
   `gate-review-check SEAM` sections): path classification, the verdict decision, and the
   `evaluate_verdicts -> light_admissible` seam, locking the rubber-stamp vectors the bootstrap review
@@ -169,6 +189,90 @@ this policy (that would couple the mechanism to unrelated content):
 - **Still audit-owed: `check-version.py`** — confirm its real-incident no-op-revert fixture and open a
   PR for any gap (out of scope for the fixture-backfill PR above, which covered the suite lints + the
   verifier docs gate).
+
+### Skill-enumeration gate: scope (what it guarantees, and what it does not)
+
+`generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
+scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
+prevent). 19 review rounds (review IDs `0005`–`0023`, all recorded in the consolidated `gate-reviews/0005` record; 18 independent cold-pass reviews and 1 author self-red-team round) drove this scope. This section,
+the module docstring, the fixtures, and the clean banner state ONE contract — if they ever disagree, that
+is itself a bug.
+
+**It guarantees (and fixtures lock, each biting on revert — proven by `tests/revert-battery.py`, not
+asserted):**
+- **Accidental drift is caught at all five sites** — the real, recurring failure (`b65041f`). Each
+  enumeration is generated from `skills-order` and verified against the **parsed** Markdown
+  (markdown-it-py): pure sites (improve-order, pick-list, tree) match the generated run in the parse
+  tree; tables' body rows' first-cell **rendered text** equals the skills, in order. Empty/missing
+  `skills/` fails closed.
+- **Each site is pinned to its lead-in (adjacency)** — the markers are HTML comments that travel with the
+  block, so identity alone cannot bind a block to a place; a correct block relocated to an appendix (its
+  site now empty) would still be "found". Each site is anchored to a stable phrase in the block that
+  introduces it — a paragraph, heading, blockquote, or list — and the begin marker must be **immediately
+  preceded by that lead-in**: moving a block **away from its lead-in** (leaving the lead-in behind, or
+  dropping the block into an appendix under a different heading) trips the anchor. (Moving the lead-in and
+  its block together is a legitimate reorganization, not drift.) This is **adjacency only** — an earlier
+  uniqueness rule was dropped because it false-positived when a maintainer innocently repeated an anchor
+  phrase in prose; the deliberate anchor-**clone** relocation it would have caught is a disclosed residual
+  (below).
+- **All text matching is normalized** — NFKC + strip zero-width/format (Cf) characters + Unicode-dash →
+  ASCII `-` + whitespace-collapse + casefold + fold common Cyrillic/Greek homoglyphs, on both the rendered
+  text and every needle (anchor, skill name). A variant that differs only by case, a Unicode
+  non-breaking hyphen, a soft hyphen, a compatibility form, or a common homoglyph (an `о`perations with a
+  Cyrillic о) is matched as the canonical form. The full Unicode confusables table is out of scope — an
+  obscure-homoglyph / heavy-mixed-script variant is a disclosed residual (below).
+- **Casual markup decoys are caught** — hidden-comment rows, code-span comment delimiters,
+  spanning-comment markers, and a *competing enumeration* (in either governed file). A "competing
+  enumeration" is a **near-complete run** of the skill names (all-but-one or more) matched at name
+  boundaries over normalized text, detected in **any rendered unit outside the marked blocks — no separator
+  required** — and **aggregated per top-level container** so it cannot hide by distribution WITHIN one
+  structure: a comma-separated paragraph, a separator-free fence, a bullet/ordered list (one name per item,
+  even a fenced name per item), a blockquote (one name per quoted paragraph, incl. a nested list), and a
+  second table (all cells). An incidental one- or two-name cross-reference (including a two-row reference
+  table, and a legitimate cross-reference column of a marked table) is deliberately not flagged.
+- **Raw HTML is banned document-wide in the governed docs** (`README.md`, `per-skill-review-prompt.md`),
+  with **one permitted exception: this suite's exact begin/end marker comments** — enforced as an
+  identity allowlist, so an *arbitrary* HTML comment is rejected too. A non-comment raw-HTML block
+  (`<details>`, `<div>`, `<ol>`, …) anywhere, or any inline HTML token anywhere, is rejected — not just
+  inside a marked region. Raw HTML is the enabler for a reader-visible decoy that renders differently
+  than it reads (a `<details>` fold, a GFM-tagfilter tag), so banning it removes that surface cheaply and
+  by enforcement.
+- **Markdown images are also banned in the governed docs** — a deliberate content-policy restriction, not
+  an accident of the HTML ban. An image's rendered content is not text the checker can read, so its alt
+  text and the pixels it displays can disagree with each other and with the enumeration. If a governed
+  doc ever genuinely needs an image, that is a scope change: permit it explicitly and define how its
+  content participates in this policy.
+**It does NOT guarantee (accepted, disclosed residual):** a *proof* of "no reader-visible decoy" against
+a determined adversary over arbitrary Markdown. Doing that fully would require rendering each doc to HTML
+and verifying the **DOM** against GitHub's own engine (cmark-gfm) — out of scope for internal tooling whose
+real threat is accidental drift. Known residuals, named rather than hand-waved (each left because closing
+it would false-positive on ordinary content or needs the render-DOM pass):
+- a **competing run split across SEPARATE top-level containers** — e.g. four names in a paragraph and four
+  in a list — so no single container reaches the near-complete threshold. Both governed files are scanned
+  in full, so the former *cross-file* gap is closed; only the multi-container split remains.
+- a **decoy enumeration in a NON-FIRST column of a marked table**. `_table_names` verifies column one is
+  the order; another column naming several skills is an ordinary cross-reference (a "Handoff" / "Reviewed
+  by" column), so it is not flagged — flagging it false-positived on good-faith tables.
+- **relocating a block by removing its lead-in ENTIRELY** and re-homing it with a fresh unique lead-in
+  (legitimate reorganization), leaving a below-threshold partial list at the old site.
+- **relocating a block while CLONING its lead-in phrase** beside the new position — adjacency is satisfied,
+  so the move passes. A uniqueness rule would catch it, but it false-positived on an innocent repeat of an
+  anchor phrase in prose, so anchoring is adjacency-only (see the guarantees above).
+- an **obscure-homoglyph / heavy-mixed-script** variant of a skill name or anchor, beyond the common
+  Latin/Cyrillic/Greek fold in `_norm`. The casual confusables are folded; the full Unicode confusables
+  table is out of scope.
+- the suite's **headline count sentences** ("a suite of eight … skills"; "an eight-skill … suite") and
+  every other **prose count number** are **NOT gated** — a deliberate scope choice (gate-reviews/0018). The
+  five generated enumeration sites catch every skill add/remove/reorder, so a prose count adds only a
+  lone-typo nudge; and verifying "the doc states exactly N" in free English proved a bottomless well of
+  BOTH false positives (an article, a qualifier, a `100%`/`one-click` adjective) AND masks (`twenty-eight`,
+  `eight to eight`, `8,000`) across five review rounds. As the suite grows (8 → 10 → …) a hardcoded prose
+  count is maintenance burden guarding a cosmetic error, so a **stale prose count number is not caught**.
+- markdown-it-py vs cmark-gfm parse edge cases (e.g. exotic control-character handling in table delimiters).
+- anything the raw-HTML ban does not cover.
+
+If the threat model ever warrants it, the render-to-DOM pass is the tracked follow-up — but it is not
+needed to ship this gate as an honest drift-catcher.
 
 ### Running a gate-review
 
@@ -214,8 +318,8 @@ full), so the lighter bar is never granted by omission, and the verdict still ca
   skill's `CHANGELOG.md`. `check-version.py` requires the root changelog to name the current `VERSION`
   (it ignores a `## [Unreleased]` section, which is the right home for changes staged before the next
   version is cut).
-- **Commits.** Conventional commits (`feat(scope): …`, `fix(scope): …`, `docs(scope): …`), with the
-  `Co-Authored-By` trailer where it applies. Land everything via a branch + PR; never push `main`.
+- **Commits.** Conventional commits (`feat(scope): …`, `fix(scope): …`, `docs(scope): …`). Land
+  everything via a branch + PR; never push `main`.
 - **No `--no-verify`, no bypassing CI or the gate-review.** If a check is wrong, fix the check (with a
   gate-review, since the check is gate-layer) — don't route around it.
 

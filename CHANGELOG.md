@@ -26,9 +26,10 @@ in-flight skill-count PR.
     missing its ©/credits/ISO defaults). golden-good now **directly asserts** the regenerated HTML
     carries all three defaults (verify.py's 0-FAIL catches only the ©; credits is un-gated and a missing
     ISO stamp is INFO), and the missing-© golden-bad locks the verifier-catch half.
-  The **`lint-skill-count.py` `b65041f` (2-of-5) fixture is deferred** to the `feat/skill-count-generate`
-  redesign of that exact lint (landing it here would collide); **`check-version.py`** stays audit-owed.
-  See CONTRIBUTING's "Backfill log".
+  The **`lint-skill-count.py` `b65041f` (2-of-5) fixture** is now **resolved by the
+  `feat/skill-count-generate` redesign** (#7, this Unreleased set): the lint is retired and the
+  accidental-drift class it guarded is locked by the new `skill_enumerations` fixtures. **`check-version.py`**
+  stays audit-owed. See CONTRIBUTING's "Backfill log".
 
 ### Added — the enforced independent gate-review (CI green is necessary, not sufficient)
 - **`gate-review-prompt.md`** — the versioned, reusable independent-review prompt for any gate-layer
@@ -90,6 +91,51 @@ in-flight skill-count PR.
   `write_manifest` runs on identical content are byte-identical, and the manifest carries no
   build-commit / timestamp field. A future edit re-adding a volatile field would turn this red.
 
+### Changed — skill-enumeration gate: generate from skills-order, verify against parsed Markdown (#7)
+- **`generate-skill-enumerations.py`** replaces **`lint-skill-count.py`** (now deleted). Each of the five
+  skill enumerations (README skill table, repo tree, improve-order list; per-skill-review-prompt
+  pick-list and attachment table) is GENERATED from a new **`skills-order`** source of truth and verified
+  against the **parsed Markdown** (markdown-it-py), so accidental drift and casual markup decoys are
+  caught at the location a reader reads.
+- **Scope, stated honestly.** This is a **drift-catcher + casual-decoy guard**, not a proof of "no
+  reader-visible decoy". Three gate-reviews (`gate-reviews/0005`–`0007`) each closed a vector and found a
+  new one one layer up (regex → bytes → token nesting → DOM nesting), converging on the lesson that fully
+  defeating an adversarial reader-visible decoy needs a rendered-**DOM** check against GitHub's own engine
+  — deliberately out of scope for internal tooling whose real risk is accidental drift. What ships:
+  - accidental drift caught 5/5 (pure sites match the generated run in the parse tree; tables match by
+    rendered first-cell text); empty/missing `skills/` **fails closed**;
+  - casual decoys caught: hidden-comment rows, code-span comment delimiters, spanning-comment markers, a
+    competing/relocated run, a table header/other-column decoy, and a bold/italic count phrase;
+  - **raw HTML banned document-wide in the governed docs**, with this suite's exact begin/end marker
+    comments as the sole exception — enforced as an **identity allowlist** (`_marker_only_html_block`),
+    not "any HTML comment", so the claim is literally true. A non-comment raw-HTML block anywhere, or an
+    inline HTML/Markdown-image token anywhere, is rejected, removing the main adversarial surface
+    (`<details>` folds, GFM tagfilter, image alt-text) cheaply and *by enforcement*, not by inference.
+  - **count phrases are checked FAIL-CLOSED** (presence-required + value-exact) over the rendered visible
+    text: every canonical phrase must be present and read exactly the canonical count. The earlier form
+    only reported when a pattern matched *and* parsed a number, so a reworded phrase, a multi-token count
+    ("twenty-one"), or a pattern gone stale after the input became rendered text all silently skipped —
+    and one did ship that way (a pattern carrying literal `**` could never match rendered text; caught by
+    `gate-reviews/0010`). Absence is now a finding, so a count phrase can never go unchecked.
+  The accepted residuals (markdown-it-py vs cmark-gfm parse edge cases; cross-file competing runs;
+  anything the ban does not cover) are named in CONTRIBUTING "Skill-enumeration gate: scope". Governed
+  docs also ban Markdown images — a deliberate content restriction, disclosed there.
+- **`tests/revert-battery.py`** — every claimed guard is now *proven* to bite on revert rather than
+  asserted: the script stubs each guard on a full-repo copy and requires `tests/run-golden.py` to go red,
+  and it **verifies its own harness first** (an earlier hand-rolled battery reported "11/11 biting" while
+  its incomplete scratch copy made the suite abort before asserting anything — so every stub looked like
+  it bit). CONTRIBUTING requirement (ii) now mandates running it before requesting a review. Current
+  state: 19/19 guards bite.
+- **`skills-order`** — validated as an exact permutation of `skills/` (fail closed). The tree moved to its
+  own fenced block; the two tables are wrapped whole (header + body).
+- **New dependency: `markdown-it-py`** (CI installs it alongside `pyyaml`). The gate is root scaffolding,
+  never bundled into a `.skill`, so no shipped package gains a dependency; the gate **fails closed** if
+  the parser is absent.
+- Wired into `build-skills.sh` (replacing the lint step) and the gate layer (`.github/gate-paths` names
+  the generator + `skills-order`); `release-gate.sh` prose updated so the gate's self-description does not
+  drift. Suite tooling, never bundled; no `VERSION` bump (folds into the next cut under `Unreleased`).
+  See `docs/adr/0001-generate-skill-enumerations.md`.
+
 ## [1.2.0] — 2026-06-28 (suite lint: the skill-enumeration guard)
 
 A new root-level suite lint, composed into the release gate. Suite tooling, never copied into a `.skill`.
@@ -112,9 +158,10 @@ A new root-level suite lint, composed into the release gate. Suite tooling, neve
 - **Scope (honest):** this guards **accidental** enumeration drift — the class above, which it catches.
   It is **not** adversarially-decoy-proof: because it reads raw Markdown, a canonical run hidden in
   markup right after the introducing phrase (HTML comment, code span, reference definition), or a decoy
-  phrase that merely contains the anchor substring, can mask a broken visible list. The structural fix —
-  generating each enumeration from the source of truth and checking it byte-identical, so no parsing and
-  no decoy class — is tracked as a follow-up (`feat/skill-count-generate`).
+  phrase that merely contains the anchor substring, can mask a broken visible list. The structural
+  follow-up — generate each enumeration from the source of truth and verify it — is `feat/skill-count-generate`
+  (#7); it lands as a drift-catcher + casual-decoy guard with a governed-doc raw-HTML ban (see that
+  entry's honest scope), not an absolute "no decoy class".
 
 ## [1.1.0] — 2026-06-28 (new skill: doc-critic — the independent critic gate)
 
