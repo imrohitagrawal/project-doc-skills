@@ -72,6 +72,8 @@ GOLDEN_BAD = ROOT / "tests" / "golden-bad"
 REVIEW_PLAYBOOK = ROOT / "skills" / "doc-critic" / "references" / "review-playbook.md"
 GATE_REVIEW_CHECK = ROOT / "gate-review-check.py"
 GEN = ROOT / "generate-skill-enumerations.py"
+GATE_RECORD = ROOT / "gate-reviews" / "0005-skill-enumeration-gate.md"
+CONTRIB = ROOT / "CONTRIBUTING.md"
 PKGTOOLS = ROOT / "pkgtools.py"
 
 # Pinned so a stamp-bearing golden stays "within window" regardless of when the suite is built; the
@@ -608,6 +610,106 @@ def manifest_byte_stability(res: Results, verbose: bool) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+def _record_problems(record: str, contrib: str) -> list[str]:
+    """Consistency problems between the PR #12 review record's round-history TABLE, its verdict PROSE, and
+    CONTRIBUTING's stated review-round range. PURE (text in, problems out) so it can be self-tested on
+    synthetic bad records. 0022 (round-18 MAJOR-4): the table/prose contradiction recurred twice — round 16
+    said `pending` in the table while the prose said BLOCK, and the round-17 row repeated the exact same
+    mismatch one round later — because the invariant lived in the author's care instead of a check. Now the
+    suite reddens on: non-consecutive round numbers, more than one pending row, a pending row that is not
+    the newest round, prose naming a round whose table verdict is not BLOCK, a non-pending row after the
+    prose's "most recent" round, an awaited-round number that is not most-recent + 1, and a CONTRIBUTING
+    range end that disagrees with the table's round count, and — while the record's final verdict line is
+    BLOCK — a missing or reworded sentinel sentence (fail closed; the prose checks used to no-op on a
+    reworded anchor). NOTE on numbering: 0005-0022 are REVIEW IDS continuing the gate-reviews file
+    sequence — round 1 is file 0005 and rounds 2+ are recorded INSIDE that consolidated record (its
+    'Record convention' note); the IDs also tag code comments. Round N carries ID 0004+N; there are no
+    files 0006+."""
+    probs: list[str] = []
+    rows = [(int(m.group(1)), m.group(2).strip(), m.group(3).strip())
+            for m in re.finditer(r"(?m)^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", record)]
+    if not rows:
+        return ["no round-history rows found in the record"]
+    rounds = sorted(r for r, _, _ in rows)
+    n = rounds[-1]
+    if rounds != list(range(1, n + 1)):
+        probs.append(f"round numbers are not consecutive 1..{n}: {rounds}")
+    verdicts = {r: v for r, _, v in rows}
+    pend = [r for r, v in verdicts.items() if v.lower() == "pending"]
+    if len(pend) > 1:
+        probs.append(f"more than one pending row: {sorted(pend)}")
+    if pend and max(pend) != n:
+        probs.append(f"a pending row ({max(pend)}) is not the newest round ({n})")
+    tail = record.split("Why this record is nevertheless BLOCK", 1)[-1]
+    m = re.search(r"most recent independent review \(round (\d+)\) returned BLOCK", tail)
+    m_awaited = re.search(r"independent round-(\d+) review", tail)
+    # FAIL CLOSED on the anchors (0022, a red-team finding): the prose checks used to no-op silently if
+    # the sentinel sentences were reworded or deleted — precisely the edit path where the table/prose
+    # contradiction recurred twice. While the record's FINAL verdict line is BLOCK, both sentinel
+    # sentences MUST be present and parseable, or the record is inconsistent by definition.
+    final_verdict = None
+    for fv in re.finditer(r"(?m)^Verdict:\s*(\w+)", record):
+        final_verdict = fv.group(1)
+    if final_verdict == "BLOCK":
+        if not m:
+            probs.append("final verdict is BLOCK but the sentinel sentence 'most recent independent "
+                         "review (round N) returned BLOCK' is missing or reworded — the table/prose "
+                         "cross-check cannot run (fail closed)")
+        if not m_awaited:
+            probs.append("final verdict is BLOCK but the awaited-round sentence 'independent round-N "
+                         "review' is missing or reworded (fail closed)")
+    if m:
+        k = int(m.group(1))
+        if verdicts.get(k) != "BLOCK":
+            probs.append(f"prose says round {k} returned BLOCK but table row {k} says {verdicts.get(k)!r}")
+        if any(r > k and verdicts[r].lower() != "pending" for r in verdicts):
+            probs.append(f"prose calls round {k} the most recent review, but a non-pending row follows it")
+        if m_awaited and int(m_awaited.group(1)) != k + 1:
+            probs.append(f"prose awaits round {m_awaited.group(1)}, but the most recent review is round {k}")
+    m3 = re.search(r"review IDs `0005`–`00(\d\d)`", contrib)
+    if not m3:
+        probs.append("CONTRIBUTING no longer states the review-ID range (`0005`–`00NN`)")
+    elif int(m3.group(1)) != n + 4:
+        probs.append(f"CONTRIBUTING's review-ID range ends at 00{m3.group(1)} but the record has {n} "
+                     f"rounds (round N carries ID 0004+N, so expected 00{n + 4:02d})")
+    return probs
+
+
+def review_record_consistency(res: Results, verbose: bool) -> None:
+    """The PR #12 record's table, prose and CONTRIBUTING count must agree — mechanically (0022)."""
+    print("review-record consistency (table vs prose vs CONTRIBUTING — checked, not remembered):")
+    # Self-tests on synthetic records first: the checker itself must be able to fail (a checker that
+    # cannot go red proves nothing about the live files).
+    good_rec = ("| 1 | aaa | BLOCK | x | y |\n| 2 | bbb | BLOCK | x | y |\n"
+                "Why this record is nevertheless BLOCK: the most recent independent review (round 2) "
+                "returned BLOCK ... an independent round-3 review ...\nVerdict: BLOCK\n")
+    good_con = "text review IDs `0005`–`0006` text"
+    res.check(_record_problems(good_rec, good_con) == [],
+              "checker: a consistent synthetic record passes",
+              "; ".join(_record_problems(good_rec, good_con)) or "clean")
+    bad_pending = good_rec.replace("| 2 | bbb | BLOCK |", "| 2 | bbb | pending |")
+    res.check(any("returned BLOCK but table row" in x for x in _record_problems(bad_pending, good_con)),
+              "checker: table `pending` vs prose `BLOCK` on the same round is CAUGHT (the recurring bug)")
+    res.check(any("range ends at" in x for x in _record_problems(good_rec, "review IDs `0005`–`0021`")),
+              "checker: a stale CONTRIBUTING review-ID range is CAUGHT")
+    res.check(any("not consecutive" in x for x in
+                  _record_problems(good_rec.replace("| 2 |", "| 4 |"), good_con)),
+              "checker: a gap in round numbers is CAUGHT")
+    # 0022 (red-team): the prose anchors must FAIL CLOSED while the final verdict is BLOCK — a reworded
+    # sentinel used to silently disable every table-vs-prose cross-check, exactly on the edit path where
+    # the contradiction recurred twice.
+    reworded = good_rec.replace("returned BLOCK", "returned a BLOCK verdict")
+    res.check(any("sentinel sentence" in x for x in _record_problems(reworded, good_con)),
+              "checker: a REWORDED sentinel under a final BLOCK verdict is CAUGHT (fail closed)")
+    no_awaited = good_rec.replace("an independent round-3 review", "a future review")
+    res.check(any("awaited-round sentence" in x for x in _record_problems(no_awaited, good_con)),
+              "checker: a missing awaited-round sentence under a final BLOCK verdict is CAUGHT")
+    # The LIVE files must be consistent.
+    live = _record_problems(GATE_RECORD.read_text(encoding="utf-8"), CONTRIB.read_text(encoding="utf-8"))
+    res.check(live == [], "LIVE record + CONTRIBUTING are consistent", "; ".join(live) or "consistent")
+
+
 def skill_enumerations(res: Results, verbose: bool) -> None:
     """Lock the skill-enumeration gate's CLAIMED behaviors (see the generator docstring + CONTRIBUTING
     "Skill-enumeration gate: scope"): it generates each enumeration from skills-order and verifies it
@@ -726,6 +828,27 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
             self.findings = list(findings)
             self.exc = exc
 
+        # 0022 (round-18 MAJOR-3): the round-17 claim that "if result:/len()/iteration are TypeErrors" was
+        # FALSE — no dunders were defined, so default OBJECT truthiness made bool(result) True for a crash,
+        # a clean run and a finding alike. The loud-failure property is now real: every accidental
+        # list-like read raises, so a future assertion that skips the accessors cannot return a quietly
+        # wrong answer. (repr/detail stay usable for res.check detail strings.)
+        _USE = "read a ScratchResult via was_caught()/was_caught_msg()/was_clean(), never directly"
+
+        def __bool__(self):
+            raise TypeError(f"ScratchResult has no truthiness — {self._USE}")
+
+        def __len__(self):
+            raise TypeError(f"ScratchResult has no length — {self._USE}")
+
+        def __iter__(self):
+            raise TypeError(f"ScratchResult is not iterable — {self._USE}")
+
+        def __eq__(self, other):
+            raise TypeError(f"ScratchResult does not support == — {self._USE}")
+
+        __hash__ = None
+
         def __repr__(self):
             return f"ScratchResult(findings={self.findings!r}, exc={self.exc!r})"
 
@@ -788,6 +911,23 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
               "scratch harness: a CRASH is neither 'caught' nor 'clean' (and real results classify)",
               f"crash=({was_caught(_crash)},{was_clean(_crash)}) found=({was_caught(_found)},"
               f"{was_clean(_found)}) clean=({was_caught(_clean)},{was_clean(_clean)})")
+    # 0022: the list protocol must RAISE — for a crash, a clean run AND a finding result — so no future
+    # assertion can consume a ScratchResult without going through the exc-aware accessors.
+    def _raises_typeerror(op):
+        try:
+            op()
+        except TypeError:
+            return True
+        except Exception:
+            return False
+        return False
+    _proto_ok = all(_raises_typeerror(op)
+                    for r in (_crash, _found, _clean)
+                    for op in (lambda r=r: bool(r), lambda r=r: len(r),
+                               lambda r=r: iter(r), lambda r=r: r == []))
+    res.check(_proto_ok,
+              "scratch harness: bool()/len()/iter()/== all raise TypeError on every ScratchResult shape",
+              "all raise" if _proto_ok else "some list-protocol read did NOT raise")
 
     def repl(rel, a, b):
         return lambda t: (t / rel).write_text((t / rel).read_text(encoding="utf-8").replace(a, b),
@@ -1211,7 +1351,9 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         p = subprocess.run([sys.executable, str(tmp / "generate-skill-enumerations.py"),
                             str(tmp), "--check"], capture_output=True, text=True, env=env)
         shutil.rmtree(tmp, ignore_errors=True)
-        return p.returncode, (p.stdout + p.stderr)
+        # stdout and stderr SEPARATELY (0022): the arms pin stdout exactly AND require stderr empty, so
+        # rerouting a diagnostic to stderr cannot satisfy an arm that combined the two streams.
+        return p.returncode, p.stdout, p.stderr
 
     # LINE-BASED oracle (0020 BLOCKER-2): substring tests could not prove the advertised contract — a
     # TRACEBACK containing the word "FAIL" satisfied `"fail" in out`, and the pristine arm never forbade a
@@ -1237,28 +1379,70 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
                 [l for l in lines if l.strip().startswith(BANNER_PREFIX)],
                 any("Traceback (most recent call last)" in l for l in lines))
 
-    # (a) DRIFT: exit 1, >=1 real FAIL line, no banner, no traceback.
-    rc, out = _cli_check(repl("README.md", "→ publish-mirror.**", ".**"))
-    fails, banners, tb = _cli_lines(out)
-    res.check(rc == 1 and len(fails) >= 1 and not banners and not tb,
-              "CLI --check on a DRIFTED doc: exit 1 + a real 'FAIL  skill-enum:' line + no banner + no traceback",
-              f"exit {rc}; fail_lines={len(fails)}; banner_lines={len(banners)}; traceback={tb}")
-    # (b) PRISTINE: exit 0, NO FAIL line, no traceback, and EXACTLY the expected banner (see above).
-    rc0, out0 = _cli_check(None)
-    fails0, banners0, tb0 = _cli_lines(out0)
-    banner_exact = len(banners0) == 1 and banners0[0].strip() == EXPECTED_BANNER
-    res.check(rc0 == 0 and not fails0 and not tb0 and banner_exact,
-              "CLI --check on a PRISTINE repo: exit 0 + NO FAIL line + no traceback + the EXACT clean banner",
-              f"exit {rc0}; fail_lines={len(fails0)}; banner_lines={len(banners0)}; exact={banner_exact}"
-              + ("" if banner_exact or not banners0 else f"; got={banners0[0].strip()[:70]!r}"))
-    # (c) PARSER MISSING: main()'s `except MarkerError` verdict path — exit 1, the specific fail-closed
-    #     message, no clean banner, no traceback. Reverting that arm's `return 1` to 0 reddens here.
-    rcp, outp = _cli_check(None, shadow_import_error=True)
-    failsp, bannersp, tbp = _cli_lines(outp)
-    msg_ok = any("markdown-it-py is not installed" in l for l in failsp)
-    res.check(rcp == 1 and msg_ok and not bannersp and not tbp,
-              "CLI --check with markdown-it MISSING: exit 1 + the fail-closed FAIL line + no banner + no traceback",
-              f"exit {rcp}; fail_lines={len(failsp)}; msg_ok={msg_ok}; banner={len(bannersp)}; traceback={tbp}")
+    # 0022 (round-18 MAJOR-5): the drift arm was materially WEAKER than the pristine arm — it accepted
+    # ANY line starting "FAIL  skill-enum:" (a constant phantom passed), never required the failure
+    # summary, and could not see truncated findings, a wrong summary count, or a silent SystemExit(1).
+    # Every CLI arm now pins the EXACT COMPLETE output (all non-blank lines, in order), constructed from
+    # this fixture's OWN knowledge of the drift it introduced — the same standard the pristine banner got
+    # in 0021. Exactness subsumes: real diagnostic text, ALL findings printed, correct summary count, no
+    # phantom lines, no traceback, and no summary-less early exit.
+    def _cli_output_lines(out):
+        # Blank/whitespace-only lines are dropped DELIBERATELY: they render nothing and can carry no
+        # claim, and pinning them would make the contract brittle to zero-information spacing. Every
+        # information-bearing line is pinned exactly, stderr must be empty, and the exit code is pinned.
+        return [l for l in out.splitlines() if l.strip()]
+
+    def _echo(lines):
+        """Render child-output lines for a res.check DETAIL string. The literal traceback header is
+        neutralised so a failing arm's detail cannot be mistaken for the SUITE crashing by anything that
+        scans this suite's output (the revert battery's crash signal is the missing summary line, but the
+        detail should not carry the magic string either — 0022)."""
+        return repr(lines).replace("Traceback (most recent call last)", "<child-traceback>")
+
+    _FAIL_IMPROVE = ("   FAIL  skill-enum: README.md: 'improve-order' block is not the generated "
+                     "enumeration (run generate-skill-enumerations.py)")
+    _FAIL_PICK = ("   FAIL  skill-enum: per-skill-review-prompt.md: 'pick-list' block is not the "
+                  "generated enumeration (run generate-skill-enumerations.py)")
+    _FAIL_PARSER = ("   FAIL  skill-enum: markdown-it-py is not installed — the enumeration gate cannot "
+                    "run (pip install markdown-it-py)")
+
+    def _summary(n):
+        return (f"--- skill-enumerations: {n} finding(s) — regenerate with "
+                f"`python3 generate-skill-enumerations.py` and re-check ---")
+
+    # (a) ONE drifted site: exit 1; output is EXACTLY the real diagnostic + the 1-finding summary.
+    rc, out, err = _cli_check(repl("README.md", "→ publish-mirror.**", ".**"))
+    got = _cli_output_lines(out)
+    want = [_FAIL_IMPROVE, _summary(1)]
+    res.check(rc == 1 and got == want and err.strip() == "",
+              "CLI --check on a DRIFTED doc: exit 1 + EXACT stdout (real diagnostic + 1-finding summary) + empty stderr",
+              f"exit {rc}; exact={got == want}" + ("" if got == want else f"; got={_echo(got[:2])}"))
+    # (b) TWO drifted sites (one per governed file): BOTH diagnostics, in registry order, + the 2-finding
+    #     summary — proves every finding is printed and the count is the real count.
+    def _two_drifts(t):
+        repl("README.md", "→ publish-mirror.**", ".**")(t)
+        repl("per-skill-review-prompt.md", "· publish-mirror`", "· NOT-A-SKILL`")(t)
+    rc2, out2, err2 = _cli_check(_two_drifts)
+    got2 = _cli_output_lines(out2)
+    want2 = [_FAIL_IMPROVE, _FAIL_PICK, _summary(2)]
+    res.check(rc2 == 1 and got2 == want2 and err2.strip() == "",
+              "CLI --check with TWO drifted sites: exit 1 + EXACT stdout (both diagnostics + 2-finding summary) + empty stderr",
+              f"exit {rc2}; exact={got2 == want2}" + ("" if got2 == want2 else f"; got={_echo(got2[:3])}"))
+    # (c) PRISTINE: exit 0; output is EXACTLY the expected clean banner and nothing else.
+    rc0, out0, err0 = _cli_check(None)
+    got0 = _cli_output_lines(out0)
+    banner_exact = got0 == [EXPECTED_BANNER]
+    res.check(rc0 == 0 and banner_exact and err0.strip() == "",
+              "CLI --check on a PRISTINE repo: exit 0 + EXACT stdout (the EXACT clean banner alone) + empty stderr",
+              f"exit {rc0}; exact={banner_exact}" + ("" if banner_exact else f"; got={_echo(got0[:2])}"))
+    # (d) PARSER MISSING: main()'s `except MarkerError` verdict path — exit 1; output is EXACTLY the
+    #     fail-closed diagnostic and nothing else. Reverting that arm's `return 1` to 0 reddens here.
+    rcp, outp, errp = _cli_check(None, shadow_import_error=True)
+    gotp = _cli_output_lines(outp)
+    parser_exact = gotp == [_FAIL_PARSER]
+    res.check(rcp == 1 and parser_exact and errp.strip() == "",
+              "CLI --check with markdown-it MISSING: exit 1 + EXACT stdout (the fail-closed diagnostic alone) + empty stderr",
+              f"exit {rcp}; exact={parser_exact}" + ("" if parser_exact else f"; got={_echo(gotp[:2])}"))
 
     # --- 0020 MAJOR-5: _inline_text renders BOTH break kinds as a space so adjacent names stay separated
     #     for boundary matching. Only the SOFTBREAK half had a fixture, so dropping "hardbreak" left the
@@ -1409,7 +1593,7 @@ def main() -> int:
     args = ap.parse_args()
 
     for needed in (SHARED_VERIFY, PROFILE, LRR, FAQ_GEN, UG_GEN, REVIEW_PLAYBOOK, GATE_REVIEW_CHECK,
-                   GEN, PKGTOOLS, LINT_PLACEHOLDERS):
+                   GEN, PKGTOOLS, LINT_PLACEHOLDERS, GATE_RECORD, CONTRIB):
         if not needed.exists():
             print(f"run-golden: required path missing: {needed}")
             return 2
@@ -1428,6 +1612,8 @@ def main() -> int:
     gate_review_seam(res, args.verbose)
     print()
     manifest_byte_stability(res, args.verbose)
+    print()
+    review_record_consistency(res, args.verbose)
     print()
     skill_enumerations(res, args.verbose)
     print()

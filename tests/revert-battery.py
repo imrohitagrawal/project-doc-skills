@@ -100,7 +100,11 @@ def _classify(p: subprocess.CompletedProcess) -> tuple[str, str, set[str]]:
     summary = next((l for l in out.splitlines() if l.startswith("--- golden")), "")
     if "required path missing" in out:
         return "HARNESS", "the suite aborted before asserting (required path missing)", failed
-    if "Traceback (most recent call last)" in out or not summary:
+    if not summary:
+        # The suite's own abort always kills it BEFORE the summary line prints, so "no summary" is the
+        # precise crash signal. Do NOT scan the output for a "Traceback" string: the exact-output CLI
+        # fixtures echo a failing SUBPROCESS's lines (which contain a real traceback) into their detail
+        # text, and that echo mis-classified three genuine RED bites as CRASH (0022).
         first = next((l for l in out.splitlines() if l.strip()), "")
         return "CRASH", f"the suite did not complete: {first[:70]}", failed
     if p.returncode == 0:
@@ -180,54 +184,31 @@ def _returned_names(fn: ast.FunctionDef) -> set[str]:
 
 
 def _finding_branches(src: str):
-    """Every finding-EMITTING statement in the generator — a `raise MarkerError(...)`, or an
-    `accumulator.append(...)` where the ENCLOSING function RETURNS that accumulator as its verdict — as
-    (label, patch) where the patch neuters that ONE statement with `pass`. The curated GUARDS above prove
-    each NAMED branch bites; this sweep proves EXHAUSTIVELY that NO finding-branch is a silent no-op-revert
-    (the guard-a class). It is committed (gate-reviews/0018) so this is a durable part of the battery.
+    """Every finding-EMITTING statement in the generator — a `raise MarkerError(...)` or an EMISSION to a
+    returned finding accumulator — as (label, patch) where the patch neuters that ONE statement with
+    `pass`. The curated GUARDS above prove each NAMED branch bites; this sweep proves EXHAUSTIVELY that NO
+    finding-branch is a silent no-op-revert (the guard-a class).
 
-    SEMANTIC inventory (gate-reviews/0019). An append counts ONLY when BOTH hold: (i) the accumulator is one
-    of the codebase's FINDINGS accumulators — named `findings` / `errs` / `out` (the exact set
-    `_finding_producers` keys on), which hold verdict STRINGS; AND (ii) the enclosing function RETURNS that
-    accumulator by name. Condition (ii) excludes `_inline_text`, which appends to a local `out` but RETURNS
-    `"".join(out)` (a string, not the list) — its two DATA appends are not finding-branches, and neutering
-    them reddens golden for an unrelated reason (all rendered text emptied). Condition (i) excludes returned
-    DATA lists that are not findings — `_table_names` returns `names`, `_table_cells` returns `rows` — which
-    (ii) alone would wrongly admit. Together they leave the denominator holding real verdicts only, which the
-    sweep's RED requirement (below) needs to stay honest. Raises of MarkerError are always verdicts and are
-    always included. NOTE: this sweep covers append + raise statements, which can be safely neutered to
-    `pass`; a finding-emitting RETURN (`return findings` / `if errs: return errs` / the empty-skills return
-    literal) cannot be pass-neutered without returning None and crashing its callers, so those are covered
-    by curated GUARDS with explicit benign-value reverts, not by this sweep (gate-reviews/0019)."""
+    The emission inventory is DERIVED FROM THE CLOSED-WORLD AUDIT (_audit_accumulators, 0022): a returned
+    finding accumulator may only be initialised, emitted-to, and returned — any other use of the name is an
+    audit problem, and this function REFUSES (raises) rather than inventory a source it cannot fully see.
+    That inversion is what ended the denominator-shrinking arms race (rounds 17-18): completeness no longer
+    depends on recognising every emission form, because unrecognisable forms halt the battery instead of
+    silently vanishing from the count. Raises of MarkerError are always verdicts and always included.
+    NOTE: a finding-emitting RETURN (`return findings` / `if errs: return errs` / the empty-skills return
+    literal) cannot be pass-neutered without crashing its callers, so those are covered by curated GUARDS
+    with explicit benign-value reverts, not by this sweep (gate-reviews/0019)."""
+    emissions, problems = _audit_accumulators(src)
+    if problems:
+        raise RuntimeError("accumulator audit failed — the inventory cannot see every emission: "
+                           + "; ".join(problems))
+    spans = list(emissions)
     tree = ast.parse(src)
-    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
-    returns = {fn: _returned_names(fn) for fn in funcs}
-    FINDING_ACCUMS = ("findings", "errs", "out")
-
-    def enclosing(line: int) -> ast.FunctionDef | None:
-        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
-        return max(cands, key=lambda fn: fn.lineno) if cands else None   # innermost
-
-    spans = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr in MUTATING_METHODS and isinstance(node.func.value, ast.Name) \
-                and node.func.value.id in FINDING_ACCUMS:
-            fn = enclosing(node.lineno)
-            if fn is not None and node.func.value.id in returns[fn] \
-                    and _is_list_accumulator(fn, node.func.value.id):   # a returned LIST = verdicts
-                spans.append((node.lineno, node.end_lineno,
-                              f"{node.func.value.id}.{node.func.attr} @L{node.lineno}"))
-        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) \
-                and node.target.id in FINDING_ACCUMS:
-            fn = enclosing(node.lineno)
-            if fn is not None and node.target.id in returns[fn]:       # `findings += [...]`
-                spans.append((node.lineno, node.end_lineno,
-                              f"{node.target.id}.augassign @L{node.lineno}"))
-        elif isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
+        if isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
             spans.append((node.lineno, node.end_lineno, f"raise MarkerError @L{node.lineno}"))
     out = []
-    for lo, hi, label in sorted(spans):
+    for lo, hi, label in sorted(set(spans)):
         def patch(s, lo=lo, hi=hi):
             ls = s.split("\n")
             indent = len(ls[lo - 1]) - len(ls[lo - 1].lstrip())
@@ -248,56 +229,226 @@ def _branch_functions(src: str) -> set[str]:
     return {enclosing(int(lab.split("@L")[1])) for lab, _ in _finding_branches(src)}
 
 
-# Every list method that can ADD a finding to a verdict accumulator. The inventory covers all of them, and
-# _unknown_accumulator_mutations() below FAILS CLOSED on any method outside this set ∪ READ_ONLY_METHODS —
-# 0021 (round-17 MAJOR-2): a review showed a semantics-preserving `errs.append(m)` -> `errs.extend([m])`
-# refactor silently dropped the inventory 21 -> 20 while every oracle stayed green, because the collector
-# recognised only `.append`. Enumerating the mutators is not enough on its own (the next refactor could use
-# a method nobody listed), so the unknown-method guard is the load-bearing half.
-MUTATING_METHODS = ("append", "extend", "insert", "__iadd__")
-READ_ONLY_METHODS = ("count", "index", "copy", "__contains__", "__len__", "__iter__", "join")
+# The names the codebase uses for finding accumulators, and the ONLY methods that may emit into one.
+# There is deliberately NO read-only allowlist and NO wider mutator list: the closed-world audit below
+# flags EVERY use of a returned finding accumulator outside {initialise, emit, return} — 0022
+# (round-18 MAJOR-1): enumerating emission forms lost twice (`.extend` in round 17; then aliasing,
+# `list.append(acc, m)`, slice-writes and rebinding in round 18, each of which shrank the inventory while
+# every shared-assumption oracle stayed green). The audit inverts the question: unrecognisable uses no
+# longer vanish from the denominator — they HALT the battery.
+FINDING_ACCUMS = ("findings", "errs", "out")
+EMISSION_METHODS = ("append", "extend", "insert")
 
 
-def _unknown_accumulator_mutations(src: str) -> list[str]:
-    """Any method called on a RETURNED findings accumulator that is neither a known mutator (inventoried)
-    nor a known read-only op. Non-empty means the inventory may be blind to a real finding-emission, so the
-    battery must refuse to claim statement-completeness (fail closed)."""
+def _own_scope_parents(fn) -> dict:
+    """child -> parent map over fn's OWN scope (never descending into nested def bodies)."""
+    parents: dict = {}
+
+    def rec(node):
+        for ch in ast.iter_child_nodes(node):
+            parents[ch] = node
+            if not isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                rec(ch)
+    rec(fn)
+    return parents
+
+
+def _audit_accumulators(src: str):
+    """TOTAL, CLOSED-WORLD audit of every appearance of a finding-accumulator NAME (0022, round-18
+    MAJOR-1 + the pre-ship red-team's BLOCKER on the first design).
+
+    The first design keyed tracking on "returned by bare name", so a return-form refactor
+    (`return list(errs)`, `return errs or []`) or an unrecognised init form removed the name from the
+    closed world entirely and its emissions vanished with zero problems — the same denominator-shrink
+    class, moved from emission forms to membership forms. This audit has NO membership precondition to
+    dodge: EVERY `ast.Name` occurrence of `findings`/`errs`/`out` in EVERY function must be classified
+    under one of five finite shapes, and ANY occurrence that fits none — including forms not yet
+    invented — is a problem that halts the battery:
+
+      VERDICT     — exactly one binding, an EMPTY LIST literal; the name is returned bare (or in a
+                    returned tuple). Allowed uses: the init, EMISSIONS (`.append/.extend/.insert` /
+                    `+=`, inventoried), and the returns. (validate_order/load_order errs,
+                    _competing_findings out, check findings)
+      DATA-TEXT   — exactly one binding, an EMPTY LIST literal; never returned bare; consumed exactly
+                    once as the sole argument of `"<literal>".join(name)` inside a return. Allowed:
+                    init, `.append`s (data, NOT inventoried), that join. (_inline_text out)
+      SET-ALLOW   — exactly one binding, `set()` or a set literal. Allowed: init, `.update`/`.add`,
+                    bare return. (_allowed_marker_comments out)
+      FORWARD     — exactly one binding FROM A CALL (directly or tuple-unpack); never mutated. Allowed:
+                    the binding, a bare `if name:` test, `for … in name:` iteration, `len(name)`, a
+                    `"<literal>".join(name)` read, and returns. (check errs; main findings; write errs)
+      (none)      — any other combination: zero or multiple bindings, a parameter or global used as an
+                    accumulator, a non-literal list init, a wrapped return without the join shape, a
+                    mutation of a FORWARD name, capture by a nested def — EVERY occurrence is flagged.
+
+    Returns (emissions, problems); emissions as (lineno, end_lineno, label) — VERDICT emissions only."""
     tree = ast.parse(src)
-    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
-    returns = {fn: _returned_names(fn) for fn in funcs}
+    emissions: list[tuple] = []
+    problems: list[str] = []
+    for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        own = list(_walk_own_scope(fn))
+        parents = _own_scope_parents(fn)
+        # closure capture of ANY accumulator name is invisible to the own-scope walk — fail closed.
+        for node in own:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Name) and sub.id in FINDING_ACCUMS:
+                        problems.append(f"{fn.name}(): `{sub.id}` captured by nested def "
+                                        f"{node.name}() @L{sub.lineno} — not auditable")
+        names = {n.id for n in own if isinstance(n, ast.Name) and n.id in FINDING_ACCUMS}
+        for name in sorted(names):
+            occ = [n for n in own if isinstance(n, ast.Name) and n.id == name]
+            # ---- binding census -------------------------------------------------------------
+            binds = []          # (target_node, value_node, kind)
+            for node in own:
+                tgts, val = [], None
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                        and node.target.id == name:
+                    tgts, val = [node.target], node.value
+                elif isinstance(node, ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name) and t.id == name:
+                            tgts, val = [t], node.value
+                        elif isinstance(t, ast.Tuple):
+                            for el in t.elts:
+                                if isinstance(el, ast.Name) and el.id == name:
+                                    tgts, val = [el], node.value
+                for t in tgts:
+                    if isinstance(val, ast.List) and not val.elts:
+                        kind = "empty-list"
+                    elif isinstance(val, ast.Set) or (isinstance(val, ast.Call)
+                            and isinstance(val.func, ast.Name) and val.func.id == "set"):
+                        kind = "set-init"
+                    elif isinstance(val, ast.Call):
+                        kind = "call"
+                    else:
+                        kind = "other"
+                    binds.append((t, val, kind))
+            bind_nodes = {t for t, _, _ in binds}
+            returned_bare = any(isinstance(par := parents.get(n), ast.Return)
+                                or (isinstance(par, ast.Tuple)
+                                    and isinstance(parents.get(par), ast.Return))
+                                for n in occ if n not in bind_nodes)
+            join_uses = [n for n in occ
+                         if isinstance(par := parents.get(n), ast.Call) and n in par.args
+                         and isinstance(par.func, ast.Attribute) and par.func.attr == "join"
+                         and isinstance(par.func.value, ast.Constant)
+                         and isinstance(par.func.value.value, str)]
+            # ---- shape selection ------------------------------------------------------------
+            if len(binds) == 1 and binds[0][2] == "empty-list" and returned_bare:
+                shape = "VERDICT"
+            elif len(binds) == 1 and binds[0][2] == "empty-list" and len(join_uses) == 1 \
+                    and not returned_bare:
+                shape = "DATA-TEXT"
+            elif len(binds) == 1 and binds[0][2] == "set-init":
+                shape = "SET-ALLOW"
+            elif len(binds) == 1 and binds[0][2] == "call":
+                shape = "FORWARD"
+            else:
+                shape = None
+            # ---- classify every occurrence under the shape ----------------------------------
+            for node in occ:
+                par = parents.get(node)
+                if node in bind_nodes:
+                    continue
+                if shape in ("VERDICT", "SET-ALLOW", "FORWARD") \
+                        and (isinstance(par, ast.Return)
+                             or (isinstance(par, ast.Tuple)
+                                 and isinstance(parents.get(par), ast.Return))):
+                    continue
+                if shape == "VERDICT":
+                    if isinstance(par, ast.Attribute) and par.attr in EMISSION_METHODS \
+                            and isinstance(parents.get(par), ast.Call) and parents[par].func is par:
+                        call = parents[par]
+                        emissions.append((call.lineno, call.end_lineno,
+                                          f"{name}.{par.attr} @L{call.lineno}"))
+                        continue
+                    if isinstance(par, ast.AugAssign) and par.target is node \
+                            and isinstance(par.op, ast.Add):
+                        emissions.append((par.lineno, par.end_lineno,
+                                          f"{name}.augassign @L{par.lineno}"))
+                        continue
+                elif shape == "DATA-TEXT":
+                    if isinstance(par, ast.Attribute) and par.attr == "append" \
+                            and isinstance(parents.get(par), ast.Call) and parents[par].func is par:
+                        continue                       # a data append — deliberately NOT inventoried
+                    if node in join_uses:
+                        continue
+                elif shape == "SET-ALLOW":
+                    if isinstance(par, ast.Attribute) and par.attr in ("update", "add") \
+                            and isinstance(parents.get(par), ast.Call) and parents[par].func is par:
+                        continue
+                elif shape == "FORWARD":
+                    if isinstance(par, ast.If) and par.test is node:
+                        continue
+                    if isinstance(par, ast.For) and par.iter is node:
+                        continue
+                    if isinstance(par, ast.Call) and isinstance(par.func, ast.Name) \
+                            and par.func.id == "len" and node in par.args:
+                        continue
+                    if node in join_uses:
+                        continue               # `"; ".join(errs)` — a pure formatting READ (write())
+                problems.append(f"{fn.name}(): use of `{name}` @L{node.lineno} does not fit "
+                                f"{'its ' + shape + ' shape' if shape else 'ANY accumulator shape'} "
+                                f"(inside {type(par).__name__ if par is not None else '?'}) — an "
+                                f"emission the inventory cannot see; see _audit_accumulators")
+    return sorted(set(emissions)), problems
 
-    def enclosing(line: int):
-        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
-        return max(cands, key=lambda fn: fn.lineno) if cands else None
-    bad: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and isinstance(node.func.value, ast.Name) \
-                and node.func.value.id in ("findings", "errs", "out"):
-            fn = enclosing(node.lineno)
-            if fn is None or node.func.value.id not in returns[fn] \
-                    or not _is_list_accumulator(fn, node.func.value.id):
-                continue
-            if node.func.attr not in MUTATING_METHODS and node.func.attr not in READ_ONLY_METHODS:
-                bad.append(f"{node.func.value.id}.{node.func.attr}() @L{node.lineno} in {fn.name}()")
-    return bad
+
+# Synthetic sources whose audit answer is known BY CONSTRUCTION. Each bypass row is one of the
+# denominator-shrinking forms a review produced (or the closure form found while building the audit);
+# every row must be FLAGGED, and the returned-SET row must stay untracked. Reverting the audit to
+# `return [], []` fails every row — the fail-closed guard has its own biting fixture (round-18 MAJOR-2).
+_BYPASS_PROBES = [
+    ("alias", "def f():\n    errs = []\n    sink = errs\n    sink.append('m')\n    return errs\n"),
+    ("unbound-method", "def f():\n    errs = []\n    list.append(errs, 'm')\n    return errs\n"),
+    ("slice-write", "def f():\n    errs = []\n    errs[len(errs):] = ['m']\n    return errs\n"),
+    ("rebind", "def f():\n    errs = []\n    errs = [*errs, 'm']\n    return errs\n"),
+    ("unknown-method", "def f():\n    errs = []\n    errs.append('m')\n    errs.clear()\n    return errs\n"),
+    ("nested-capture", "def f():\n    errs = []\n    def g():\n        errs.append('m')\n    g()\n"
+                       "    return errs\n"),
+    # membership-form escapes (the pre-ship red-team's BLOCKER on the first audit design): each of these
+    # made the name fall OUT of the closed world so its emissions vanished with zero problems.
+    ("call-init emissions", "def f():\n    findings = list()\n    findings.append('m')\n"
+                            "    return findings\n"),
+    ("forwarded-then-mutated", "def f():\n    order, errs = g()\n    errs.append('m')\n    return errs\n"),
+    ("return-through-call", "def f():\n    errs = []\n    errs.append('m')\n    return list(errs)\n"),
+    ("return-or-default", "def f():\n    errs = []\n    errs.append('m')\n    return errs or []\n"),
+    ("tuple-unpack-init", "def f():\n    errs, n = [], 0\n    errs.append('m')\n    return errs\n"),
+    ("parameter-emission", "def f(errs):\n    errs.append('m')\n"),
+]
+
+# Shapes that MUST stay clean (the false-positive direction): flagging any of these would block the
+# real generator or a legitimate refactor of it.
+_CLEAN_PROBES = [
+    ("set-allowlist", "def g():\n    out = set()\n    out.update({'x'})\n    return out\n"),
+    ("pure-forwarding", "def f():\n    order, errs = g()\n    if errs:\n        return errs\n"
+                        "    return order\n"),
+    ("data-text", "def f():\n    out = []\n    out.append('x')\n    return ''.join(out)\n"),
+    ("call-bound consumer", "def f():\n    findings = g()\n    for x in findings:\n        pass\n"
+                            "    if findings:\n        return 1\n    return len(findings)\n"),
+]
 
 
-def _is_list_accumulator(fn: ast.FunctionDef, name: str) -> bool:
-    """True iff `name` is initialised in `fn` as a LIST — the codebase's findings-accumulator shape
-    (`findings: list[str] = []`). This is what separates a real verdict accumulator from a same-named
-    non-finding collection: `_allowed_marker_comments` builds `out: set[str] = set()` (a set of allowed
-    marker strings, not findings) and mutates it with `.update()`. Discriminating by the INITIALISER,
-    rather than exempting the name by hand, keeps the rule derived from the source (0021)."""
-    for node in _walk_own_scope(fn):
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
-                and node.target.id == name:
-            return isinstance(node.value, ast.List)
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if isinstance(t, ast.Name) and t.id == name:
-                    return isinstance(node.value, ast.List)
-    return False
+def _audit_bypass_probes() -> tuple[bool, str]:
+    """Prove the audit FAILS CLOSED and does not FALSE-POSITIVE: every bypass probe (emission forms AND
+    the membership forms that escaped the first design) must be flagged; every legitimate shape must
+    stay clean with zero emissions inventoried except DATA-TEXT appends staying out of the inventory.
+    Reverting the audit to a no-op fails the bypass rows; over-tightening it fails the clean rows."""
+    for label, probe_src in _BYPASS_PROBES:
+        _, problems = _audit_accumulators(probe_src)
+        if not problems:
+            return False, f"bypass probe {label!r} was NOT flagged — the audit has gone blind"
+    for label, probe_src in _CLEAN_PROBES:
+        probe_emissions, problems = _audit_accumulators(probe_src)
+        if problems:
+            return False, (f"clean probe {label!r} was FLAGGED ({problems}) — the audit would "
+                           f"false-positive on a legitimate shape")
+        if probe_emissions:
+            return False, (f"clean probe {label!r} was INVENTORIED ({probe_emissions}) — a non-verdict "
+                           f"shape must contribute no emissions")
+    return True, (f"all {len(_BYPASS_PROBES)} bypass probes flagged; "
+                  f"all {len(_CLEAN_PROBES)} clean-shape probes untouched")
 
 
 def _walk_own_scope(fn: ast.FunctionDef):
@@ -307,7 +458,7 @@ def _walk_own_scope(fn: ast.FunctionDef):
     while stack:
         node = stack.pop()
         yield node
-        if not isinstance(node, ast.FunctionDef):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             stack.extend(ast.iter_child_nodes(node))
 
 
@@ -331,48 +482,6 @@ def _raise_owners(src: str) -> list[str]:
             if isinstance(node, ast.Raise) and "MarkerError" in (ast.get_source_segment(src, node) or ""):
                 owners.append(fn.name)
     return sorted(owners)
-
-
-def _branch_labels_by_owner(src: str) -> dict[str, int]:
-    """How many inventoried finding-branches each owning function has — CARDINALITY per owner, so losing
-    ONE of several appends inside a function (the owner stays present) is visible to the oracle."""
-    tree = ast.parse(src)
-    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
-
-    def enclosing(line: int):
-        cands = [fn for fn in funcs if fn.lineno <= line <= (fn.end_lineno or fn.lineno)]
-        return max(cands, key=lambda fn: fn.lineno).name if cands else "?"
-    out: dict[str, int] = {}
-    for lab, _ in _finding_branches(src):
-        out[enclosing(int(lab.split("@L")[1]))] = out.get(enclosing(int(lab.split("@L")[1])), 0) + 1
-    return out
-
-
-def _independent_append_count(src: str) -> dict[str, int]:
-    """Verdict-append statements per function, counted INDEPENDENTLY of _finding_branches (same semantic
-    rule, separate walk): an append to a findings/errs/out accumulator that the function RETURNS by name.
-    The oracle compares this to the sweep's own per-owner cardinality."""
-    tree = ast.parse(src)
-    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
-    out: dict[str, int] = {}
-    for fn in funcs:
-        returned = _returned_names(fn)
-        n = 0
-        for node in _walk_own_scope(fn):     # 0021: do NOT descend into nested defs — a nested helper was
-            # walked once as itself and again inside every enclosing function, while the collector assigns
-            # each statement to its INNERMOST owner only (a latent false-positive in the comparison).
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                    and node.func.attr in MUTATING_METHODS and isinstance(node.func.value, ast.Name) \
-                    and node.func.value.id in ("findings", "errs", "out") \
-                    and node.func.value.id in returned \
-                    and _is_list_accumulator(fn, node.func.value.id):
-                n += 1
-            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) \
-                    and node.target.id in ("findings", "errs", "out") and node.target.id in returned:
-                n += 1
-        if n:
-            out[fn.name] = n
-    return out
 
 
 def _synthetic_inventory_probe() -> tuple[bool, str]:
@@ -413,24 +522,6 @@ def raiser():
     if len(labels) != 4:
         return False, f"expected exactly 4 branches (2 append + 1 extend + 1 raise), got {len(labels)}: {labels}"
     return True, "collector returns the 2 appends + 1 extend + 1 raise (data append excluded)"
-
-
-def _appends_to_finding_accum(src: str) -> set[str]:
-    """Every function that appends to a findings accumulator (a Name in {findings, errs, out}) — the
-    SUPERSET of the sweep's verdict-append functions PLUS the data-append exceptions (_inline_text appends
-    to `out`). The oracle asserts each of these is EITHER inventoried by the sweep OR an explicit
-    DATA_APPEND exception, so a return-wrapping refactor that quietly drops a verdict function from the
-    sweep (condition (ii) unmet — a red-team finding, gate-reviews/0019) is caught."""
-    tree = ast.parse(src)
-    funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
-    hits: set[str] = set()
-    for fn in funcs:
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                    and node.func.attr == "append" and isinstance(node.func.value, ast.Name) \
-                    and node.func.value.id in ("findings", "errs", "out"):
-                hits.add(fn.name)
-    return hits
 
 
 # (name, stub, covers, expectation, expect_fx). `covers` must be EXACTLY the syntactic units the stub
@@ -723,6 +814,31 @@ GUARDS: list[tuple] = [
     ("source: load_order filtering is whitespace-normalised",
      _sub('if ln.strip() and not ln.strip().startswith("#")]', 'if ln and not ln.startswith("#")]'),
      ("load_order",), "RED", "load_order skips comments/blank lines"),
+    # ============================ 0022 (round-18 GPT BLOCK) ============================
+    # MAJOR-5: the drift CLI arm accepted ANY "FAIL  skill-enum:" line and never required the failure
+    # summary, so a constant phantom diagnostic, truncated findings, a wrong summary count, and a silent
+    # SystemExit(1) all survived. The CLI arms now pin EXACT complete output; these four mutants prove
+    # each escape shape reddens its arm.
+    ("cli: the drift diagnostic prints the REAL finding (not a constant)",
+     _sub('    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n',
+          '    for f in findings:\n        print("   FAIL  skill-enum: phantom")\n'),
+     ("main",), "RED", "CLI --check on a DRIFTED doc"),
+    ("cli: ALL findings are printed (no truncation)",
+     _sub("    for f in findings:\n        print", "    for f in findings[:1]:\n        print"),
+     ("main",), "RED", "CLI --check with TWO drifted sites"),
+    ("cli: the failure-summary count is the real count",
+     _sub('f"--- skill-enumerations: {len(findings)} finding(s) — regenerate with "',
+          'f"--- skill-enumerations: {len(findings) + 1} finding(s) — regenerate with "'),
+     ("main",), "RED", "CLI --check on a DRIFTED doc"),
+    ("cli: no silent SystemExit mid-diagnostics (the summary must still print)",
+     _sub('    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n',
+          '    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n'
+          '        raise SystemExit(1)\n'),
+     ("main",), "RED", "CLI --check on a DRIFTED doc"),
+    ("cli: diagnostics go to STDOUT (stderr must stay empty)",
+     _sub('    for f in findings:\n        print(f"   FAIL  skill-enum: {f}")\n',
+          '    for f in findings:\n        print(f"   FAIL  skill-enum: {f}", file=sys.stderr)\n'),
+     ("main",), "RED", "CLI --check on a DRIFTED doc"),
 ]
 
 # Load-bearing functions (reachable from check) that are NOT given a source-mutation stub — each is
@@ -969,53 +1085,63 @@ def main() -> int:
         else:
             print(f"   [BITES] {name}" + (f" — reddens '{expect_fx}'" if args.verbose else ""))
 
-    print("\n4. finding-branch sweep — EVERY MarkerError raise + verdict-accumulator append (SEMANTIC "
-          "inventory: an append whose accumulator the function RETURNS) reverted to a no-op must redden "
-          "golden, and reddening means an assertion FAILURE (RED) — not a crash/timeout (gate-reviews/0019)")
-    # Inventory ORACLE self-test: the inventory must be SEMANTIC. _inline_text appends to a local `out` but
-    # returns "".join(out), so its DATA appends must be EXCLUDED; check() returns `findings`, so its verdict
-    # appends must be INCLUDED. A vacuous inventory that swept data appends would 'cover' them by emptying
-    # all rendered text (an unrelated red), and under the RED requirement below that stray red would pass.
-    branch_fns = _branch_functions(orig)
-    #  - _inline_text appends to `out` but returns "".join(out) (a string) -> EXCLUDED (condition ii);
-    #  - _table_cells returns `rows` (a DATA list, not a findings accumulator) -> EXCLUDED (condition i);
-    #  - check() appends to `findings` and returns it -> INCLUDED.
-    for data_fn in ("_inline_text", "_table_cells"):
-        if data_fn in branch_fns:
-            print(f"   INVENTORY ORACLE BROKEN: {data_fn}'s DATA appends were inventoried as finding-branches")
+    print("\n4. finding-branch sweep — the emission inventory is derived from a CLOSED-WORLD accumulator")
+    print("   audit (0022): a returned finding accumulator may ONLY be initialised, emitted-to (append/")
+    print("   extend/insert/+=), and returned — ANY other use of the name HALTS the battery, so a bypass")
+    print("   cannot shrink the denominator; it stops the run instead. Every inventoried branch reverted")
+    print("   to a no-op must redden golden as an assertion FAILURE (RED) — never a crash (0019).")
+    # 4a. the audit itself must be clean on the real generator (fail closed on anything unclassified).
+    audit_emissions, audit_problems = _audit_accumulators(orig)
+    if audit_problems:
+        for pr in audit_problems:
+            print(f"   [UNAUDITABLE] {pr}")
+        print("   REFUSING the sweep: the generator uses a finding accumulator in a form the inventory "
+              "cannot see.")
+        return 2
+    # 4b. the audit's own bite: synthetic bypass probes (each denominator-shrinking form a review
+    # produced must be FLAGGED; a returned SET must stay untracked). Reverting the audit to a no-op
+    # fails these rows, so the fail-closed guard has a biting fixture (round-18 MAJOR-2).
+    ok_bypass, bypass_detail = _audit_bypass_probes()
+    if not ok_bypass:
+        print(f"   INVENTORY ORACLE BROKEN: {bypass_detail}")
+        return 2
+    # 4c. the same four review-produced bypass forms applied to a LIVE emission in the real source —
+    # end-to-end proof the refusal fires on the actual generator, not only on synthetic snippets.
+    dup_line = '        errs.append(f"skills-order has duplicate line(s): {\', \'.join(dups)}")'
+    payload = 'f"skills-order has duplicate line(s): {\', \'.join(dups)}"'
+    real_forms = [
+        ("alias", f"        sink = errs\n        sink.append({payload})"),
+        ("unbound-method", f"        list.append(errs, {payload})"),
+        ("slice-write", f"        errs[len(errs):] = [{payload}]"),
+        ("rebind", f"        errs = [*errs, {payload}]"),
+    ]
+    for label, replacement in real_forms:
+        mutated = orig.replace(dup_line, replacement, 1)
+        if mutated == orig:
+            print(f"   INVENTORY ORACLE BROKEN: real-source bypass probe {label!r} did not apply (the "
+                  f"anchor emission moved — update dup_line)")
             return 2
-    if "check" not in branch_fns:
-        print("   INVENTORY ORACLE BROKEN: check()'s verdict appends were NOT inventoried")
-        return 2
-    # INCLUSION for EVERY verdict-append function, not just check(): every function that appends to a
-    # findings/errs/out accumulator must be inventoried by the sweep OR be an explicit DATA_APPEND
-    # exception. Without this, a return-wrapping refactor (`return sorted(out)`) on validate_order /
-    # load_order / _competing_findings would silently drop its branches (condition (ii) unmet) while the
-    # oracle stayed green — a red-team finding (gate-reviews/0019).
-    DATA_APPEND_FNS = {"_inline_text"}   # appends to `out` but returns "".join(out) — data, not a verdict
-    dropped = _appends_to_finding_accum(orig) - branch_fns - DATA_APPEND_FNS
-    if dropped:
-        print(f"   INVENTORY ORACLE BROKEN: verdict-append function(s) {sorted(dropped)} append to a "
-              f"findings accumulator but are NOT inventoried (a wrapped return? add to the sweep or, if "
-              f"the append is data, to DATA_APPEND_FNS)")
-        return 2
-    # STATEMENT-LEVEL, not owner-level (gate-reviews/0020 MAJOR-3). Owner membership alone was
-    # denominator-shrinkable: losing ONE of several appends inside a function, or deleting the collector's
-    # whole `ast.Raise` arm, left every owner present and the oracle green while the denominator fell.
-    # Three independent comparisons close that:
-    #  (1) the COLLECTOR itself, probed on a synthetic source whose answer is known by construction;
-    #  (2) the MarkerError raises, derived independently, compared by COUNT and owners;
-    #  (3) per-owner append CARDINALITY, derived independently, compared exactly.
-    unknown = _unknown_accumulator_mutations(orig)
-    if unknown:
-        print(f"   INVENTORY ORACLE BROKEN: unrecognised mutation(s) of a returned findings accumulator "
-              f"{unknown} — the inventory may be blind to a real emission; add the method to "
-              f"MUTATING_METHODS (and give it a sweep patch) or to READ_ONLY_METHODS")
-        return 2
+        _, prb = _audit_accumulators(mutated)
+        if not prb:
+            print(f"   INVENTORY ORACLE BROKEN: real-source bypass {label!r} was NOT flagged")
+            return 2
+    # 4d. the synthetic collector probe (the collector's answer is known by construction).
     ok_probe, probe_detail = _synthetic_inventory_probe()
     if not ok_probe:
         print(f"   INVENTORY ORACLE BROKEN: synthetic collector probe failed — {probe_detail}")
         return 2
+    # 4e. discrimination self-checks: data lists stay out, verdict lists stay in.
+    branch_fns = _branch_functions(orig)
+    for data_fn in ("_inline_text", "_table_cells"):
+        if data_fn in branch_fns:
+            print(f"   INVENTORY ORACLE BROKEN: {data_fn}'s DATA appends were inventoried as "
+                  f"finding-branches")
+            return 2
+    if "check" not in branch_fns:
+        print("   INVENTORY ORACLE BROKEN: check()'s verdict appends were NOT inventoried")
+        return 2
+    # 4f. MarkerError raises, censused independently of the collector (deleting the collector's Raise arm
+    # shrank the denominator 21 -> 18 in round 16 while every append-owner stayed present).
     swept_raises = sorted(_owner_of(orig, int(lab.split("@L")[1]))
                           for lab, _ in _finding_branches(orig) if "raise MarkerError" in lab)
     real_raises = _raise_owners(orig)
@@ -1023,18 +1149,9 @@ def main() -> int:
         print(f"   INVENTORY ORACLE BROKEN: the sweep inventories MarkerError raises {swept_raises} but "
               f"the source has {real_raises} (the ast.Raise arm was weakened or removed)")
         return 2
-    swept_appends = {k: v for k, v in _branch_labels_by_owner(orig).items()}
-    real_appends = _independent_append_count(orig)
-    # subtract the raise contribution so the two dicts compare like for like
-    for owner in real_raises:
-        swept_appends[owner] = swept_appends.get(owner, 0) - 1
-    swept_appends = {k: v for k, v in swept_appends.items() if v}
-    if swept_appends != real_appends:
-        print(f"   INVENTORY ORACLE BROKEN: per-owner verdict-append counts disagree — sweep "
-              f"{swept_appends} vs independent {real_appends} (a branch was dropped from the inventory)")
-        return 2
-    print(f"   ok — inventory is statement-complete: collector probe passed; {len(real_raises)} "
-          f"MarkerError raise(s) and {sum(real_appends.values())} verdict append(s) independently matched")
+    print(f"   ok — inventory CLOSED under the audit: {len(audit_emissions)} emissions + "
+          f"{len(real_raises)} MarkerError raises; every accumulator use classified; "
+          f"{len(_BYPASS_PROBES)} synthetic + {len(real_forms)} real-source bypass probes all flagged")
     branches = _finding_branches(orig)
     sweep_fail = []
     for label, patch in branches:
