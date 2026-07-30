@@ -659,6 +659,24 @@ def _record_problems(record: str, contrib: str) -> list[str]:
         if not m_awaited:
             probs.append("final verdict is BLOCK but the awaited-round sentence 'independent round-N "
                          "review' is missing or reworded (fail closed)")
+    elif final_verdict == "PASS":
+        # 0023 (round-19 BLOCKER-2): the checker was silent in the PASS state — `Verdict: PASS` over a
+        # newest-BLOCK row or a still-pending row returned no problems, the exact contradiction class on
+        # the one edit this checker exists to protect (the eventual flip). PASS invariants: no pending
+        # rows anywhere, and the closure sentinel must name the newest round.
+        if pend:
+            probs.append(f"final verdict is PASS but round(s) {sorted(pend)} are still pending")
+        mp = re.search(r"closed by owner decision after round (\d+)|review \(round (\d+)\) returned PASS",
+                       record)
+        if not mp:
+            probs.append("final verdict is PASS but no closure sentinel names the passing/closing round "
+                         "('closed by owner decision after round N' or 'review (round N) returned PASS')")
+        else:
+            kp = int(mp.group(1) or mp.group(2))
+            if kp != n:
+                probs.append(f"closure sentinel names round {kp} but the newest table round is {n}")
+    elif final_verdict is not None:
+        probs.append(f"the record's final verdict line is {final_verdict!r} — expected BLOCK or PASS")
     if m:
         k = int(m.group(1))
         if verdicts.get(k) != "BLOCK":
@@ -667,6 +685,18 @@ def _record_problems(record: str, contrib: str) -> list[str]:
             probs.append(f"prose calls round {k} the most recent review, but a non-pending row follows it")
         if m_awaited and int(m_awaited.group(1)) != k + 1:
             probs.append(f"prose awaits round {m_awaited.group(1)}, but the most recent review is round {k}")
+    m4 = re.search(r"(\d+) review rounds \(review IDs[^)]*?(\d+) independent[^)]*?(\d+) author",
+                   contrib)
+    if not m4:
+        probs.append("CONTRIBUTING no longer states the digit-based round counts "
+                     "('N review rounds (review IDs …; I independent …; A author …)')")
+    else:
+        selfr = sum(1 for r, v in verdicts.items() if "self" in v.lower())
+        want = (n, n - selfr, selfr)
+        got = tuple(int(x) for x in m4.groups())
+        if got != want:
+            probs.append(f"CONTRIBUTING's counts {got} (total, independent, author) disagree with the "
+                         f"table {want}")
     m3 = re.search(r"review IDs `0005`–`00(\d\d)`", contrib)
     if not m3:
         probs.append("CONTRIBUTING no longer states the review-ID range (`0005`–`00NN`)")
@@ -684,7 +714,8 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
     good_rec = ("| 1 | aaa | BLOCK | x | y |\n| 2 | bbb | BLOCK | x | y |\n"
                 "Why this record is nevertheless BLOCK: the most recent independent review (round 2) "
                 "returned BLOCK ... an independent round-3 review ...\nVerdict: BLOCK\n")
-    good_con = "text review IDs `0005`–`0006` text"
+    good_con = ("text 2 review rounds (review IDs `0005`–`0006`; 2 independent cold-pass reviews and "
+                "0 author self-red-team rounds) text")
     res.check(_record_problems(good_rec, good_con) == [],
               "checker: a consistent synthetic record passes",
               "; ".join(_record_problems(good_rec, good_con)) or "clean")
@@ -705,6 +736,24 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
     no_awaited = good_rec.replace("an independent round-3 review", "a future review")
     res.check(any("awaited-round sentence" in x for x in _record_problems(no_awaited, good_con)),
               "checker: a missing awaited-round sentence under a final BLOCK verdict is CAUGHT")
+    # 0023 (round-19 BLOCKER-2): the PASS state must be as constrained as the BLOCK state.
+    pass_rec = ("| 1 | aaa | BLOCK | x | y |\n| 2 | bbb | BLOCK | x | y |\n"
+                "closed by owner decision after round 2 ...\nVerdict: PASS\n")
+    res.check(_record_problems(pass_rec, good_con) == [],
+              "checker: a consistent PASS-state record (closure sentinel naming the newest round) passes",
+              "; ".join(_record_problems(pass_rec, good_con)) or "clean")
+    res.check(any("still pending" in x for x in _record_problems(
+                  pass_rec.replace("| 2 | bbb | BLOCK |", "| 2 | bbb | pending |"), good_con)),
+              "checker: PASS over a still-PENDING newest row is CAUGHT")
+    res.check(any("closure sentinel" in x for x in _record_problems(
+                  pass_rec.replace("closed by owner decision after round 2 ...", "all done."), good_con)),
+              "checker: PASS without a closure sentinel naming the round is CAUGHT")
+    res.check(any("names round 1 but" in x for x in _record_problems(
+                  pass_rec.replace("after round 2", "after round 1"), good_con)),
+              "checker: a closure sentinel naming a NON-newest round is CAUGHT")
+    res.check(any("disagree with the table" in x for x in _record_problems(
+                  good_rec, good_con.replace("2 independent", "1 independent"))),
+              "checker: CONTRIBUTING count drift vs the table (independent-count) is CAUGHT")
     # The LIVE files must be consistent.
     live = _record_problems(GATE_RECORD.read_text(encoding="utf-8"), CONTRIB.read_text(encoding="utf-8"))
     res.check(live == [], "LIVE record + CONTRIBUTING are consistent", "; ".join(live) or "consistent")

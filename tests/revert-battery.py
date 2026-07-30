@@ -33,6 +33,16 @@ A guard whose revert is genuinely covered by another guard cannot be "proven" by
 `REDUNDANT` with a reason. Those are reported separately and are NOT counted as proven — the honest
 denominator is guards proven, not guards listed.
 
+DISCLOSED RESIDUAL (0023, round-19, by owner decision): the branch-level sweep's closed world is
+SCOPED TO THE ACCUMULATOR-NAME CONVENTION — candidate discovery keys on the names findings/errs/out, so
+RENAMING an accumulator moves it outside the sweep (its emissions leave the branch denominator without a
+halt). Closing rename-invariance would require whole-program dataflow analysis (a bottomless static-
+analysis well) or an emission-API refactor of the generator (deliberately unchanged for six review
+rounds). The backstop is name-independent: the curated GUARDS target function names and logic lines (not
+accumulator spellings) and their covers==touched provenance is AST-derived from the mutation itself, so
+every finding-producing FUNCTION stays claimed and biting after any rename — verified by re-running a
+curated guard against a renamed copy before this was recorded.
+
 Run before requesting any review of this gate:
     python3 tests/revert-battery.py            # exit 0 only if nothing is OWED and every RED stub bit
     python3 tests/revert-battery.py -v         # also print each run's summary line
@@ -288,11 +298,28 @@ def _audit_accumulators(src: str):
     for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
         own = list(_walk_own_scope(fn))
         parents = _own_scope_parents(fn)
-        # closure capture of ANY accumulator name is invisible to the own-scope walk — fail closed.
+        # closure capture of an accumulator name is invisible to the own-scope walk — fail closed.
+        # 0023 (round-19 MAJOR-1): only a name that is genuinely FREE in the nested def is a capture. A
+        # nested helper that BINDS the name itself (its own local `out = []`, or a parameter named
+        # `errs`) is a fresh scope, audited on its own by the top-level function walk — flagging it was
+        # a false positive that would have halted the battery on a legitimate refactor.
         for node in own:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound = {a.arg for a in (node.args.posonlyargs + node.args.args
+                                         + node.args.kwonlyargs)}
+                bound.update(a.arg for a in (node.args.vararg, node.args.kwarg) if a is not None)
+                free_declared: set = set()
                 for sub in ast.walk(node):
-                    if isinstance(sub, ast.Name) and sub.id in FINDING_ACCUMS:
+                    if isinstance(sub, (ast.Nonlocal, ast.Global)):
+                        free_declared.update(sub.names)      # explicitly reaches OUT — a capture
+                    elif isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                        bound.add(sub.id)
+                    elif isinstance(sub, (ast.For, ast.AsyncFor)) \
+                            and isinstance(sub.target, ast.Name):
+                        bound.add(sub.target.id)
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Name) and sub.id in FINDING_ACCUMS \
+                            and (sub.id not in bound or sub.id in free_declared):
                         problems.append(f"{fn.name}(): `{sub.id}` captured by nested def "
                                         f"{node.name}() @L{sub.lineno} — not auditable")
         names = {n.id for n in own if isinstance(n, ast.Name) and n.id in FINDING_ACCUMS}
@@ -335,7 +362,12 @@ def _audit_accumulators(src: str):
                          and isinstance(par.func.value, ast.Constant)
                          and isinstance(par.func.value.value, str)]
             # ---- shape selection ------------------------------------------------------------
-            if len(binds) == 1 and binds[0][2] == "empty-list" and returned_bare:
+            params = {a.arg for a in (fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs)}
+            params.update(a.arg for a in (fn.args.vararg, fn.args.kwarg) if a is not None)
+            if name in params and not binds:
+                shape = "PARAM-READ"     # a passed-in list may be READ, never mutated (0023): a mutation
+                # here would be a helper-mediated emission the inventory cannot attribute
+            elif len(binds) == 1 and binds[0][2] == "empty-list" and returned_bare:
                 shape = "VERDICT"
             elif len(binds) == 1 and binds[0][2] == "empty-list" and len(join_uses) == 1 \
                     and not returned_bare:
@@ -351,7 +383,7 @@ def _audit_accumulators(src: str):
                 par = parents.get(node)
                 if node in bind_nodes:
                     continue
-                if shape in ("VERDICT", "SET-ALLOW", "FORWARD") \
+                if shape in ("VERDICT", "SET-ALLOW", "FORWARD", "PARAM-READ") \
                         and (isinstance(par, ast.Return)
                              or (isinstance(par, ast.Tuple)
                                  and isinstance(parents.get(par), ast.Return))):
@@ -378,7 +410,7 @@ def _audit_accumulators(src: str):
                     if isinstance(par, ast.Attribute) and par.attr in ("update", "add") \
                             and isinstance(parents.get(par), ast.Call) and parents[par].func is par:
                         continue
-                elif shape == "FORWARD":
+                elif shape in ("FORWARD", "PARAM-READ"):
                     if isinstance(par, ast.If) and par.test is node:
                         continue
                     if isinstance(par, ast.For) and par.iter is node:
@@ -392,7 +424,18 @@ def _audit_accumulators(src: str):
                                 f"{'its ' + shape + ' shape' if shape else 'ANY accumulator shape'} "
                                 f"(inside {type(par).__name__ if par is not None else '?'}) — an "
                                 f"emission the inventory cannot see; see _audit_accumulators")
-    return sorted(set(emissions)), problems
+    # count on the RAW list BEFORE dedup: two identical calls on one line produce two identical
+    # tuples that set() would collapse into one, hiding exactly the case this check exists for.
+    by_line: dict = {}
+    for lo, hi, label in emissions:
+        by_line.setdefault(lo, []).append(label)
+    emissions = sorted(set(emissions))
+    for lo, labels in by_line.items():
+        if len(labels) > 1:
+            problems.append(f"multiple emissions share line {lo} ({labels}) — the line-based sweep "
+                            f"patch cannot revert them independently; put each emission on its own "
+                            f"line (0023, round-19 BLOCKER-1)")
+    return emissions, problems
 
 
 # Synthetic sources whose audit answer is known BY CONSTRUCTION. Each bypass row is one of the
@@ -416,6 +459,8 @@ _BYPASS_PROBES = [
     ("return-or-default", "def f():\n    errs = []\n    errs.append('m')\n    return errs or []\n"),
     ("tuple-unpack-init", "def f():\n    errs, n = [], 0\n    errs.append('m')\n    return errs\n"),
     ("parameter-emission", "def f(errs):\n    errs.append('m')\n"),
+    ("same-line double emission", "def f():\n    findings = []\n"
+                                  "    findings.append('a'); findings.append('b')\n    return findings\n"),
 ]
 
 # Shapes that MUST stay clean (the false-positive direction): flagging any of these would block the
@@ -427,6 +472,12 @@ _CLEAN_PROBES = [
     ("data-text", "def f():\n    out = []\n    out.append('x')\n    return ''.join(out)\n"),
     ("call-bound consumer", "def f():\n    findings = g()\n    for x in findings:\n        pass\n"
                             "    if findings:\n        return 1\n    return len(findings)\n"),
+    # 0023: a nested helper that BINDS the accumulator name itself is a fresh scope, not a capture —
+    # flagging these was a false positive a round-19 review reproduced.
+    ("nested helper with its OWN local", "def outer():\n    def helper():\n        out = []\n"
+        "        out.append('x')\n        return ''.join(out)\n    return helper()\n"),
+    ("nested helper with an accumulator-named PARAM", "def outer():\n    def helper(errs):\n"
+        "        return errs\n    return helper([])\n"),
 ]
 
 
@@ -1149,7 +1200,8 @@ def main() -> int:
         print(f"   INVENTORY ORACLE BROKEN: the sweep inventories MarkerError raises {swept_raises} but "
               f"the source has {real_raises} (the ast.Raise arm was weakened or removed)")
         return 2
-    print(f"   ok — inventory CLOSED under the audit: {len(audit_emissions)} emissions + "
+    print(f"   ok — inventory CLOSED over the findings/errs/out NAME CONVENTION (renames are a "
+          f"disclosed residual — see module docstring): {len(audit_emissions)} emissions + "
           f"{len(real_raises)} MarkerError raises; every accumulator use classified; "
           f"{len(_BYPASS_PROBES)} synthetic + {len(real_forms)} real-source bypass probes all flagged")
     branches = _finding_branches(orig)

@@ -194,7 +194,7 @@ this policy (that would couple the mechanism to unrelated content):
 
 `generate-skill-enumerations.py` keeps the five skill enumerations consistent with `skills-order`. Its
 scope is stated honestly here so the gate cannot over-claim (the failure mode this whole repo exists to
-prevent). Eighteen review rounds (review IDs `0005`–`0022`, all recorded in the consolidated `gate-reviews/0005` record — seventeen independent cold-pass reviews and one author self-red-team round) drove this scope. This section,
+prevent). 19 review rounds (review IDs `0005`–`0023`, all recorded in the consolidated `gate-reviews/0005` record; 18 independent cold-pass reviews and 1 author self-red-team round) drove this scope. This section,
 the module docstring, the fixtures, and the clean banner state ONE contract — if they ever disagree, that
 is itself a bug.
 
