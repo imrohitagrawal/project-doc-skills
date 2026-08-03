@@ -20,6 +20,16 @@ wiki or portal without re-authoring them:
 | **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |
 <!-- skills:table:end -->
 
+## Start here
+
+**Who it is for:** maintainers and engineering teams that want documentation-as-code with explicit audience, scope, review, and publication boundaries—not generic prose generation.
+
+**Example workflow:** run `architecture-and-decisions` to create the system explanation and decision record, verify the output, run `doc-critic` as the independent judgement gate, then use `publish-mirror` to mirror the approved source without re-authoring it.
+
+**Build, verify, install, invoke:** run `./build-skills.sh`, verify `dist/MANIFEST.sha256`, upload or install the required `dist/<name>.skill`, then invoke that installed skill by name in the supported assistant. Deterministic packing and `./release-gate.sh` make source-to-artifact drift and broken verification fixtures visible before release.
+
+[Contribute](CONTRIBUTING.md) · [Ask a question or propose an idea](https://github.com/imrohitagrawal/project-doc-skills/discussions) · [Report a reproducible defect](https://github.com/imrohitagrawal/project-doc-skills/issues)
+
 ## Why this structure (independent skills, one source of truth)
 
 Each skill ships **self-contained** — when installed it carries its own copy of the shared writing
