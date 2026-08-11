@@ -3,7 +3,7 @@
 **How to use:** start a fresh chat, replace `{SKILL_NAME}` below with exactly one of these:
 
 <!-- skills:pick-list:begin -->
-`learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook · onboarding-companion · doc-critic · publish-mirror`
+`learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook · onboarding-companion · doc-critic · watermark · publish-mirror`
 <!-- skills:pick-list:end -->
 
 and attach:
@@ -211,5 +211,6 @@ for them.
 | operations-runbook | `runbook-template.md`, `0017-operational-failure-mode-analysis.md`, the observability + monitoring handoffs, `nfr-slo-error-budget-register.md` |
 | onboarding-companion | `aegis-building-with-ai-and-practice-handoff.md`, `aegis-cowork-operating-blueprint.md`, `M0` |
 | doc-critic | (none beyond the workspace zip — its review method + profiles ship in its own `references/`; attach a recently-produced doc set if you want a live example to test the axes against) |
+| watermark | `aegis-diagram-set-handoff.md` (the watermark/border/colour rules it enforces) plus a directory of real exports and one finished HTML page — the HTML matters, because the refusal that most needs reviewing is a page with no © footer |
 | publish-mirror | `aegis-integration-handoff-v2.md`, `aegis-cowork-operating-blueprint.md`, `aegis-learning-companion-build-template-handoff.md` (the Markdown→Confluence mapping), `aegis-diagram-set-handoff.md` (watermark/border/colour rules), backbone `m3-governance-and-process.md` (record-before-edit, publish-reviewer, closure) |
 <!-- skills:attach-table:end -->

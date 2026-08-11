@@ -4,7 +4,8 @@ A suite of eight independent Claude skills.
 
 Six turn a software project into documentation, each in a
 distinct Diátaxis mode; **doc-critic** is the independent review gate that critiques those docs before
-they publish; and **publish-mirror** is a separate publish step that mirrors the finished pages to a
+they publish; **watermark** applies the credit furniture to the exports; and
+**publish-mirror** is a separate publish step that mirrors the finished pages to a
 wiki or portal without re-authoring them:
 
 <!-- skills:table:begin -->
@@ -17,6 +18,7 @@ wiki or portal without re-authoring them:
 | **operations-runbook** | reference (operations) | internal | ~10 |
 | **onboarding-companion** | tutorial (contributors) | internal | ~7 |
 | **doc-critic** | review gate (no Diátaxis mode) | internal | — |
+| **watermark** | post-processing (no Diátaxis mode) | applies to exports | — |
 | **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |
 <!-- skills:table:end -->
 
@@ -64,6 +66,7 @@ skills/
 ├─ operations-runbook/
 ├─ onboarding-companion/
 ├─ doc-critic/
+├─ watermark/
 └─ publish-mirror/
 ```
 <!-- skills:tree:end -->
@@ -127,7 +130,7 @@ that the root changelog names it, and that every skill is versioned.
 Improve a skill in its own focused session, in this order (producers before consumers):
 
 <!-- skills:improve-order:begin -->
-**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → doc-critic → publish-mirror.**
+**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → doc-critic → watermark → publish-mirror.**
 <!-- skills:improve-order:end -->
 
 (doc-critic is the review gate and publish-mirror the publish step, both downstream of the authoring
