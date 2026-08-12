@@ -1592,7 +1592,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         for i, ln in enumerate(lines):
             m = _re.match(r"\| \*\*([a-z-]+)\*\* \| ([^|]*)\|(.*)", ln)
             if m and m.group(1) in SKILL_ORDER:
-                lines[i] = f"| **{m.group(1)}** | hands off to {SKILL_ORDER[(ri+1) % 8]} |{m.group(3)}"
+                lines[i] = f"| **{m.group(1)}** | hands off to {SKILL_ORDER[(ri+1) % len(SKILL_ORDER)]} |{m.group(3)}"
                 ri += 1
         (t / "README.md").write_text("\n".join(lines), encoding="utf-8")
     res.check(was_clean(scratch(_handoff_col)),

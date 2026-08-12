@@ -77,9 +77,24 @@ skill never gets to see:
 | White | any light export — on near-white it changes **zero pixels** while reporting success |
 | Slate | any dark export — it goes faint and unreadable |
 
-So the band's background comes from the image's own bottom edge and the ink flips with it: dark ink
-on a light edge, light ink on a dark one. Slate survives as the hairline rule between band and
-artwork, which is what the contract's *"thin inset slate border"* was protecting.
+So the band's background comes from the image's own bottom edge and the ink flips with it. A binary
+light/dark split is not enough on its own: it left mid-tones at **2.76:1**, an unreadable mark that
+every check passed. The band is *our* pixels, so its background is pushed away from the ink until
+the **composited** mark clears the floor at the requested opacity. Slate survives as the hairline
+rule, which is what the contract's *"thin inset slate border"* was protecting.
+
+**The floor is a decorative one (1.35:1), not WCAG AA, and the arithmetic says it has to be.**
+Compositing ink at opacity *a* moves a pixel only a fraction *a* of the way from its background, so
+at the contract's own 0.18–0.30 the best achievable ratio on a plain band is about **1.4:1**. AA is
+unreachable by construction. WCAG exempts purely decorative text and
+`licensing-and-credits.md` calls this mark decorative in as many words, so the floor is set just
+under the ceiling: high enough that an invisible mark fails, low enough to be reachable at the
+minimum opacity the contract allows.
+
+**`watermark_opacity` genuinely applies.** It is composited through an RGBA layer. Drawing text with
+an alpha in `fill` straight onto an RGB canvas silently discards it — measured identical output at
+alpha 10 and alpha 255 — so an earlier build shipped the mark at 100% while refusing values outside
+18–30%.
 
 ## What it refuses, and why each refusal exists
 
@@ -87,16 +102,23 @@ artwork, which is what the contract's *"thin inset slate border"* was protecting
   every future export made from it.
 - **An opacity outside 0.18–0.30.** It refuses rather than clamping: a silently corrected value is
   one nobody notices is wrong.
-- **An HTML page with no visible © footer.** The footer is detected by **parsing** the page, not by
-  searching the bytes — a `©` inside a comment, a `<script>` string, a code sample, a CSS `content`
-  property or an `alt` attribute is not a footer, and `&#xA9;`, `&#x00A9;` and the word *Copyright*
-  all are.
+- **An HTML page with no copyright notice in visible text.** Detected by **parsing** the page, not
+  by searching the bytes — a `©` in a comment, a `<script>` string, a code sample, a CSS `content`
+  property, an `alt` attribute, the `<head>`, a `<textarea>`, an `<svg><title>` or a
+  `display:none` block does not count, and `&#xA9;`, `Ⓒ`, `（c）`, `Copr.` and *Copyright 2026* do.
+  **Stated precisely, because the honest limit matters:** this finds a copyright *notice in visible
+  text anywhere on the page*. It does not verify the notice sits in a `<footer>`, and it cannot know
+  whether the notice is the right one. Prose such as *"Copyright law is complex"* is excluded only
+  because a bare `copyright` with no mark or year is not treated as a notice.
 - **An HTML fragment with no `</body>`.** Writing it back unchanged would report success while
   marking nothing.
 - **A profile with no `watermark:` key.** Absent is not the same as blank; a mistyped key would
   otherwise disable every run and still exit 0.
 - **An unreadable or corrupt image** — reported as a refusal, so the rest of the directory still
   processes.
+- **An image that already carries the band.** PNGs are stamped, and a second pass refuses rather
+  than stacking: without it, a repeat `--in-place` read the first band as the bottom edge and grew
+  the image on every run (measured 328 → 356 → 384 px), flipping the ink on a dark export.
 - **Finding nothing.** A run that matched zero artifacts exits **non-zero**. Zero is a failure.
 
 ## What it must never do
@@ -108,7 +130,7 @@ artwork, which is what the contract's *"thin inset slate border"* was protecting
 
 ## Quality bar (self-check before presenting)
 
-- [ ] `--self-test` passes, 15 of 15.
+- [ ] `--self-test` passes, 24 of 24.
 - [ ] The output was **looked at**, on a light artifact and a dark one. A build that succeeds is not
       a mark you can read.
 - [ ] The artwork above the band is pixel-identical to the input.
@@ -117,7 +139,7 @@ artwork, which is what the contract's *"thin inset slate border"* was protecting
 
 ## Prove it bites
 
-The self-test plants each failure shape and asserts the refusal — 15 assertions, including the two
+The self-test plants each failure shape and asserts the refusal — 24 assertions, including the two
 that matter most: an HTML page with no footer, and a run that finds nothing.
 
 Two of them exist because an earlier version of this skill got them wrong:
@@ -131,7 +153,7 @@ Two of them exist because an earlier version of this skill got them wrong:
   real footers spelled five different ways are asserted **accepted**. Reverting to the old
   raw-bytes search fails both assertions at once.
 
-Every assertion has been mutation-tested: clamping instead of refusing, dropping the footer check,
+The assertions that carry the design have been mutation-tested: clamping instead of refusing, dropping the footer check,
 reverting the parser to a grep, returning 0 on zero inputs, flattening nested directories, and
 removing the HTML escaping each turn the suite red.
 

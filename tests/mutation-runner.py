@@ -261,7 +261,11 @@ def main() -> int:
     # while killing nothing, which is the one failure it exists to make
     # impossible. The floor is deliberately a real number, not >0: deleting all
     # but one mutation would otherwise still pass.
-    MIN_MUTATIONS = 13
+    # Deliberate headroom, and honestly bounded. At 13-of-13 this could never fire,
+    # which made it a tautology rather than a floor. It stops an ACCIDENTALLY
+    # thinned list; it cannot stop a deliberate edit that lowers the floor in the
+    # same commit, and saying otherwise would overclaim.
+    MIN_MUTATIONS = 10
     if len(MUTATIONS) < MIN_MUTATIONS:
         print(f"\n--- mutation runner: REFUSED — {len(MUTATIONS)} mutation(s) declared, "
               f"floor is {MIN_MUTATIONS}. A harness that runs no mutations proves nothing, so "

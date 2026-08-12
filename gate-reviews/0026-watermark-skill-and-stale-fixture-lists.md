@@ -36,7 +36,7 @@ breakage; they were fixtures **waking up**. Ten more (`0008 F2`, `0017`) anchore
 A literal that encodes a count is a fact that goes stale silently — which is why `ORDER8` is now
 `SKILL_ORDER`, named off the number.
 
-Coverage: 3/3 hardcoded skill-order literals in the gate layer
+Coverage: 4/4 hardcoded skill-order literals in the gate layer   <!-- round 2 found a fourth, `% 8` at run-golden.py:1595; the 3/3 claim was wrong -->
 
 **Failure 2 — the skill's own.** The contract specifies credit furniture in three shared files and
 nothing applied it. The first attempt at an executor was rejected by four lenses; the defects are
@@ -92,15 +92,25 @@ listed in `skills/watermark/CHANGELOG.md` and every one is closed here.
 | # | head | verdict | blocking finding | resolution |
 |---|---|---|---|---|
 | 1 | 87accd1 | block | Four independent lenses — execution, contract-fidelity, adversarial, and a different-vendor cold pass — all returned *do not merge* against the first attempt. The mark was hardcoded white and changed **zero pixels** on a light export while reporting success; the self-test compared bytes so a mutant drawing nothing passed; the footer check was a raw grep, wrong in both directions; `--in-place` truncated originals; nested directories overwrote each other; the profile value was injected into HTML unescaped | rebuilt: margin band with ink derived from the artifact, pixel-measuring self-test, parsing footer check, atomic writes, tree-preserving output, escaped interpolation. FIXED-1 … FIXED-9 above |
-| 2 | pending | pending | pending | pending |
+| 2 | 8ad4f9c | block | **Round 2 ran and found three new defects plus four overstatements.** `watermark_opacity` was a **no-op** — Pillow discards an alpha passed in a text `fill` on an RGB canvas, measured identical at alpha 10 and 255, so the mark shipped at 100% against a contract specifying 18–30%. Images were **not idempotent**: a second `--in-place` run read the first band as the bottom edge and stacked another (328 → 356 → 384 px, ink flipping on dark). A killed run left `tmpXXXX.png` litter that `collect()` then picked up, **permanently reddening the directory**. Ink derivation left mid-tones at **2.76:1**. Three mutants survived the self-test — hardcoded ink, zero alpha, and a one-character mark — so the fix's own guard did not protect the fix. Four claims overstated: "15 assertions" (24), "every assertion has been mutation-tested", "visible © footer", and "3/3" literals (4) | all fixed. Opacity composited through an RGBA layer and asserted to change the output; PNG marker refuses a second pass; temp files named `.wm-*.part` and swept; the band background is pushed away from the ink until the composited mark clears the floor. **The floor is 1.35:1 decorative, not 4.5:1 AA — round 2's own suggestion was arithmetically impossible**: compositing at opacity *a* moves a pixel only *a* of the way, capping a plain band at ~1.4:1. Five new assertions added, including the worst legal case (mid-tone at 0.18) which is what makes the contrast loop load-bearing. All five previously-surviving mutants now bite |
+| 3 | pending | pending | pending | pending |
 
 ## Why this record is nevertheless BLOCK
 
-The most recent independent review (round 1) returned BLOCK, against the first attempt at this
-skill. Every one of its findings is reproduced and fixed above, and each fix was verified by
-execution rather than asserted. The round-2 row is `pending` because an independent round-2 review
-of THIS diff has not returned, and the author may not certify the author's own fixes. Three
-residuals are carried rather than dropped.
+The most recent independent review (round 2) returned BLOCK. It ran a different-vendor cold pass and
+an execution lens against this diff, and found three defects and four overstatements that round 1
+had not — every one reproduced and fixed above, each verified by execution.
+
+**The three residuals `0024` carried are now closed**, not deferred again: `MIN_MUTATIONS` gives the
+mutation harness a denominator, and `release-gate.sh` runs **7 steps**, invoking both the mutation
+harness and this skill's self-test. Both refusals are proved in the negative.
+
+The round-3 row is `pending` because an independent review of the round-2 fixes has not returned, and
+the author may not certify the author's own fixes.
+
+**One honest limit stated rather than closed:** `MIN_MUTATIONS` stops an *accidentally* thinned
+mutation list. It cannot stop a deliberate edit that lowers the floor in the same commit, and the
+comment beside it is prose, not a gate.
 
 The required `gate-review` check stays RED — the correct state for a gate-layer change whose current
 round is open, not a defect to route around.

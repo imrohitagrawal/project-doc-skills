@@ -71,7 +71,15 @@ OPACITY_MIN, OPACITY_MAX = 0.18, 0.30
 SLATE = (100, 116, 139)          # #64748B, the contract's rule colour
 INK_ON_LIGHT = (30, 41, 59)      # slate-900
 INK_ON_DARK = (226, 232, 240)    # slate-200
-LUMA_SPLIT = 140.0               # above this the edge is "light"
+# The floor for a DECORATIVE mark, not WCAG AA. AA (4.5:1) is arithmetically
+# unreachable here and demanding it would be a claim the code cannot keep:
+# compositing ink at alpha a moves the pixel only a fraction a of the way from
+# the background, so at the contract's own 0.18-0.30 the best possible ratio on
+# a plain band is about 1.4:1. WCAG exempts purely decorative text, and
+# licensing-and-credits.md calls this mark decorative in as many words. 1.35:1 is
+# set just under that ceiling: high enough that an invisible mark fails, low
+# enough to be achievable at the minimum opacity the contract allows.
+CONTRAST_FLOOR = 1.35
 
 MARKER = "data-credit-watermark"
 
@@ -126,24 +134,40 @@ class _FooterFinder(HTMLParser):
     &#xA9; and &#x00A9; count exactly as much as a literal (c) sign.
     """
 
-    SKIP = {"script", "style", "code", "pre", "template", "noscript"}
-    SIGN = re.compile(r"©|\(c\)\s*\d{4}|copyright\b", re.I)
+    # Not visible to a reader of the page: executable/markup content, the document
+    # head, editable field defaults, and vector accessible names.
+    SKIP = {"script", "style", "code", "pre", "template", "noscript",
+            "head", "title", "textarea", "svg", "select", "option"}
+    # A notice, not the word in prose. "Copyright law is complex" is an essay, not
+    # a footer, so a bare `copyright` no longer counts - it needs a mark or a year.
+    SIGN = re.compile(r"(©|Ⓒ|（c）|\(c\)|copr\.|copyright)\s*\(?\s*(?:©|\d{4})", re.I)
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.depth = 0
+        self.skip_stack: list[str] = []
+        self.hidden = 0
         self.found = False
 
     def handle_starttag(self, tag, attrs):
         if tag in self.SKIP:
-            self.depth += 1
+            # A STACK of tag names, not a counter. A counter never came back down
+            # through an unclosed <pre>, so a real footer after one was skipped
+            # and the page refused.
+            self.skip_stack.append(tag)
+            return
+        style = dict(attrs).get("style") or ""
+        if "display:none" in style.replace(" ", "") or dict(attrs).get("hidden") is not None:
+            self.hidden += 1
 
     def handle_endtag(self, tag):
-        if tag in self.SKIP and self.depth:
-            self.depth -= 1
+        if tag in self.skip_stack:
+            while self.skip_stack and self.skip_stack.pop() != tag:
+                pass
+        elif self.hidden:
+            self.hidden -= 1
 
     def handle_data(self, data):
-        if not self.depth and self.SIGN.search(data):
+        if not self.skip_stack and not self.hidden and self.SIGN.search(data):
             self.found = True
 
 
@@ -161,16 +185,58 @@ def has_copyright_footer(html: str) -> bool:
 # Images
 # --------------------------------------------------------------------------- #
 
-def _edge_ink(im):
-    """Ink derived from the image's own bottom edge, so the band works on an
-    export this skill has never seen. Returns (band_bg, ink)."""
+def _rel_luma(rgb) -> float:
+    """WCAG relative luminance."""
+    def ch(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (ch(v) for v in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(a, b) -> float:
+    la, lb = _rel_luma(a), _rel_luma(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _composite(ink, bg, alpha: float):
+    """The colour text of `ink` at `alpha` actually lands as, over `bg`."""
+    return tuple(round(ink[i] * alpha + bg[i] * (1 - alpha)) for i in range(3))
+
+
+def _edge_ink(im, opacity: float):
+    """Band background and ink, derived from the image's own bottom edge.
+
+    Two things this must get right, both learned by measurement:
+
+    1. THE OPACITY IS REAL. Drawing text with an alpha in `fill` on an RGB canvas
+       silently drops it - measured identical output at alpha 10 and alpha 255 -
+       so the mark shipped at 100% against a contract that specifies 18-30%. The
+       mark is now composited through an RGBA layer, and this function accounts
+       for the alpha when it picks colours.
+
+    2. LEGIBILITY IS GUARANTEED, NOT ASSUMED. A binary light/dark split left the
+       mid-tones at 2.76:1 - a mid-grey screenshot got an unreadable mark while
+       every check passed. The band is OUR pixels, so the one variable we own is
+       moved: the background is pushed away from the ink until the COMPOSITED
+       text clears CONTRAST_FLOOR at the requested opacity.
+
+    Returns (band_bg, ink).
+    """
     from PIL import ImageStat
 
     w, h = im.size
-    band = im.convert("RGB").crop((0, max(0, h - 8), w, h))
-    r, g, b = ImageStat.Stat(band).mean[:3]
-    luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    return (int(r), int(g), int(b)), (INK_ON_LIGHT if luma > LUMA_SPLIT else INK_ON_DARK)
+    edge = im.convert("RGB").crop((0, max(0, h - 8), w, h))
+    r, g, b = (int(v) for v in ImageStat.Stat(edge).mean[:3])
+    bg = (r, g, b)
+    ink = INK_ON_LIGHT if _rel_luma(bg) > _rel_luma((128, 128, 128)) else INK_ON_DARK
+    toward = 255 if ink == INK_ON_LIGHT else 0
+    for _ in range(64):
+        if contrast_ratio(_composite(ink, bg, opacity), bg) >= CONTRAST_FLOOR:
+            break
+        bg = tuple(round(c + (toward - c) * 0.08) for c in bg)
+    return bg, ink
 
 
 def watermark_image(src: Path, dst: Path, text: str, opacity: float) -> None:
@@ -189,11 +255,17 @@ def watermark_image(src: Path, dst: Path, text: str, opacity: float) -> None:
         # originals overwritten and the rest untouched, with no summary printed.
         raise Refusal(f"{src.name} is not a readable image ({type(e).__name__})") from None
 
+    if im.info.get(MARKER) or (im.text.get(MARKER) if hasattr(im, "text") else None):
+        # Idempotent. Without this, a second --in-place run read the FIRST band as
+        # the bottom edge and stacked another: measured 328 -> 356 -> 384 px, and
+        # on a dark export the ink flipped between runs.
+        raise Refusal(f"{src.name} already carries the credit band - refusing to stack a second")
+
     im = im.convert("RGB")
     w, h = im.size
     size = max(11, round(min(w, h) * 0.020))
     band_h = int(size * 2.6)
-    bg, ink = _edge_ink(im)
+    bg, ink = _edge_ink(im, opacity)
 
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", size)
@@ -205,13 +277,17 @@ def watermark_image(src: Path, dst: Path, text: str, opacity: float) -> None:
 
     out = Image.new("RGB", (w, h + band_h), bg)
     out.paste(im, (0, 0))
-    d = ImageDraw.Draw(out, "RGBA")
+
+    # Composited through an RGBA layer so the opacity is genuinely applied.
+    # Drawing straight onto the RGB canvas with an alpha in `fill` discards it.
+    layer = Image.new("RGBA", out.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
     box = d.textbbox((0, 0), text, font=font)
     tw, th = box[2] - box[0], box[3] - box[1]
     d.text((max(size, w - tw - size), h + (band_h - th) // 2 - 2),
-           text, font=font, fill=ink + (round(255 * min(1.0, opacity * 2.5)),))
-    # The contract's thin slate rule, now separating band from artwork.
-    d.line([0, h, w, h], fill=SLATE + (round(255 * opacity * 2),), width=1)
+           text, font=font, fill=ink + (round(255 * opacity),))
+    d.line([0, h, w, h], fill=SLATE + (round(255 * opacity),), width=1)
+    out = Image.alpha_composite(out.convert("RGBA"), layer).convert("RGB")
 
     _atomic_save(out, dst)
 
@@ -225,7 +301,11 @@ def _atomic_save(im, dst: Path) -> None:
     a complete file exists."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     suffix = dst.suffix.lower()
-    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), suffix=suffix)
+    # The temp name must be one collect() SKIPS. mkstemp's default "tmpXXXX.png"
+    # matched the glob, so a killed run left a partial file that every later run
+    # collected and refused - permanently reddening the directory until someone
+    # deleted it by hand.
+    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=".wm-", suffix=suffix + ".part")
     os.close(fd)
     try:
         if suffix in {".jpg", ".jpeg"}:
@@ -233,7 +313,10 @@ def _atomic_save(im, dst: Path) -> None:
         elif suffix == ".webp":
             im.save(tmp, format="WEBP", quality=92)
         else:
-            im.save(tmp, format="PNG")
+            from PIL import PngImagePlugin
+            meta = PngImagePlugin.PngInfo()
+            meta.add_text(MARKER, "1")      # so a second run can refuse instead of stacking
+            im.save(tmp, format="PNG", pnginfo=meta)
         os.replace(tmp, dst)
     except Exception:
         Path(tmp).unlink(missing_ok=True)
@@ -302,6 +385,8 @@ def collect(target: Path) -> list[Path]:
         raise Refusal(f"{target} is neither a file nor a directory")
     keep = IMAGE_EXT | HTML_EXT | SOURCE_EXT
     root = target.resolve()
+    for junk in target.rglob(".wm-*.part"):
+        junk.unlink(missing_ok=True)        # a previous run was killed mid-write
     out = []
     for p in sorted(target.rglob("*")):
         if p.suffix.lower() not in keep or not p.is_file():
