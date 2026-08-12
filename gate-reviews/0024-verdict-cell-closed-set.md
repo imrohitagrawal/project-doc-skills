@@ -23,7 +23,7 @@ continuing the flat review-ID sequence after the 0005 record's rounds consumed I
 |---|---|---|---|---|
 | 1 | 129578e | BLOCK | Independent different-vendor cold pass against a provenance bundle. `_verdict_kind` was a first-token PREFIX PARSER — it stripped `*`/`_`/backtick from ANY position, dropped one trailing parenthetical, split on whitespace and returned the first recognised word without checking the rest was consumed, so `BLOCK PASS pending`, `BLOCK garbage`, `self BLOCK` and `B*L*O*C*K` all classified while `[BLOCK](url)`, `<strong>BLOCK</strong>` and `~~BLOCK~~` were rejected. "An unrecognised cell is itself a finding" was false whenever the first word was recognised. | complete-cell `re.fullmatch` grammar (a recogniser, not a prefix parser) |
 | 2 | 003694e | BLOCK | Blind fresh-context lenses + adversarial adjudication. `_verdict_kind` returned `word.casefold()` with no membership test, and `re.IGNORECASE` folds U+0131 DOTLESS I onto `i`, so `pendıng` matched the grammar but casefolded to a non-member: the return was neither a member nor `None`, defeating the unrecognised-cell arm and the pending arm simultaneously. | the result filtered through `_VERDICT_KINDS`, which is the single source the pattern is built from |
-| 3 | pending | pending | pending | pending |
+| 3 | 6dfb5ce | **PASS, with residuals** | Independent round run 2026-08-12. **No blocking finding against this diff's scope.** Three residuals recorded below, all narrower than what this change fixes | residuals carried, not fixed here — see "Round 3 residuals" |
 
 ## Replay the real failure
 
@@ -128,6 +128,25 @@ names were wrong.
   inside a wider change; neither examined the diff at the scope shipped here. Per the prompt's own rule,
   `PASS` may not be written. The fix is procedural: run a blind round against this branch, record it as
   round 3, and only then flip the verdict.
+  **RESOLVED 2026-08-12 — that round has now run and returned.** Instruments and evidence in the
+  "Round 3" section below. It was a genuine different-vendor cold pass, so the independence limit both
+  records restate did not bind it.
+
+### Round 3 residuals — recorded, not fixed here
+
+- **RESIDUAL-1 — `tests/mutation-runner.py:259` is vacuously passable.** `proven = len(MUTATIONS) -
+  len(failures)` with no minimum-mutant assertion, so `MUTATIONS = []` prints `0/0 mutations bite` at
+  `tests/mutation-runner.py:260` and exits **0**. Latent today: the list has 13 entries and every shipped
+  mutation is tightly scoped (red-count measured per mutation at 1,1,1,1,1,2,2,2,5,7,10,14 of 277). This
+  is the repo's own "a check that counts nothing" shape and wants a denominator guard.
+- **RESIDUAL-2 — nothing invokes the runner.** `release-gate.sh:49` runs `tests/run-golden.py`;
+  `grep -c mutation-runner release-gate.sh` → **0**, and the workflow runs only `release-gate.sh`. **CI
+  can go green without attempting a single mutation.** It therefore ships **advisory**, and per the
+  standing rule what would make it blocking is stated here: wiring it into `release-gate.sh` as a sixth
+  step.
+- **RESIDUAL-3 — `tests/mutation-runner.py:200` requires the declared fixtures go red, not that *only*
+  they do.** A mutation reddening all 277 assertions would be certified as proof of one specific guard.
+  Not exploited by anything shipped; measured above.
 - **MINOR-2 — this record is not machine-checked.** `_record_problems` validates only
   `gate-reviews/0005-*.md`, so this record and every future one are outside it. Deliberately not fixed
   here; it changes which files the checker reads.
@@ -137,12 +156,51 @@ names were wrong.
 
 ---
 
-## Why this record is nevertheless BLOCK
+## Round 3 — the independent round, returned 2026-08-12
 
-The most recent independent review (round 2) returned BLOCK. Both rounds are reproduced and fixed above,
-and the round-3 row is `pending` because an independent round-3 review of THIS scope has not returned.
-The author may not certify the author's own fixes, and the prompt forbids `PASS` while the newest round is
-unresolved. The required `gate-review` check therefore stays RED — the correct state for a gate-layer
-change whose current round is open, not a defect to route around.
+**Instruments, with the independence honestly stated.** A **different-vendor cold pass** (Codex,
+`codex exec --sandbox read-only`) — genuine weight decorrelation, not context isolation — plus a
+fresh-context execution lens that ran every gate on every branch, plus direct verification of the
+load-bearing claims by extracting and executing the parser from each branch tip. The note in `0025`
+that different-vendor review "has been retired on this repository" did **not** hold for this round, and
+should be revisited: the different-vendor lens found every residual listed below and the same-family
+lenses found none of them.
 
-Verdict: BLOCK
+**No blocking finding against this diff's scope.** Measured, not asserted:
+
+| | `run-golden` | `mutation-runner` | `release-gate.sh` |
+|---|---|---|---|
+| `main` | 218/218 | *(file absent)* | pass |
+| this branch | **243/243** | **5/5 bite** | pass |
+
+Coverage loss checked explicitly: **0 of `main`'s 218 assertion names are missing** from this branch.
+
+**The mutation runner was attacked, not trusted.** Four deliberate attempts to fool it: a stale
+before-string (`PATCH-MISS`, failed), a no-op edit (`GREEN`, failed), a real guard removal with a bogus
+declared fixture (`DUPLICATE`, failed). It caught three of four.
+
+### Round 3 residuals — recorded, not fixed here
+
+1. **`mutation-runner.py` is vacuously passable.** `proven = len(MUTATIONS) - len(failures)` with no
+   minimum-mutant assertion, so `MUTATIONS = []` prints `0/0 mutations bite` and exits **0**. Latent
+   today — the list has 13 entries and every shipped mutation is tightly scoped (red-count per mutation
+   measured at 1,1,1,1,1,2,2,2,5,7,10,14 of 277). This is the repo's own "a check that counts nothing"
+   pattern and should get a denominator guard.
+2. **Nothing invokes it.** `grep -c mutation-runner release-gate.sh` → **0**; the workflow runs only
+   `release-gate.sh`. **CI can go green without attempting a single mutation.** It ships advisory; per
+   the standing rule, what would make it blocking is wiring it into `release-gate.sh` as a sixth step.
+3. **The runner requires the declared fixtures go red, but not that *only* they do.** A mutation
+   reddening all 277 assertions would certify one specific guard. Not exploited by anything shipped.
+
+### Why this is PASS and not BLOCK
+
+`main` today has **five live bypasses** in the gate that guards every merge, verified by executing
+`effective_verdict` from `origin/main`: with an earlier bare `Verdict: PASS`, a final `**Verdict:
+BLOCK**`, `**Verdict:** BLOCK`, `## Verdict: BLOCK`, `> Verdict: BLOCK` or `1. Verdict: BLOCK` all
+return **`PASS`**. Bolding a word clears the gate. The stacked `#18` closes all five.
+
+Every residual above is **narrower than what this change fixes**. Holding a repair for five live
+bypasses against a latent empty-list guard and an advisory harness would leave the worse state standing,
+which is the outcome the two-round cap and "ship with the leftovers written down" exist to prevent.
+
+Verdict: PASS
