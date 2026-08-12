@@ -15,7 +15,10 @@ referenced them while none executed them. This skill is the executor.
 ## Before you start: what this needs, when to run it, where it fits
 
 **Needs:** an exported image or HTML file (or a directory of them), and `assets/project-profile.md`
-for the credit text and opacity. Pillow for images. Nothing else.
+for the credit text and opacity. **Pillow** (`pip install 'pillow>=10,<12'`) for the image path; the
+HTML path needs nothing beyond the standard library. The suite's own CI installs it, because step 7
+of `release-gate.sh` runs this skill's self-test and a gate that skips when a dependency is missing
+is not a gate.
 
 **When to run it:** after an export exists and has been checked, and before it is published or
 shared. It is deliberately usable **on its own** — you do not have to have used any authoring skill
