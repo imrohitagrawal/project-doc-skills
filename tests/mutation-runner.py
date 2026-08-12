@@ -256,6 +256,19 @@ def main() -> int:
             for f in failed:
                 print(f"            RED: {f}")
 
+    # DENOMINATOR RULE. An empty (or gutted) MUTATIONS list used to print
+    # "0/0 mutations bite" and exit 0 — a mutation harness reporting success
+    # while killing nothing, which is the one failure it exists to make
+    # impossible. The floor is deliberately a real number, not >0: deleting all
+    # but one mutation would otherwise still pass.
+    MIN_MUTATIONS = 13
+    if len(MUTATIONS) < MIN_MUTATIONS:
+        print(f"\n--- mutation runner: REFUSED — {len(MUTATIONS)} mutation(s) declared, "
+              f"floor is {MIN_MUTATIONS}. A harness that runs no mutations proves nothing, so "
+              f"an empty or thinned list is a failure, not a pass. Lower MIN_MUTATIONS only "
+              f"alongside a written reason. ---")
+        return 1
+
     proven = len(MUTATIONS) - len(failures)
     print(f"\n--- mutation runner: {proven}/{len(MUTATIONS)} mutations bite their declared fixtures ---")
     for name, why in failures:

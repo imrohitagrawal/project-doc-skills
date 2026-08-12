@@ -16,6 +16,10 @@
 #                                 byte-identical to a fresh rebuild (DRIFT fails).
 #   4. manifest presence         — dist/MANIFEST.sha256 exists and is non-empty (the integrity record a
 #                                 consumer verifies before install).
+#   6. tests/mutation-runner.py  — every declared mutation reddens its own fixture, and a thinned
+#                                  mutation list is refused rather than reported as 0/0 green
+#   7. watermark --self-test      — the credit-furniture executor refuses what it must and proves
+#                                  the mark in PIXELS, not in file bytes
 #   5. check-version.py          — VERSION is SemVer, the root CHANGELOG names it, every skill is
 #                                 versioned.
 #
@@ -64,6 +68,16 @@ run "integrity manifest present (dist/MANIFEST.sha256, non-empty)" check_manifes
 
 run "version & changelog bump (SemVer VERSION, root CHANGELOG heading, every skill versioned)" \
     python3 check-version.py
+
+# Steps 6 and 7 were advisory until 2026-08-12, which meant CI could go green
+# without either ever running. gate-reviews/0024 and 0026 both recorded that as a
+# residual and stated what would make them blocking: exactly this. A gate nothing
+# invokes is a gate that has never refused anything.
+run "mutation harness (every declared mutation reddens its own fixture; a thinned list is refused)" \
+    python3 tests/mutation-runner.py
+
+run "watermark executor self-test (refusals bite; the mark is proved in pixels, not bytes)" \
+    python3 skills/watermark/scripts/apply_watermark.py --self-test
 
 echo ""
 echo "================================================================"

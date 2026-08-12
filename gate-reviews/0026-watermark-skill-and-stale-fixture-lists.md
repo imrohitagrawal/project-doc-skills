@@ -73,14 +73,19 @@ listed in `skills/watermark/CHANGELOG.md` and every one is closed here.
 - **FIXED-9 — the scope paragraph was void.** It read *"the OG card is the whole real case"*, scoped
   to the stackclimb.com site. The owner has since stated the site does not need this skill at all.
   Removed, and the skill is documented as standalone.
-- **RESIDUAL-1 — `tests/mutation-runner.py:259` is still vacuously passable.** No minimum-mutant
-  assertion, so an empty `MUTATIONS` list prints `0/0` and exits 0. Carried from `0024`, unchanged
-  here; latent, since the list has 13 entries.
-- **RESIDUAL-2 — nothing invokes the mutation runner.** `grep -c mutation-runner release-gate.sh`
-  → **0**. It remains advisory; what would make it blocking is a sixth step in `release-gate.sh`.
-  Carried from `0024`.
-- **RESIDUAL-3 — the watermark self-test is not wired into `release-gate.sh` either.** It runs on
-  demand via `--self-test`. Same shape as RESIDUAL-2 and stated for the same reason.
+- **FIXED-10 — `tests/mutation-runner.py` was vacuously passable.** No minimum-mutant assertion, so
+  an empty or thinned `MUTATIONS` list printed `0/0 mutations bite` and exited **0** — a mutation
+  harness reporting success while killing nothing, the one failure it exists to make impossible.
+  A `MIN_MUTATIONS` floor now refuses. **The floor is a real number, not `> 0`**, because deleting
+  all but one mutation would otherwise still pass. Carried from `0024`, closed here.
+- **FIXED-11 — nothing invoked the mutation runner, and nothing invoked the watermark self-test.**
+  Both were advisory, so CI could go green without either ever running. `0024` recorded this and
+  stated what would make them blocking; that is now done. `release-gate.sh` runs **7 steps**, not 5:
+  step 6 is the mutation harness, step 7 the watermark executor's self-test. A gate nothing invokes
+  is a gate that has never refused anything.
+  **Both directions proved:** raising the floor above the declared count makes the runner print
+  `REFUSED — 13 mutation(s) declared, floor is 99` and the composed gate stop with
+  `release gate FAILED at step 6`; restoring it returns `all 7 steps green`.
 
 ## Round history
 
