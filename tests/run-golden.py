@@ -1172,9 +1172,13 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         g.MarkdownIt = saved_md
 
     # 2. End-to-end on scratch copies of the REAL docs. Baseline clean; every CLAIMED guard bites.
+    # READ FROM skills-order, never retyped. A hardcoded run here is a decoy that
+    # stops being planted the day a skill is added, and a fixture that plants
+    # nothing reports "clean" — which is how ten of these went dormant.
+    _ORDER = [ln.strip() for ln in (ROOT / "skills-order").read_text(encoding="utf-8").splitlines()
+              if ln.strip() and not ln.strip().startswith("#")]
     FULL = ("<!-- skills:improve-order:begin -->\n"
-            "**learning-track → architecture-and-decisions → project-faq → usage-guide → "
-            "operations-runbook → onboarding-companion → doc-critic → publish-mirror.**\n"
+            "**" + " → ".join(_ORDER) + ".**\n"
             "<!-- skills:improve-order:end -->")
     PUB = "| **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |"
     HDR = "| Skill | Diátaxis mode | Scope | Reading grade |"
@@ -1182,8 +1186,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     # A NEAR-COMPLETE differently-formatted run (all 8 names, no bold, no trailing period) — a competing
     # ENUMERATION, as opposed to an incidental one/two-name mention. The competing/stray-name guards fire
     # only on a run this complete (gate-reviews/0013), so the decoy fixtures below use it.
-    BROKEN_RUN = ("learning-track → architecture-and-decisions → project-faq → usage-guide → "
-                  "operations-runbook → onboarding-companion → doc-critic → publish-mirror")
+    BROKEN_RUN = " → ".join(_ORDER)
 
     class ScratchResult:
         """What a scratch run produced: `findings` (a plain list) and `exc` (the exception check() raised,
@@ -1339,7 +1342,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         ("raw-HTML ban: comment-prefixed <div> block (0008 GPT-B1)", repl("README.md", FULL,
             FULL + "\n\n<!-- ok --><div>raw survives</div>")),
         ("raw-HTML ban: inline HTML in prose outside markers (0008 F2)", repl("README.md",
-            "A suite of eight independent", "A suite of <span>eight</span> independent")),
+            "independent Claude skills", "<span>independent</span> Claude skills")),
         ("raw-HTML ban: tagfilter <script> in a cell", repl("README.md", LT,
             '| <script data-x="publish-mirror">learning-track</script> | tutorial + explanation | public | ~9 |')),
         # 0017: the IMAGE arm of the inline-HTML/image ban, isolated from the html_inline arm above. A raw
@@ -1347,7 +1350,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         # the "image" arm alone left this uncaught while the golden stayed green (a battery blind spot the
         # revert battery now also isolates). The image is the ONLY finding here, so this fixture isolates that arm.
         ("raw-HTML ban: inline image in governed-doc prose (0017)", repl("README.md",
-            "A suite of eight independent", "A suite of ![doc-critic](x.png) eight independent")),
+            "independent Claude skills", "![doc-critic](x.png) independent Claude skills")),
         # a NEAR-COMPLETE broken run rendered OUTSIDE the block (the real block stays at its lead-in, so
         # this isolates _competing rather than the anchor guard): a relocated/duplicated enumeration.
         ("relocation: near-complete differently-formatted run outside the block", repl("README.md", FULL,
@@ -1360,9 +1363,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         ("competing second table (all skills down column two after the marked block)",
             repl("README.md", "<!-- skills:table:end -->",
                  "<!-- skills:table:end -->\n\n| Step | Skill |\n|---|---|\n"
-                 + "\n".join(f"| {i+1} | {nm} |" for i, nm in enumerate(
-                     ["learning-track", "architecture-and-decisions", "project-faq", "usage-guide",
-                      "operations-runbook", "onboarding-companion", "doc-critic", "publish-mirror"])) + "\n")),
+                 + "\n".join(f"| {i+1} | {nm} |" for i, nm in enumerate(_ORDER)) + "\n")),
         ("duplicate marker pair (improve-order)", repl("README.md", FULL, FULL + "\n\nagain:\n\n" + FULL)),
         # An EMPTY second marker pair. NOTE (corrected in 0011): this does NOT isolate the duplicate
         # branch — with duplicates admitted, the empty first region fails the pure-source comparison and
@@ -1449,8 +1450,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     # ============================ 0014 (round-10 GPT BLOCKERs) ============================
     # The round-10 review reproduced four class-level escapes that per-instance fixtures had not exercised.
     # These are DATA-DRIVEN over every site, so the class — not one instance — is locked.
-    ORDER8 = ["learning-track", "architecture-and-decisions", "project-faq", "usage-guide",
-              "operations-runbook", "onboarding-companion", "doc-critic", "publish-mirror"]
+    # Named off the count deliberately. This was ORDER8, and when a ninth skill
+    # arrived the list stayed at eight - so eight data-driven fixtures quietly
+    # stopped catching anything while the suite still reported green. A count in
+    # a variable name is a fact that goes stale silently.
+    SKILL_ORDER = list(_ORDER)
 
     def _append(fname, extra):
         return lambda t: (t / fname).write_text(
@@ -1546,14 +1550,14 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
 
     # --- 0014 BLOCKER-4a: a competing enumeration formatted as a NATIVE Markdown list (one name per item)
     #     must be AGGREGATED across items — no single item reaches threshold, so a per-token check misses it.
-    stray_list = "\n".join(f"- {nm}" for nm in ORDER8)
+    stray_list = "\n".join(f"- {nm}" for nm in SKILL_ORDER)
     caught = scratch(repl("README.md", "## Build", "Restated order:\n\n" + stray_list + "\n\n## Build"))
     res.check(was_caught(caught), "stray native Markdown list of all skills is CAUGHT (list aggregation)",
               caught.detail(60))
     # 0017: a run one-name-per-line in a SINGLE paragraph (soft breaks) is caught — _inline_text renders a
     # softbreak as a space (the break->space branch), so the names stay separated and match at boundaries.
     # A mutation sweep found this branch had no fixture; reverting it concatenates the names and misses them.
-    softbreak_run = "\n".join(ORDER8)
+    softbreak_run = "\n".join(SKILL_ORDER)
     caught_sb = scratch(repl("README.md", "## Build", softbreak_run + "\n\n## Build"))
     res.check(was_caught(caught_sb), "a soft-break-separated run (one name per line, one paragraph) is CAUGHT",
               caught_sb.detail(60))
@@ -1566,13 +1570,13 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #     Every prior fixture used a fence, so the code_block arm was load-bearing but unproven (dropping it
     #     left the suite green — the _table_names guard-a class). Two fixtures isolate it:
     #     (a) phase-1: a top-level 4-space indented block of all 8 names is one code_block -> CAUGHT.
-    indented = "\n".join("    " + nm for nm in ORDER8)   # 4-space indent -> a single code_block token
+    indented = "\n".join("    " + nm for nm in SKILL_ORDER)   # 4-space indent -> a single code_block token
     caught_ind = scratch(repl("README.md", "## Build", "Restated order:\n\n" + indented + "\n\n## Build"))
     res.check(was_caught(caught_ind), "stray INDENTED (code_block) list of all skills is CAUGHT (phase-1 code_block arm)",
               caught_ind.detail(60))
     #     (b) phase-2: a blockquote with 4 names in a paragraph AND 4 in an indented code block — neither
     #     unit reaches threshold, so only the container aggregation (which must include code_block) catches it.
-    bq = ("> " + ", ".join(ORDER8[:4]) + "\n>\n" + "\n".join(">     " + nm for nm in ORDER8[4:]))
+    bq = ("> " + ", ".join(SKILL_ORDER[:4]) + "\n>\n" + "\n".join(">     " + nm for nm in SKILL_ORDER[4:]))
     caught_bq = scratch(repl("README.md", "## Build", bq + "\n\n## Build"))
     res.check(was_caught(caught_bq),
               "blockquote split across a paragraph + indented code block is CAUGHT (phase-2 code_block arm)",
@@ -1587,8 +1591,8 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         ri = 0
         for i, ln in enumerate(lines):
             m = _re.match(r"\| \*\*([a-z-]+)\*\* \| ([^|]*)\|(.*)", ln)
-            if m and m.group(1) in ORDER8:
-                lines[i] = f"| **{m.group(1)}** | hands off to {ORDER8[(ri+1) % 8]} |{m.group(3)}"
+            if m and m.group(1) in SKILL_ORDER:
+                lines[i] = f"| **{m.group(1)}** | hands off to {SKILL_ORDER[(ri+1) % 8]} |{m.group(3)}"
                 ri += 1
         (t / "README.md").write_text("\n".join(lines), encoding="utf-8")
     res.check(was_clean(scratch(_handoff_col)),
@@ -1596,11 +1600,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
 
     # --- 0014: _competing_run boundaries — look-alike names that merely CONTAIN a skill name as a
     #     substring ("project-faq-notes") are NOT the skills, so a full run of look-alikes stays CLEAN.
-    suffixed = "\n".join(f"- {nm}-notes" for nm in ORDER8)
+    suffixed = "\n".join(f"- {nm}-notes" for nm in SKILL_ORDER)
     ok = scratch(repl("README.md", "## Build", "Unrelated notes index:\n\n" + suffixed + "\n\n## Build"))
     res.check(was_clean(ok), "suffix look-alikes ('name-notes') are NOT a competing run (locks the _R boundary)",
               ok.detail(70))
-    prefixed = "\n".join(f"- draft-{nm}" for nm in ORDER8)
+    prefixed = "\n".join(f"- draft-{nm}" for nm in SKILL_ORDER)
     ok = scratch(repl("README.md", "## Build", "Unrelated drafts index:\n\n" + prefixed + "\n\n## Build"))
     res.check(was_clean(ok), "prefix look-alikes ('draft-name') are NOT a competing run (locks the _L boundary)",
               ok.detail(70))
@@ -1612,27 +1616,27 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
 
     # --- 0016 competing: a near-complete run in a BLOCKQUOTE (one name per quoted paragraph) and an
     #     UPPERCASE run are CAUGHT (container aggregation + normalization); nested list-in-blockquote too.
-    bq = "\n".join(f"> {nm}\n>" for nm in ORDER8)
+    bq = "\n".join(f"> {nm}\n>" for nm in SKILL_ORDER)
     res.check(was_caught(scratch(_app("README.md", bq))),
               "competing: a blockquote of one skill per quoted paragraph is CAUGHT (container aggregation)")
-    res.check(was_caught(scratch(_app("README.md", "> see:\n> " + "\n> ".join(f"- {nm}" for nm in ORDER8)))),
+    res.check(was_caught(scratch(_app("README.md", "> see:\n> " + "\n> ".join(f"- {nm}" for nm in SKILL_ORDER)))),
               "competing: a nested list inside a blockquote is CAUGHT")
-    res.check(was_caught(scratch(_app("README.md", "Order: " + ", ".join(nm.upper() for nm in ORDER8) + "."))),
+    res.check(was_caught(scratch(_app("README.md", "Order: " + ", ".join(nm.upper() for nm in SKILL_ORDER) + "."))),
               "competing: an UPPERCASE comma run is CAUGHT (normalization)")
     res.check(was_caught(scratch(_app("per-skill-review-prompt.md",
-              "Order: " + ", ".join(nm.upper() for nm in ORDER8) + "."))),
+              "Order: " + ", ".join(nm.upper() for nm in SKILL_ORDER) + "."))),
               "competing: an UPPERCASE run in the PROMPT is CAUGHT")
     # names with an invisible SOFT HYPHEN (U+00AD, a Cf char) or a U+2011 non-breaking hyphen read as the
     # real names -> CAUGHT (the Cf-strip + dash-fold in _norm; reverting either reddens this).
     res.check(was_caught(scratch(_app("README.md",
-              "Order: " + ", ".join(nm.replace("-", "­-") for nm in ORDER8) + "."))),
+              "Order: " + ", ".join(nm.replace("-", "­-") for nm in SKILL_ORDER) + "."))),
               "competing: soft-hyphen-injected names are CAUGHT (Cf strip in _norm)")
     res.check(was_caught(scratch(_app("README.md",
-              "Order: " + ", ".join(nm.replace("-", "‑") for nm in ORDER8) + "."))),
+              "Order: " + ", ".join(nm.replace("-", "‑") for nm in SKILL_ORDER) + "."))),
               "competing: U+2011 non-breaking-hyphen names are CAUGHT (dash fold in _norm)")
     # common Cyrillic/Greek HOMOGLYPHS in the skill names (a reader-visible decoy) are CAUGHT (the
     # confusables fold in _norm). Here every Latin 'o' is a Cyrillic 'о' (U+043E).
-    homoglyph = "Order: " + ", ".join(nm.replace("o", "о") for nm in ORDER8) + "."
+    homoglyph = "Order: " + ", ".join(nm.replace("o", "о") for nm in SKILL_ORDER) + "."
     res.check(was_caught(scratch(_app("README.md", homoglyph))),
               "competing: Cyrillic-homoglyph names are CAUGHT (confusables fold in _norm)")
     # a two-skill blockquote is a legit cross-reference -> CLEAN (below threshold).
@@ -1644,12 +1648,12 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #     (A run split across SEPARATE containers so no one is near-complete is a DISCLOSED residual —
     #     aggregating across unrelated containers would FP on legit prose; the negative below locks that.)
     ROUTES = [
-        ("comma paragraph", "README.md", "The full order: " + ", ".join(ORDER8) + "."),
-        ("separator-free fence", "README.md", "```\n" + "\n".join(ORDER8) + "\n```"),
-        ("ordered list", "README.md", "\n".join(f"{i+1}. {nm}" for i, nm in enumerate(ORDER8))),
+        ("comma paragraph", "README.md", "The full order: " + ", ".join(SKILL_ORDER) + "."),
+        ("separator-free fence", "README.md", "```\n" + "\n".join(SKILL_ORDER) + "\n```"),
+        ("ordered list", "README.md", "\n".join(f"{i+1}. {nm}" for i, nm in enumerate(SKILL_ORDER))),
         ("fenced name per list item (one list)", "README.md",
-         "\n".join(f"- see\n  ```\n  {nm}\n  ```" for nm in ORDER8)),
-        ("comma paragraph in the PROMPT", "per-skill-review-prompt.md", "Order: " + ", ".join(ORDER8) + "."),
+         "\n".join(f"- see\n  ```\n  {nm}\n  ```" for nm in SKILL_ORDER)),
+        ("comma paragraph in the PROMPT", "per-skill-review-prompt.md", "Order: " + ", ".join(SKILL_ORDER) + "."),
     ]
     for label, fname, extra in ROUTES:
         caught = scratch(_app(fname, extra))
@@ -1738,7 +1742,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     FAIL_PREFIX = "FAIL  skill-enum:"
     BANNER_PREFIX = "--- skill-enumerations: clean ("
     # The EXACT banner main() must print on a pristine repo, constructed here from this fixture's OWN
-    # inventory (len(ORDER8)), never from the generator — so a corrupted count cannot agree with itself.
+    # inventory (len(SKILL_ORDER)), never from the generator — so a corrupted count cannot agree with itself.
     # 0021 (round-17 BLOCKER-1): the previous form checked `all(clause in banner)`, which proves only that
     # three byte-strings appear SOMEWHERE in the line. A review reproduced three survivors: `n = 0`
     # ("clean (0 skills; …)"), a NEGATED clause ("NOT every marked enumeration matches …"), and a
@@ -1746,7 +1750,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     # repeated text all differ from this string. This repository exists because "a success message
     # asserted more than the code verified" (CONTRIBUTING), so the success string is pinned exactly.
     EXPECTED_BANNER = (
-        f"--- skill-enumerations: clean ({len(ORDER8)} skills; every marked enumeration matches "
+        f"--- skill-enumerations: clean ({len(SKILL_ORDER)} skills; every marked enumeration matches "
         f"skills-order in the parsed Markdown; governed docs contain no raw HTML except the comment "
         f"markers — drift-catcher, see CONTRIBUTING for scope) ---")
 
@@ -1825,7 +1829,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #     for boundary matching. Only the SOFTBREAK half had a fixture, so dropping "hardbreak" left the
     #     suite green while a two-trailing-space (hard-break) run went unflagged. A realistic run written
     #     with two trailing spaces per line produces hardbreak children — it must be CAUGHT.
-    hardbreak_run = "  \n".join(ORDER8)      # two trailing spaces before each newline -> hardbreak tokens
+    hardbreak_run = "  \n".join(SKILL_ORDER)      # two trailing spaces before each newline -> hardbreak tokens
     caught_hb = scratch(repl("README.md", "## Build", hardbreak_run + "\n\n## Build"))
     res.check(was_caught(caught_hb),
               "a HARD-break-separated run (two trailing spaces per line) is CAUGHT (hardbreak arm)",
@@ -1839,7 +1843,7 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #       exactly the names, in order. Removing the blank-line predicate yields an empty-string "skill".
     lo2 = Path(tempfile.mkdtemp(prefix="loadorder-filter-"))
     (lo2 / "skills").mkdir()
-    for nm in ORDER8:
+    for nm in SKILL_ORDER:
         (lo2 / "skills" / nm).mkdir()
         (lo2 / "skills" / nm / "SKILL.md").write_text("x", encoding="utf-8")
     # 0021 (round-17 MAJOR-3): the round-16 fixture used only COLUMN-ZERO comments and GENUINELY EMPTY
@@ -1854,11 +1858,11 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
         "\n"                                                     # genuinely empty line
         "   \n"                                                  # WHITESPACE-ONLY line
         "\t\n"                                                   # TAB-ONLY line
-        + ORDER8[0] + "\n\n"
-        + "  " + ORDER8[1] + "  \n"                              # leading/trailing whitespace
-        + "\n".join(ORDER8[2:]) + "\n   \n# a trailing comment\n", encoding="utf-8")
-    got2, errs2 = g.load_order(lo2, set(ORDER8))
-    res.check(got2 == ORDER8 and errs2 == [],
+        + SKILL_ORDER[0] + "\n\n"
+        + "  " + SKILL_ORDER[1] + "  \n"                              # leading/trailing whitespace
+        + "\n".join(SKILL_ORDER[2:]) + "\n   \n# a trailing comment\n", encoding="utf-8")
+    got2, errs2 = g.load_order(lo2, set(SKILL_ORDER))
+    res.check(got2 == SKILL_ORDER and errs2 == [],
               "load_order skips comments/blank lines and strips whitespace (exact order, no empty entry)",
               f"{got2[:2]}… n={len(got2)} errs={errs2}")
     shutil.rmtree(lo2, ignore_errors=True)
@@ -1886,12 +1890,12 @@ def skill_enumerations(res: Results, verbose: bool) -> None:
     #       unit: the returned order is EXACTLY the file's order (a hardcoded list would ignore the file).
     lo_tmp = Path(tempfile.mkdtemp(prefix="loadorder-"))
     (lo_tmp / "skills").mkdir()
-    for nm in ORDER8:
+    for nm in SKILL_ORDER:
         (lo_tmp / "skills" / nm).mkdir()
         (lo_tmp / "skills" / nm / "SKILL.md").write_text("x", encoding="utf-8")
-    reordered = list(reversed(ORDER8))
+    reordered = list(reversed(SKILL_ORDER))
     (lo_tmp / "skills-order").write_text("\n".join(reordered) + "\n", encoding="utf-8")
-    got_order, got_errs = g.load_order(lo_tmp, set(ORDER8))
+    got_order, got_errs = g.load_order(lo_tmp, set(SKILL_ORDER))
     res.check(got_order == reordered and got_errs == [],
               "load_order returns skills-order's exact order (not a hardcoded list)",
               f"{got_order[:2]}… errs={got_errs}")

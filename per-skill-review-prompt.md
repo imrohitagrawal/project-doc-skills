@@ -3,12 +3,12 @@
 **How to use:** start a fresh chat, replace `{SKILL_NAME}` below with exactly one of these:
 
 <!-- skills:pick-list:begin -->
-`learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook · onboarding-companion · doc-critic · publish-mirror`
+`learning-track · architecture-and-decisions · project-faq · usage-guide · operations-runbook · onboarding-companion · doc-critic · watermark · publish-mirror`
 <!-- skills:pick-list:end -->
 
 and attach:
 
-1. **`project-doc-skills-source.zip`** — the whole skills workspace (shared files, all eight skills,
+1. **`project-doc-skills-source.zip`** — the whole skills workspace (shared files, all nine skills,
    the build script, and the validator). This is the unit of work; the chat hands it back updated.
    Always attach the **latest** workspace zip, so improvements accumulate across sessions.
 2. **The Aegis source files for this skill's domain** — see the table at the end.
@@ -86,7 +86,7 @@ shoes, where would they draw blood? Then an **unbiased pass** that drops anythin
 could not verify. Cover at least:
 - **The operational layer (where these skills are weakest).** State concretely: what inputs the
   skill needs; WHEN in a Claude-Code build to invoke it (on an empty repo? per commit? per
-  milestone? at the end?); and how it sequences with the other seven skills (producer/consumer order,
+  milestone? at the end?); and how it sequences with the other nine skills (producer/consumer order,
   and use-this-not-that boundaries). No hand-waving.
 - **The publish handoff.** If the skill produces publishable pages, does it end with a short
   repo-first publish step that hands off to `publish-mirror` and points to `render-contract.md` —
@@ -120,13 +120,13 @@ could not verify. Cover at least:
 ## Step 4 — Make the changes, in the workspace, additively
 - Prefer surgical, additive edits to `skills/{SKILL_NAME}/` over rewrites; keep what works.
 - If a change genuinely belongs in a shared file, make it directly in `shared/` (it must be additive
-  and good for ALL eight skills), then rebuild every skill and sanity-check that nothing else
+  and good for ALL nine skills), then rebuild every skill and sanity-check that nothing else
   regressed. Do NOT fork the bundled copy, and do NOT hand back a diff to apply by hand — apply it.
 - `licensing-and-credits.md` and `render-contract.md` are both shared files: a licensing or credits
   change belongs in the former, and a conversion / target / visual-fidelity change belongs in the
   latter — never inlined into a skill as a literal name, a second copy of the disclaimer, a restated
   conversion, or a `{...}` / `<...>` placeholder.
-- Do NOT touch the bespoke content of the other seven skills; they have their own sessions.
+- Do NOT touch the bespoke content of the other nine skills; they have their own sessions.
 
 ### Cross-skill findings — read-only on siblings, but never lost
 The no-touch rule above is absolute for *editing* a sibling. It is **not** a reason to let a finding
@@ -211,5 +211,6 @@ for them.
 | operations-runbook | `runbook-template.md`, `0017-operational-failure-mode-analysis.md`, the observability + monitoring handoffs, `nfr-slo-error-budget-register.md` |
 | onboarding-companion | `aegis-building-with-ai-and-practice-handoff.md`, `aegis-cowork-operating-blueprint.md`, `M0` |
 | doc-critic | (none beyond the workspace zip — its review method + profiles ship in its own `references/`; attach a recently-produced doc set if you want a live example to test the axes against) |
+| watermark | `aegis-diagram-set-handoff.md` (the watermark/border/colour rules), a directory of real exports — include at least one LIGHT and one DARK image, since the failure this skill was rebuilt around was colour-dependent — and one finished HTML page, because the refusal that most needs reviewing is a page with no © footer |
 | publish-mirror | `aegis-integration-handoff-v2.md`, `aegis-cowork-operating-blueprint.md`, `aegis-learning-companion-build-template-handoff.md` (the Markdown→Confluence mapping), `aegis-diagram-set-handoff.md` (watermark/border/colour rules), backbone `m3-governance-and-process.md` (record-before-edit, publish-reviewer, closure) |
 <!-- skills:attach-table:end -->

@@ -31,7 +31,7 @@ practice after the architecture and the main workflow exist — and **refresh it
 project grows, not on every change. (Treat it like docs-as-code: it has a last-reviewed date and is
 re-verified when the facts it cites change.)
 
-**How it sequences with the other seven skills** (producers before consumers):
+**How it sequences with the other eight skills** (producers before consumers):
 
 - **learning-track** (public concepts course, teach from zero) — the FAQ is internal Q&A *reference*,
   not a course. Use learning-track to teach a newcomer the field; use this to answer "how does my

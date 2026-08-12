@@ -1,10 +1,11 @@
 # Project documentation skills — source
 
-A suite of eight independent Claude skills.
+A suite of nine independent Claude skills.
 
 Six turn a software project into documentation, each in a
 distinct Diátaxis mode; **doc-critic** is the independent review gate that critiques those docs before
-they publish; and **publish-mirror** is a separate publish step that mirrors the finished pages to a
+they publish; **watermark** applies the credit furniture to whatever is exported; and
+**publish-mirror** is a separate publish step that mirrors the finished pages to a
 wiki or portal without re-authoring them:
 
 <!-- skills:table:begin -->
@@ -17,6 +18,7 @@ wiki or portal without re-authoring them:
 | **operations-runbook** | reference (operations) | internal | ~10 |
 | **onboarding-companion** | tutorial (contributors) | internal | ~7 |
 | **doc-critic** | review gate (no Diátaxis mode) | internal | — |
+| **watermark** | post-processing step (no Diátaxis mode) | applies credit furniture to exports | — |
 | **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |
 <!-- skills:table:end -->
 
@@ -37,7 +39,7 @@ standard, the project-profile template, the render contract, the publish-targets
 verifier, and the CI snippet, so it works on its own with no dependency on the others. That
 independence is the point.
 
-The risk with self-contained packages is **drift**: eight copies of the house style slowly diverge.
+The risk with self-contained packages is **drift**: nine copies of the house style slowly diverge.
 This repo removes that risk by keeping the shared files in **one canonical place** and copying them
 into each package **at build time**:
 
@@ -51,7 +53,7 @@ project-doc-skills/
 │  ├─ publish-targets.yaml     #   the per-project manifest of publish destinations + their coordinates
 │  ├─ verify.py                #   the documentation verifier
 │  └─ ci/                      #   ready pre-commit + CI snippet
-├─ skills/                     # bespoke files per skill (the eight skills are listed below)
+├─ skills/                     # bespoke files per skill (the nine skills are listed below)
 ├─ build-skills.sh             # assembles dist/<name>.skill = skills/<name>/ + shared/ (deterministic)
 ├─ pkgtools.py                 # deterministic packer + SHA-256 integrity manifest writer
 ├─ lint-placeholders.py        # every {{...}} resolves to a profile key / manifest slot / runtime token
@@ -74,6 +76,7 @@ skills/
 ├─ operations-runbook/
 ├─ onboarding-companion/
 ├─ doc-critic/
+├─ watermark/
 └─ publish-mirror/
 ```
 <!-- skills:tree:end -->
@@ -112,7 +115,7 @@ timestamp pinned, and fixed permissions, so identical source produces a **byte-i
 **Consumer flow — build, verify the manifest, then install:**
 
 ```bash
-./build-skills.sh                          # build all eight + emit dist/MANIFEST.sha256
+./build-skills.sh                          # build all nine + emit dist/MANIFEST.sha256
 sha256sum -c dist/MANIFEST.sha256          # from the repo root: verify the bytes before trusting them
 # then upload/install the dist/<name>.skill you want
 ```
@@ -137,7 +140,7 @@ that the root changelog names it, and that every skill is versioned.
 Improve a skill in its own focused session, in this order (producers before consumers):
 
 <!-- skills:improve-order:begin -->
-**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → doc-critic → publish-mirror.**
+**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → doc-critic → watermark → publish-mirror.**
 <!-- skills:improve-order:end -->
 
 (doc-critic is the review gate and publish-mirror the publish step, both downstream of the authoring

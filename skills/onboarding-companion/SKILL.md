@@ -39,7 +39,7 @@ setup steps, the repo layout, or the conventions change** (the ISO `Last reviewe
 verifier's staleness check exist for exactly that, since setup and conventions are the most
 drift-prone content in any project).
 
-**How it sequences with the other seven skills (it is a consumer).** This skill turns a *can-run-it*
+**How it sequences with the other eight skills (it is a consumer).** This skill turns a *can-run-it*
 contributor into a *can-change-it-safely* one, and **points outward** instead of duplicating:
 - **architecture-and-decisions** — the "why" and the design deep-dive. The reading path links to it;
   it is not restated here.
@@ -54,6 +54,7 @@ contributor into a *can-change-it-safely* one, and **points outward** instead of
 - **doc-critic** — the independent critic gate over what was produced: contradictions across the pages,
   claims the code does not support, and whether the beginner floor really holds. It reviews the documents,
   never the skills, and gates publishing on unresolved blockers; run it before the publish step.
+- **watermark** — applies the credit furniture to exported images and finished pages.
 - **publish-mirror** — the separate, later publish step (Workflow step 6).
 
 ---

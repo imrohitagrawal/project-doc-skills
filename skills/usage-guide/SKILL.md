@@ -29,7 +29,7 @@ or a screen a user can complete a task on) — in practice once the quickstart r
 docs-as-code: it carries a last-reviewed date and is re-checked when those steps change (the verifier
 WARNs once that date goes stale).
 
-**How it sequences with the other seven skills** (producers before consumers; one task at a time is the
+**How it sequences with the other eight skills** (producers before consumers; one task at a time is the
 line this skill holds):
 
 - **learning-track** (public concepts course) — teaches *why/how it works*; this guide only shows
