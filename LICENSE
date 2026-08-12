@@ -1,0 +1,90 @@
+project-doc-skills License (MIT + Attribution)
+Copyright (c) 2026 Rohit Agrawal
+
+SPDX-License-Identifier: LicenseRef-stackclimb-source-v1
+
+This license governs **this repository and the skill packages it builds** — the
+skill definitions under `skills/`, the shared contracts under `shared/`, the
+build and gate tooling, the tests, and the `.skill` bundles emitted into `dist/`.
+
+It is the same license used across the author's other repositories, so a single
+attribution form works for all of them.
+
+------------------------------------------------------------------------
+
+WHAT THIS FILE IS, AND WHAT `shared/licensing-and-credits.md` IS
+
+These are two different things, and confusing them is the gap this file closes.
+
+  THIS FILE          governs the skills themselves — the source you are reading
+                     and the packages you may install.
+
+  shared/licensing-  is a TEMPLATE the skills apply to the DOCUMENTS they help
+  and-credits.md     you produce. Every value in it is a `{{profile}}`
+                     placeholder filled in from your own project profile. It has
+                     never licensed this repository, and it does not.
+
+An everyday version: this file is the licence on the woodworking tools. That
+file is the label the tools help you print for the furniture you build with
+them. Owning the tools does not make the author of the tools the owner of your
+furniture, and vice versa.
+
+------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+1. The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+2. **Attribution clause.** Any redistribution of the Software, or any
+   derivative work based on the Software (in source or binary form), must
+   include an attribution notice in a NOTICE, About, credits, or equivalent
+   location that is visible to end users. The attribution notice must state
+   the following (or substantively equivalent text):
+
+       project-doc-skills
+       (c) 2026 Rohit Agrawal
+       Stackclimb: https://stackclimb.com
+       GitHub:     https://github.com/imrohitagrawal
+       LinkedIn:   https://www.linkedin.com/in/rohitagrawal14/
+
+   The attribution notice must not be removed, obscured, or rendered less
+   prominent than other third-party notices in the same work. It is not
+   sufficient to keep the attribution only in the source tree; it must be
+   carried through to the user-facing distribution.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+
+Why this license, briefly:
+
+- Standard MIT grants the permissions above (use, copy, modify, merge,
+  publish, distribute, sublicense, sell) with the copyright and permission
+  notices preserved.
+- The attribution clause (clause 2) is a standard, common addition to MIT
+  for solo portfolio projects. It requires downstream users to keep the
+  author's name and contact URLs visible in their distribution. This is
+  not a restriction on commercial use; it is a requirement that the
+  authorship be acknowledged. The LinkedIn URL is included deliberately: it
+  is the identity link that proves who the author is.
+- There is no content carve-out here, unlike the stackclimb.com source
+  license. This repository IS tooling — a skill is meant to be installed and
+  run. The documents a skill produces belong to whoever ran it.
+- Stackclimb is named in the attribution because every project sits under
+  that umbrella.
+
+Closes issue #23. Before this file existed, the repository was public with no
+license at all, which under default copyright means all rights reserved — the
+opposite of what a suite of installable, reusable skills is for.

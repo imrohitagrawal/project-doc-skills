@@ -9,9 +9,15 @@
   independent different-vendor cold pass, then two rounds of six blind fresh-context lenses each with a
   per-finding adversarial adjudicator (round 2: 38 candidates, 32 survived; round 3: 33 candidates, 26
   survived). A round against THIS diff at THIS scope is owed.
-- Independence limit honestly stated: **context isolation only, never weight decorrelation** — the lenses
-  are fresh contexts of the same model that wrote the change. Different-vendor review has been retired on
-  this repository, so this is the permanent ceiling and every future record should keep saying so.
+- Independence limit honestly stated **for rounds 1–2**: context isolation only, never weight
+  decorrelation — those lenses were fresh contexts of the same model that wrote the change.
+  **CORRECTED 2026-08-12.** This line used to continue: *"Different-vendor review has been retired on
+  this repository, so this is the permanent ceiling and every future record should keep saying so."*
+  **That was wrong, and wrong in the direction that propagates** — it instructed every future record to
+  repeat it. Round 3 was a genuine different-vendor cold pass (Codex, `codex exec --sandbox read-only`),
+  it ran on this repository, and it found **every** residual in Findings while the same-family lenses
+  found none. Different-vendor review is available and is the highest-yield lens measured here. The
+  ceiling is real for same-family lenses only; it is not a property of this repository.
 
 ## Record convention
 
