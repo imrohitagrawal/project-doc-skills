@@ -611,6 +611,59 @@ def manifest_byte_stability(res: Results, verbose: bool) -> None:
 
 
 
+# 0024: the CLOSED SET of values a round-table verdict cell may carry. The pending invariants used to
+# compare against the exact literal `pending`, in BOTH signs — so an annotated cell like
+# "pending (round 20 running)" escaped the PASS-state "no pending rows" check (a `Verdict: PASS` over a
+# genuinely pending newest round returned NO problems) and, in the BLOCK state, made the "a non-pending
+# row follows it" check fire on a row that IS pending. Two further cells were compared raw: `!= "BLOCK"`
+# (so `**BLOCK**` read as a contradiction) and `"self" in v.lower()` (so `BLOCK (self-reported)` counted
+# as an author round). One shared predicate now serves all four, because four arms comparing raw cells is
+# how the two signs came to disagree.
+#
+# Widening to a substring would only move the escape one spelling along, which is the recurrence rounds
+# 16-18 each repeated. So the world is CLOSED: a cell that does not classify is ITSELF a finding.
+#
+# It is a RECOGNISER, not a prefix parser. The first attempt stripped markup from ANY position, dropped a
+# trailing parenthetical, split on whitespace and returned the first recognised word without checking the
+# rest was consumed — so `BLOCK PASS pending`, `BLOCK garbage`, `self BLOCK` and `B*L*O*C*K` all
+# classified, while ordinary `[BLOCK](url)` and `<strong>BLOCK</strong>` did not. Accepted, exhaustively:
+#   BLOCK · pass · Pending                      a bare verdict word, any case
+#   **BLOCK** · *pass* · `pending` · _self_     ONE outer emphasis wrapper, correctly paired
+#   (self)                                      the wholly-parenthesised form (a live row: 0005 round 13)
+#   BLOCK (annotation) · pending (round 20)     at most ONE trailing parenthetical, no nesting
+# Everything else is None. Rejecting link/HTML/strikethrough spellings is deliberate: this is a narrow
+# grammar for a hand-written control column, and a verdict nobody can write plainly should not be written.
+_VERDICT_KINDS = frozenset({"block", "pass", "pending", "self"})
+_VERDICT_WORD = "(?:" + "|".join(sorted(_VERDICT_KINDS)) + ")"   # ONE source: built from the set
+_VERDICT_ANNOT = r"(?:[ \t]*\((?:[^()\n]*)\))?"        # at most one, non-nested, single-line
+_VERDICT_CELL_RE = re.compile(
+    rf"[ \t]*(?:(?P<wrap>\*\*|__|\*|_|`)(?P<wrapped>{_VERDICT_WORD})(?P=wrap)|(?P<plain>{_VERDICT_WORD}))"
+    rf"{_VERDICT_ANNOT}[ \t]*",
+    re.IGNORECASE,
+)
+_VERDICT_PAREN_RE = re.compile(rf"[ \t]*\([ \t]*(?P<paren>{_VERDICT_WORD})[ \t]*\)[ \t]*", re.IGNORECASE)
+
+
+def _verdict_kind(cell: str) -> str | None:
+    """Classify a round-table verdict cell as a member of _VERDICT_KINDS, or None if it is not one.
+
+    The WHOLE cell must match (re.fullmatch) — a recogniser, not a prefix parser. `(self)` has its own
+    arm: it is a live row feeding CONTRIBUTING's author-round count, and a naive strip-the-parens would
+    map it to the empty string. No newline guard is needed: the [ \t] classes already make a multi-line
+    cell unmatchable, and an explicit guard proved to be dead code."""
+    m = _VERDICT_PAREN_RE.fullmatch(cell) or _VERDICT_CELL_RE.fullmatch(cell)
+    if not m:
+        return None
+    g = m.groupdict()
+    word = g["paren"] if g.get("paren") else (g.get("wrapped") or g.get("plain"))
+    # The membership test is NOT redundant with the grammar: re.IGNORECASE folds U+0131 DOTLESS I and
+    # U+0130 onto `i`, so `pendıng` MATCHES — but neither casefolds to `i`, so the result was 'pendıng':
+    # not a member, and not None. That defeated BOTH consumers at once (the unrecognised-cell arm did not
+    # fire because it was not None; the pending arm did not fire because it was not "pending").
+    kind = word.casefold()
+    return kind if kind in _VERDICT_KINDS else None
+
+
 def _record_problems(record: str, contrib: str) -> list[str]:
     """Consistency problems between the PR #12 review record's round-history TABLE, its verdict PROSE, and
     CONTRIBUTING's stated review-round range. PURE (text in, problems out) so it can be self-tested on
@@ -622,10 +675,13 @@ def _record_problems(record: str, contrib: str) -> list[str]:
     prose's "most recent" round, an awaited-round number that is not most-recent + 1, and a CONTRIBUTING
     range end that disagrees with the table's round count, and — while the record's final verdict line is
     BLOCK — a missing or reworded sentinel sentence (fail closed; the prose checks used to no-op on a
-    reworded anchor). NOTE on numbering: 0005-0022 are REVIEW IDS continuing the gate-reviews file
+    reworded anchor). NOTE on numbering: the 0005+ IDs are REVIEW IDS continuing the gate-reviews file
     sequence — round 1 is file 0005 and rounds 2+ are recorded INSIDE that consolidated record (its
-    'Record convention' note); the IDs also tag code comments. Round N carries ID 0004+N; there are no
-    files 0006+."""
+    'Record convention' note); the IDs also tag code comments. Round N carries ID 0004+N, and that is the
+    range end this function DERIVES from the table (below) rather than a literal, so no upper bound is
+    written down here to go stale. What does not exist is a separate record FILE per ROUND of the 0005
+    record; a later work package adds its own record file under the next free ID, so a
+    gate-reviews/00NN-*.md above 0005 is expected and is not a numbering error."""
     probs: list[str] = []
     rows = [(int(m.group(1)), m.group(2).strip(), m.group(3).strip())
             for m in re.finditer(r"(?m)^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|", record)]
@@ -636,7 +692,13 @@ def _record_problems(record: str, contrib: str) -> list[str]:
     if rounds != list(range(1, n + 1)):
         probs.append(f"round numbers are not consecutive 1..{n}: {rounds}")
     verdicts = {r: v for r, _, v in rows}
-    pend = [r for r, v in verdicts.items() if v.lower() == "pending"]
+    unknown = sorted(r for r, v in verdicts.items() if _verdict_kind(v) is None)
+    if unknown:
+        probs.append(f"unrecognised verdict cell(s) in round row(s) {unknown}: "
+                     f"{[verdicts[r] for r in unknown]} — a round verdict must read one of "
+                     f"{', '.join(sorted(_VERDICT_KINDS))} (fail closed: an unrecognised cell is not "
+                     f"assumed benign, because that is how an annotated one escaped)")
+    pend = [r for r, v in verdicts.items() if _verdict_kind(v) == "pending"]
     if len(pend) > 1:
         probs.append(f"more than one pending row: {sorted(pend)}")
     if pend and max(pend) != n:
@@ -679,9 +741,9 @@ def _record_problems(record: str, contrib: str) -> list[str]:
         probs.append(f"the record's final verdict line is {final_verdict!r} — expected BLOCK or PASS")
     if m:
         k = int(m.group(1))
-        if verdicts.get(k) != "BLOCK":
+        if _verdict_kind(verdicts.get(k, "")) != "block":
             probs.append(f"prose says round {k} returned BLOCK but table row {k} says {verdicts.get(k)!r}")
-        if any(r > k and verdicts[r].lower() != "pending" for r in verdicts):
+        if any(r > k and _verdict_kind(verdicts[r]) != "pending" for r in verdicts):
             probs.append(f"prose calls round {k} the most recent review, but a non-pending row follows it")
         if m_awaited and int(m_awaited.group(1)) != k + 1:
             probs.append(f"prose awaits round {m_awaited.group(1)}, but the most recent review is round {k}")
@@ -691,7 +753,7 @@ def _record_problems(record: str, contrib: str) -> list[str]:
         probs.append("CONTRIBUTING no longer states the digit-based round counts "
                      "('N review rounds (review IDs …; I independent …; A author …)')")
     else:
-        selfr = sum(1 for r, v in verdicts.items() if "self" in v.lower())
+        selfr = sum(1 for r, v in verdicts.items() if _verdict_kind(v) == "self")
         want = (n, n - selfr, selfr)
         got = tuple(int(x) for x in m4.groups())
         if got != want:
@@ -754,6 +816,59 @@ def review_record_consistency(res: Results, verbose: bool) -> None:
     res.check(any("disagree with the table" in x for x in _record_problems(
                   good_rec, good_con.replace("2 independent", "1 independent"))),
               "checker: CONTRIBUTING count drift vs the table (independent-count) is CAUGHT")
+    # 0024: the pending invariants compared against the exact literal `pending`, so an ANNOTATED cell
+    # escaped in the PASS state and false-positived in the BLOCK state. Both signs are locked here, plus
+    # the closed set that makes an unrecognised spelling a finding instead of a silent pass.
+    ann = pass_rec.replace("| 2 | bbb | BLOCK |", "| 2 | bbb | pending (round 3 running) |")
+    res.check(any("still pending" in x for x in _record_problems(ann, good_con)),
+              "checker: PASS over an ANNOTATED pending newest row is CAUGHT (0024; the literal escaped)",
+              "; ".join(_record_problems(ann, good_con)) or "clean")
+    ann_block = ("| 1 | aaa | BLOCK | x | y |\n| 2 | bbb | pending (round 3 running) | x | y |\n"
+                 "Why this record is nevertheless BLOCK: the most recent independent review (round 1) "
+                 "returned BLOCK ... an independent round-2 review ...\nVerdict: BLOCK\n")
+    res.check(not any("non-pending row follows it" in x for x in _record_problems(ann_block, good_con)),
+              "checker: an ANNOTATED pending row does NOT false-positive the BLOCK-state arm (0024)",
+              "; ".join(_record_problems(ann_block, good_con)) or "clean")
+    # Emphasis and backticks are markup, not a different verdict.
+    for cell, why in (("**BLOCK**", "bold"), ("`BLOCK`", "code-span")):
+        emph = good_rec.replace("| 2 | bbb | BLOCK |", f"| 2 | bbb | {cell} |")
+        res.check(_record_problems(emph, good_con) == [],
+                  f"checker: a {why}-marked BLOCK cell still classifies as BLOCK (0024)",
+                  "; ".join(_record_problems(emph, good_con)) or "clean")
+    # An UNRECOGNISED cell is a finding in its own right — the fail-closed half. The unconsumed-suffix
+    # cells are the ones a PREFIX PARSER would have accepted.
+    for cell in ("blocked", "PASS-ish", "n/a", "-", "BLOCK PASS pending", "BLOCK garbage", "self BLOCK",
+                 "BLOCK <!-- pending -->", "B*L*O*C*K", "BLOCK (one) (two)", "BLOCK ((nested))",
+                 "BLOCK [PASS](https://example.invalid)"):
+        odd = good_rec.replace("| 2 | bbb | BLOCK |", f"| 2 | bbb | {cell} |")
+        res.check(any("unrecognised verdict cell" in x for x in _record_problems(odd, good_con)),
+                  f"checker: unrecognised/unconsumed cell {cell!r} is CAUGHT (0024, fail closed)")
+    res.check(_verdict_kind("BLOCK\npending") is None,
+              "checker: a MULTI-LINE verdict cell is rejected (0024)")
+    # re.IGNORECASE folds U+0131 DOTLESS I onto `i`, so `pendıng` MATCHES the grammar — but it does not
+    # casefold to `i`, so without the membership test it returned a non-member, non-None value that
+    # defeated the unrecognised-cell arm and the pending arm at once.
+    for homoglyph in ("pend\u0131ng", "pend\u0130ng", "**pend\u0131ng**", "pend\u0131ng (round 3)"):
+        res.check(_verdict_kind(homoglyph) is None,
+                  f"checker: homoglyph cell {homoglyph!r} classifies as NOTHING, not a non-member (0024)")
+    homo_rec = pass_rec.replace("| 2 | bbb | BLOCK |", "| 2 | bbb | pend\u0131ng |")
+    res.check(any("unrecognised verdict cell" in x for x in _record_problems(homo_rec, good_con)),
+              "checker: a homoglyph verdict cell under Verdict: PASS is CAUGHT (0024, fail closed)")
+    # `(self)` MUST keep classifying: it is a live row and it feeds CONTRIBUTING's author-round count.
+    self_rec = good_rec.replace("| 1 | aaa | BLOCK |", "| 1 | aaa | (self) |")
+    self_con = good_con.replace("2 independent cold-pass reviews and 0 author",
+                                "1 independent cold-pass reviews and 1 author")
+    res.check(_record_problems(self_rec, self_con) == [],
+              "checker: a `(self)` verdict cell classifies and counts as an author round (0024)",
+              "; ".join(_record_problems(self_rec, self_con)) or "clean")
+    res.check(any("disagree with the table" in x for x in _record_problems(self_rec, good_con)),
+              "checker: a `(self)` row still drives the CONTRIBUTING author-count cross-check (0024)")
+    # The verdict HEAD is authoritative and a parenthetical is commentary, uniformly.
+    ann_self = good_rec.replace("| 2 | bbb | BLOCK |", "| 2 | bbb | BLOCK (self-reported by the author) |")
+    res.check(_record_problems(ann_self, good_con) == [],
+              "checker: an annotated `BLOCK (self-...)` counts as an INDEPENDENT round, not an author one "
+              "(0024; the head is authoritative)",
+              "; ".join(_record_problems(ann_self, good_con)) or "clean")
     # The LIVE files must be consistent.
     live = _record_problems(GATE_RECORD.read_text(encoding="utf-8"), CONTRIB.read_text(encoding="utf-8"))
     res.check(live == [], "LIVE record + CONTRIBUTING are consistent", "; ".join(live) or "consistent")
