@@ -23,7 +23,7 @@ continuing the flat review-ID sequence after the 0005 record's rounds consumed I
 |---|---|---|---|---|
 | 1 | 129578e | BLOCK | Independent different-vendor cold pass against a provenance bundle. `_verdict_kind` was a first-token PREFIX PARSER — it stripped `*`/`_`/backtick from ANY position, dropped one trailing parenthetical, split on whitespace and returned the first recognised word without checking the rest was consumed, so `BLOCK PASS pending`, `BLOCK garbage`, `self BLOCK` and `B*L*O*C*K` all classified while `[BLOCK](url)`, `<strong>BLOCK</strong>` and `~~BLOCK~~` were rejected. "An unrecognised cell is itself a finding" was false whenever the first word was recognised. | complete-cell `re.fullmatch` grammar (a recogniser, not a prefix parser) |
 | 2 | 003694e | BLOCK | Blind fresh-context lenses + adversarial adjudication. `_verdict_kind` returned `word.casefold()` with no membership test, and `re.IGNORECASE` folds U+0131 DOTLESS I onto `i`, so `pendıng` matched the grammar but casefolded to a non-member: the return was neither a member nor `None`, defeating the unrecognised-cell arm and the pending arm simultaneously. | the result filtered through `_VERDICT_KINDS`, which is the single source the pattern is built from |
-| 3 | 6dfb5ce | **PASS, with residuals** | Independent round run 2026-08-12. **No blocking finding against this diff's scope.** Three residuals recorded below, all narrower than what this change fixes | residuals carried, not fixed here — see "Round 3 residuals" |
+| 3 | 6dfb5ce | pass | Independent round run 2026-08-12. **No blocking finding against this diff's scope.** Three residuals recorded below, all narrower than what this change fixes | residuals carried, not fixed here — see "Round 3 residuals" |
 
 ## Replay the real failure
 
@@ -157,6 +157,8 @@ names were wrong.
 ---
 
 ## Round 3 — the independent round, returned 2026-08-12
+
+The independent review (round 3) returned PASS.
 
 **Instruments, with the independence honestly stated.** A **different-vendor cold pass** (Codex,
 `codex exec --sandbox read-only`) — genuine weight decorrelation, not context isolation — plus a

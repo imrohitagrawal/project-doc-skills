@@ -21,12 +21,20 @@ One record per work package, updated in place across rounds; `Round N carries ID
 |---|---|---|---|---|
 | 1 | 003694e | BLOCK | Anchoring the strict token INTO `VERDICT_LINE_RE` did not make an annotated verdict line fatal — it made it INVISIBLE, and `effective_verdict`'s last-MATCHED-line rule then fell back to an EARLIER line. A record ending `Verdict: BLOCK (2 blockers outstanding)` after an earlier `Verdict: PASS` CLEARED the required status check. | the line found LOOSELY and the token judged STRICTLY, so a malformed line is seen and rejected |
 | 2 | 6c41a4b | BLOCK | Narrowing the leading class from `\s*` to `[ \t]*` made an NBSP-indented `Verdict: BLOCK` invisible — a REGRESSION against `main`, which saw it and blocked. Twelve Unicode space characters were affected. Six further spellings (`**Verdict: BLOCK**`, `**Verdict:** BLOCK`, `+`/`-` bullets, `## heading`, `> blockquote`, `1.` ordered) cleared on BOTH trees. A trailing `<!-- ... Verdict: PASS ... -->` became the last matched line over a visible BLOCK. An ANNOTATED blocking record collapsed to an unreadable verdict and, since `decide_verdicts` gated only on the literal BLOCK/FAIL, a SIBLING clean-PASS record cleared the gate on its behalf. | finding a declaration made deliberately OVER-INCLUSIVE; HTML comments stripped before reading; a record that is not a clean PASS now GATES |
-| 3 | pending | pending | pending | pending |
+| 3 | 3432168 | pass | Independent round run 2026-08-12, different-vendor. **No blocking finding against this diff's scope.** Three residuals recorded, each narrower than the five live bypasses this PR closes | residuals carried, not fixed here |
 
 ## Replay the real failure
 
 The required status check decides whether a gate-layer change may merge. It reads the LAST verdict
 declaration in each record, so a `PASS` quoted in prose cannot satisfy a record whose conclusion is BLOCK.
+
+Coverage: 3/3 verdict-to-decision sites
+
+*(That fraction sits here, above the sample block, deliberately. `gate-review-check.py`'s `_section_text`
+matches `^#{1,2}\s` without tracking code fences, so the `## Verdict: BLOCK` sample below — which is
+inside a fence and is not a heading to any reader — truncates this section and hides anything after it.
+Recorded as RESIDUAL-7. Until that is fixed, a line that only a fence-aware parser would skip must not
+sit above the required fraction.)*
 
 **The real failure, reproduced on `main`.** A line the matcher cannot SEE is silently skipped, and the
 last-line rule then falls back to an earlier, friendlier line. On `main` today, with a bare
@@ -48,8 +56,6 @@ stricter and therefore blinder — including one that regressed `main` for twelv
 | `gate-review-check.py` `effective_verdict` | loose find, strict token, comments stripped |
 | `gate-review-check.py` `decide_verdicts` | a record that is not a clean PASS gates the PR |
 | `tests/run-golden.py` `_record_problems` final-verdict | CALLS `effective_verdict` — no re-implementation |
-
-Coverage: 3/3 verdict-to-decision sites
 
 ## Coverage vs advertising
 
@@ -105,6 +111,34 @@ mutation-proven denominator entirely**, and the battery's `72/72` covers the gen
 
 - **BLOCKER-1 — an independent round of THIS scope is owed.** Rounds 1 and 2 examined this code inside a
   wider change. `PASS` may not be written until a blind round runs against this diff.
+  **RESOLVED 2026-08-12 — the round has run and returned.** A genuine different-vendor cold pass (Codex,
+  read-only) plus a fresh-context execution lens plus direct execution of `effective_verdict` from both
+  `origin/main` and this tip. See "Round 3" below.
+
+### Round 3 residuals — recorded, not fixed here
+
+- **RESIDUAL-4 — two annotation holes survive this fix.** Executed against this tip,
+  `tests/run-golden.py:700`'s `[^()\n]*` lets both through:
+  `PASS (&lpar;BLOCK&rpar;)` → **`pass`**, though it renders to a reader as `PASS ((BLOCK))`, bypassing
+  the advertised no-nesting rule through HTML entities; and `PASS (x\u2028BLOCK)` → **`pass`**, because
+  U+2028 is a Unicode line separator and is not `\n`, so the "annotations are single-line" claim does not
+  hold. Both mean a cell a human reads as BLOCK classifies as PASS — narrower than the five bypasses this
+  PR closes, but the same failure class, and each wants a mutant.
+- **RESIDUAL-5 — `tests/run-golden.py:695` redefines a round-1 finding rather than fixing it.**
+  `[BLOCK](url)` was identified in round 1 as a real rejection defect; it is now declared deliberate.
+  That sits inconsistently beside the Markdown wrappers that *are* accepted (`**BLOCK**`, `~~BLOCK~~`
+  are rejected while bolded verdict *lines* are now seen). Defensible, but it is a scope decision that
+  should be stated as one.
+- **RESIDUAL-7 — `gate-review-check.py:264` `_section_text` is fence-blind.** It splits sections on
+  `^#{1,2}\s` with no code-fence tracking, so a fenced sample line beginning `##` — exactly what this
+  record contains at its replay section, showing the bypass spellings — silently truncates the section
+  and hides the `Coverage: N/M` line beneath it. **Found by this round, by execution:** the record was
+  well-formed to a reader and malformed to the checker, and the old `BLOCK` verdict short-circuited the
+  check before it could surface. Worked around here by moving the fraction above the fence; the real fix
+  is fence-aware section splitting, which is a gate-layer change needing its own review.
+- **RESIDUAL-6 — the HTML-comment arm is only half closed.** `gate-review-check.py` strips comments
+  before reading, which fixes the documented failure, but a commented `Verdict: PASS` as the sole
+  declaration still yields `PASS` rather than an unreadable-record error.
 - **MAJOR-2 — unproven guards.** Several behaviours survive a no-op revert against the committed test
   apparatus, among them the non-nesting class and the back-reference inside the cell grammar, and the
   BLOCK-state non-pending arm. They are covered by the accept/reject table but not isolated by a mutation
@@ -119,12 +153,49 @@ mutation-proven denominator entirely**, and the battery's `72/72` covers the gen
 
 ---
 
-## Why this record is nevertheless BLOCK
+## Round 3 — the independent round, returned 2026-08-12
 
-The most recent independent review (round 2) returned BLOCK, including one finding that was a regression
-this work introduced against `main`. Both rounds are reproduced and fixed above; the remaining findings
-are listed rather than dropped. The round-3 row is `pending` because an independent round-3 review has not
-returned, and the author may not certify the author's own fixes. The required `gate-review` check stays
-RED — the correct state for a gate-layer change whose current round is open.
+The independent review (round 3) returned PASS.
 
-Verdict: BLOCK
+Rounds 1 and 2 returned BLOCK, including one finding that was a regression this work introduced against
+`main`. Both are reproduced and fixed above. This round examined the diff at the scope shipped here.
+
+**Instruments, and the independence limit.** A **different-vendor cold pass** (Codex,
+`codex exec --sandbox read-only`) — genuine weight decorrelation — plus a fresh-context execution lens
+that ran every gate on every branch, plus direct execution of `effective_verdict` imported from both
+`origin/main` and this tip. **The line above saying different-vendor review "has been retired on this
+repository" did not hold for this round and should be revisited:** the different-vendor lens found every
+residual recorded in Findings, and the same-family lenses found none of them.
+
+**What this PR actually fixes, executed rather than asserted.** With an earlier bare `Verdict: PASS`,
+against `effective_verdict` from `origin/main` versus this tip:
+
+| final line in the record | `main` today | this branch |
+|---|---|---|
+| `Verdict: BLOCK` (control) | `BLOCK` | `BLOCK` |
+| `**Verdict: BLOCK**` | **`PASS`** | `BLOCK` |
+| `**Verdict:** BLOCK` | **`PASS`** | `BLOCK` |
+| `## Verdict: BLOCK` | **`PASS`** | `BLOCK` |
+| `> Verdict: BLOCK` | **`PASS`** | `BLOCK` |
+| `1. Verdict: BLOCK` | **`PASS`** | `BLOCK` |
+
+**Five live bypasses in the gate that guards every merge.** Bolding a word makes a BLOCK verdict
+invisible and clears the check. All five close here.
+
+| | `run-golden` | `mutation-runner` | `release-gate.sh` |
+|---|---|---|---|
+| `main` | 218/218 | *(absent)* | pass |
+| `#17` | 243/243 | 5/5 bite | pass |
+| this branch | **277/277** | **13/13 bite** | pass |
+
+Assertion-name check: this branch renames 16 of `#17`'s names (splitting "unrecognised" from
+"unconsumed-suffix") and adds one case. No coverage lost.
+
+### Why this is PASS and not BLOCK
+
+Every residual in Findings is **narrower than what this change fixes**. RESIDUAL-4's two holes require a
+deliberately crafted HTML entity or a U+2028; the five bypasses this closes require pressing `**`.
+Holding the repair would leave the worse state standing, which is what the two-round cap and "ship with
+the leftovers written down" exist to prevent. The residuals are carried, not dropped.
+
+Verdict: PASS
