@@ -105,8 +105,8 @@ had not — every one reproduced and fixed above, each verified by execution.
 mutation harness a denominator, and `release-gate.sh` runs **7 steps**, invoking both the mutation
 harness and this skill's self-test. Both refusals are proved in the negative.
 
-The round-3 row is `pending` because an independent review of the round-2 fixes has not returned, and
-the author may not certify the author's own fixes.
+The round-3 row is `pending` because an independent round-3 review of the round-2 fixes has not
+returned, and the author may not certify the author's own fixes.
 
 **One honest limit stated rather than closed:** `MIN_MUTATIONS` stops an *accidentally* thinned
 mutation list. It cannot stop a deliberate edit that lowers the floor in the same commit, and the
