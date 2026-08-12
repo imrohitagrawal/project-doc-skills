@@ -18,8 +18,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install deps (PyYAML for the profile YAML; markdown-it-py for the skill-enumeration gate)
-        run: pip install pyyaml "markdown-it-py>=3,<5"
+      # Pillow is a real dependency of step 7, not an optional extra. It is installed
+      # rather than the step being skipped when absent: a gate that skips is a gate
+      # that has never refused anything, and CI reported green for exactly that
+      # reason before this line existed.
+      - name: Install deps (PyYAML for the profile YAML; markdown-it-py for the skill-enumeration gate; Pillow for the watermark executor)
+        run: pip install pyyaml "markdown-it-py>=3,<5" "pillow>=10,<12"
       - name: Run the composed release gate
         run: ./release-gate.sh
       - name: Upload built skills + integrity manifest
