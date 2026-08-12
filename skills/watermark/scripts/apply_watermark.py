@@ -385,8 +385,14 @@ def collect(target: Path) -> list[Path]:
         raise Refusal(f"{target} is neither a file nor a directory")
     keep = IMAGE_EXT | HTML_EXT | SOURCE_EXT
     root = target.resolve()
-    for junk in target.rglob(".wm-*.part"):
-        junk.unlink(missing_ok=True)        # a previous run was killed mid-write
+    # NOTE: a sweep of ".wm-*.part" used to run here. REMOVED 2026-08-12 — it
+    # deleted any file matching that glob anywhere under the target, with no
+    # ownership, age or content check, on a run that is otherwise non-destructive.
+    # It was also dead: ".part" is not in the keep-set, so the rename alone
+    # already stops litter being collected, and mutating the sweep to `pass` left
+    # the whole suite green. A tool that destroys data it did not create, in
+    # service of a problem that was already solved, is strictly worse than the
+    # litter it was cleaning up.
     out = []
     for p in sorted(target.rglob("*")):
         if p.suffix.lower() not in keep or not p.is_file():

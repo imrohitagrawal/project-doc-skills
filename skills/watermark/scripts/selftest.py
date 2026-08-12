@@ -275,7 +275,8 @@ def self_test() -> int:
         Image.new("RGB", (200, 120), "white").save(lit / "ok.png")
         (lit / ".wm-abc.png.part").write_bytes(b"partial")
         say(run(lit, prof, root / "out14c", False) == 0,
-            "a partial file left by a killed run is swept, not collected and refused forever")
+            "a partial file left by a killed run is not collected (the .part suffix is outside "
+            "the keep-set; this asserts the NAMING, not a sweep - there is no sweep)")
 
         # 15. --in-place is atomic: the original is never left truncated.
         atomic = root / "atomic"

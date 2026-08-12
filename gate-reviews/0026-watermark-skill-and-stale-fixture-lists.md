@@ -93,13 +93,34 @@ listed in `skills/watermark/CHANGELOG.md` and every one is closed here.
 |---|---|---|---|---|
 | 1 | 87accd1 | block | Four independent lenses — execution, contract-fidelity, adversarial, and a different-vendor cold pass — all returned *do not merge* against the first attempt. The mark was hardcoded white and changed **zero pixels** on a light export while reporting success; the self-test compared bytes so a mutant drawing nothing passed; the footer check was a raw grep, wrong in both directions; `--in-place` truncated originals; nested directories overwrote each other; the profile value was injected into HTML unescaped | rebuilt: margin band with ink derived from the artifact, pixel-measuring self-test, parsing footer check, atomic writes, tree-preserving output, escaped interpolation. FIXED-1 … FIXED-9 above |
 | 2 | 8ad4f9c | block | **Round 2 ran and found three new defects plus four overstatements.** `watermark_opacity` was a **no-op** — Pillow discards an alpha passed in a text `fill` on an RGB canvas, measured identical at alpha 10 and 255, so the mark shipped at 100% against a contract specifying 18–30%. Images were **not idempotent**: a second `--in-place` run read the first band as the bottom edge and stacked another (328 → 356 → 384 px, ink flipping on dark). A killed run left `tmpXXXX.png` litter that `collect()` then picked up, **permanently reddening the directory**. Ink derivation left mid-tones at **2.76:1**. Three mutants survived the self-test — hardcoded ink, zero alpha, and a one-character mark — so the fix's own guard did not protect the fix. Four claims overstated: "15 assertions" (24), "every assertion has been mutation-tested", "visible © footer", and "3/3" literals (4) | all fixed. Opacity composited through an RGBA layer and asserted to change the output; PNG marker refuses a second pass; temp files named `.wm-*.part` and swept; the band background is pushed away from the ink until the composited mark clears the floor. **The floor is 1.35:1 decorative, not 4.5:1 AA — round 2's own suggestion was arithmetically impossible**: compositing at opacity *a* moves a pixel only *a* of the way, capping a plain band at ~1.4:1. Five new assertions added, including the worst legal case (mid-tone at 0.18) which is what makes the contrast loop load-bearing. All five previously-surviving mutants now bite |
-| 3 | pending | pending | pending | pending |
+| 3 | 0d74f16 | block | **CIRCUIT BREAKER FIRED. Implementation stopped; this row is not a punch list.** A different-vendor cold pass and an execution lens agreed independently. **NEW CLASS:** the temp-file sweep added in round 2 **deleted any `.wm-*.part` file under the target with no ownership, age or content check** — a data-loss defect introduced *while fixing a data-loss defect*, on a run that is otherwise non-destructive. It was also dead code: `.part` is outside `collect()`'s keep-set, so the rename alone already solved the problem, and mutating the sweep to `pass` left the suite green. **The pattern, diagnosed identically by both lenses:** every round-2 fix was applied to the one input its assertion happened to use — the PNG branch but not JPEG/WEBP (both still stack 200→228→256→284), `_atomic_save` but not `_atomic_write_text` (a killed HTML run still reddens the directory forever), `hidden="hidden"` but not the bare `hidden` HTML actually uses. Five round-2 changes carry **no mutation coverage at all** and survive being reverted | **the hazard was removed; nothing else was patched.** Fixing the next three would repeat the round-2 shape a third time |
 
 ## Why this record is nevertheless BLOCK
 
-The most recent independent review (round 2) returned BLOCK. It ran a different-vendor cold pass and
-an execution lens against this diff, and found three defects and four overstatements that round 1
-had not — every one reproduced and fixed above, each verified by execution.
+The most recent independent review (round 3) returned BLOCK, and **two circuit-breaker conditions
+fired at once**: a new class of blocking finding in a second consecutive round, and a round-2 fix
+that introduced a defect of its own.
+
+**Implementation is stopped. This is not a punch list.** One change only was made in response —
+removing the sweep, because leaving a routine that silently deletes a user's files sitting in an open
+PR is not a defensible way to pause. Everything else round 3 found is written down and left.
+
+**The diagnosis, which is the point.** Both lenses independently described the same shape: each fix
+landed on the one input its assertion happened to exercise, and nowhere else. PNG but not JPEG or
+WEBP. `_atomic_save` but not `_atomic_write_text`. `hidden="hidden"` but not the bare `hidden` that
+real HTML uses. **That is an understanding miss, not a coding miss** — the failure surface was never
+enumerated, so each round fixes the instance in front of it and the class survives. `AGENTS.md` is
+explicit that patching cannot repair the first three miss types, and that continuing to patch hides
+which one it was.
+
+**What has to happen before any more code is written:** an explicit failure matrix — every supported
+image format against every write path against every boolean-attribute spelling — reviewed as a
+contract, and mutation coverage for each cell. Round 3 also found that `tests/mutation-runner.py`
+contains **zero** watermark mutations, so step 6 being blocking buys this skill nothing.
+
+Round 2 returned BLOCK before it, finding three defects and four overstatements that round 1 had
+not. Those are fixed and verified above; round 3 confirmed the opacity fix and the contrast loop are
+genuinely correct, and both gates green on CI.
 
 **The three residuals `0024` carried are now closed**, not deferred again: `MIN_MUTATIONS` gives the
 mutation harness a denominator, and `release-gate.sh` runs **7 steps**, invoking both the mutation
