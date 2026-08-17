@@ -16,6 +16,7 @@ wiki or portal without re-authoring them:
 | **usage-guide** | how-to | public | ~2 |
 | **operations-runbook** | reference (operations) | internal | ~10 |
 | **onboarding-companion** | tutorial (contributors) | internal | ~7 |
+| **watermark** | credit-furniture step (no Diátaxis mode) | matches the image | — |
 | **doc-critic** | review gate (no Diátaxis mode) | internal | — |
 | **publish-mirror** | publish step (no Diátaxis mode) | mirrors the source | — |
 <!-- skills:table:end -->
@@ -73,6 +74,7 @@ skills/
 ├─ usage-guide/
 ├─ operations-runbook/
 ├─ onboarding-companion/
+├─ watermark/
 ├─ doc-critic/
 └─ publish-mirror/
 ```
@@ -137,7 +139,7 @@ that the root changelog names it, and that every skill is versioned.
 Improve a skill in its own focused session, in this order (producers before consumers):
 
 <!-- skills:improve-order:begin -->
-**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → doc-critic → publish-mirror.**
+**learning-track → architecture-and-decisions → project-faq → usage-guide → operations-runbook → onboarding-companion → watermark → doc-critic → publish-mirror.**
 <!-- skills:improve-order:end -->
 
 (doc-critic is the review gate and publish-mirror the publish step, both downstream of the authoring
