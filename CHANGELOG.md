@@ -3,12 +3,29 @@
 Suite-level and shared-file changes. Skill-specific changes live in `skills/<name>/CHANGELOG.md`.
 Format follows Keep a Changelog.
 
-## [Unreleased] (gate-layer governance: the enforced independent gate-review)
+## [1.3.0] — 2026-08-17 (new skill: watermark — the image half of the credit-furniture contract; gate-layer governance: the enforced independent gate-review)
 
-Suite tooling and governance, never copied into a `.skill`. No `VERSION` bump: this is process
-scaffolding shipping no new `.skill` bytes, recorded here under `Unreleased` (which `check-version.py`
-ignores) so it folds into whichever version is cut next — avoiding a number collision with the
-in-flight skill-count PR.
+### Added — watermark, a ninth skill (RCA-001, approved 2026-08-12)
+- **`skills/watermark/assets/apply_watermark.py`** — stamps the decorative credit watermark
+  (`project-profile.md`'s `watermark`/`watermark_opacity`) and a thin inset slate border onto
+  an exported raster image (`render-contract.md:151-153`). The HTML case was already
+  implemented (`project-faq`/`usage-guide` generators render `{{watermark}}`; `verify.py`
+  already hard-fails a missing © footer independent of watermark presence) — this closes the
+  one gap that remained: an exported image carried nothing.
+- Placement is measured against the actual image (lowest-variance corner), never a fixed
+  guess — found the hard way, a first version's fixed bottom-right corner overlapped a real
+  button on the first real-image test, fixed before shipping. Refuses (non-zero exit) rather
+  than guessing if no corner is empty enough.
+- File-size discipline: the final composite quantizes back to an adaptive palette — an
+  unquantized RGBA save against a palette-mode source more than doubled a real 72KB image in
+  testing.
+- `skills-order`, the enumeration tables in `README.md` and `per-skill-review-prompt.md`, and
+  every hardcoded skill-list fixture in `tests/run-golden.py` updated to the new 9-skill set —
+  the enumeration-drift gate itself caught the first two omissions before this shipped.
+
+Suite tooling and governance below this line, never copied into a `.skill`. Previously recorded
+under `Unreleased` (no `VERSION` bump — process scaffolding shipping no new `.skill` bytes) —
+folded into this cut, per this file's own stated rule for `Unreleased` content.
 
 ### Added — real-incident regression fixtures backfilled for the on-main suite lints (requirement ii)
 - **`tests/run-golden.py` + `tests/golden-bad/unresolved-placeholder.md`** — backfilled the fixtures the

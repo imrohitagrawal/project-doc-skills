@@ -755,10 +755,17 @@ GUARDS: list[tuple] = [
      "CLI --check on a DRIFTED doc"),
     # MAJOR-3: the source-of-truth PRODUCERS must READ their files, not just reproduce today's output.
     ("source: load_order READS skills-order (not a hardcoded order)",
+     # Hardcodes TODAY'S real order — matching current reality on a pristine
+     # repo (the mutant alone must not drift anything) so the mutation is
+     # revealed only when its declared fixture then edits the FILE
+     # (skills-order) and load_order fails to notice, because it never read
+     # it. A mutant hardcoding a WRONG order (e.g. a stale or pre-swapped
+     # list) drifts on its own and reddens the wrong fixtures instead —
+     # measured: it did, against this exact stub, before this fix.
      _sub('    order = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines()\n'
           '             if ln.strip() and not ln.strip().startswith("#")]',
           '    order = ["learning-track", "architecture-and-decisions", "project-faq", "usage-guide", '
-          '"operations-runbook", "onboarding-companion", "doc-critic", "publish-mirror"]'),
+          '"operations-runbook", "onboarding-companion", "watermark", "doc-critic", "publish-mirror"]'),
      ("load_order",), "RED", "swapping two order lines"),
     ("source: canonical_skills READS skills/ (a new dir must surface)",
      _sub('    return {p.name for p in sk.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()}',
